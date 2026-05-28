@@ -1,0 +1,29 @@
+
+=== 1. Struktur-Check ===
+Markdown files: 17
+PASS: >= 12 .md files (got 17)
+
+=== 2. OpenAPI-Konsistenz ===
+PASS: 12 OpenAPI paths match
+
+=== 3. Link-Check ===
+Relative links: 105, broken: 0
+PASS: Links resolve
+
+=== 4. Glossar-Drift ===
+PASS: wrong-case auth header (PascalCase): 0 hits
+PASS: wrong-case auth header (upper): 0 hits
+PASS: wrong auth header (underscores): 0 hits
+PASS: camelCase request id: 0 hits
+PASS: camelCase startswith: 0 hits
+PASS: camelCase endswith: 0 hits
+PASS: 'Measuring Point' confined to: _assets/glossary.md, 07-migration-from-saveris2.md, 05-endpoints/measuring-objects.md
+
+=== 5. Frontmatter-Check ===
+PASS: 16 files have complete frontmatter
+
+=== 6. Curl-Header-Order ===
+PASS: All curl blocks have Content-Type before x-custom-api-key
+
+=== SUMMARY ===
+Passes: 12, Failures: 0

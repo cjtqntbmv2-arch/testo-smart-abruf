@@ -1,0 +1,3981 @@
+{
+  "components": {
+    "examples": {
+      "GeneralAsyncRequest": {
+        "summary": "Example async request",
+        "value": {
+          "date_time_from": "2024-06-01T00:00:00.000Z",
+          "date_time_until": "2024-12-31T23:59:59.000Z",
+          "options": {
+            "result_file_format": "CSV"
+          }
+        }
+      },
+      "GeneralAsyncRequestV1": {
+        "summary": "Example async request",
+        "value": {
+          "date_time_from": "2024-06-01T00:00:00.000Z",
+          "date_time_until": "2024-12-31T23:59:59.000Z",
+          "options": {
+            "result_file_format": "CSV"
+          }
+        }
+      },
+      "GeneralAsyncRequestV2": {
+        "summary": "Example async request",
+        "value": {
+          "options": {
+            "result_file_format": "CSV"
+          }
+        }
+      },
+      "GeneralAsyncSuccessResponse": {
+        "summary": "Example async success response",
+        "value": {
+          "request_uuid": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          "status": "Submitted"
+        }
+      },
+      "TokenRequest": {
+        "summary": "Example token request",
+        "value": {
+          "password": "beer",
+          "username": "HomerSimpson"
+        }
+      },
+      "TokenResponse": {
+        "summary": "Example token response",
+        "value": {
+          "IdToken": "eyJraW..."
+        }
+      }
+    },
+    "headers": {
+      "Deprecation": {
+        "description": "Indicates this endpoint is deprecated (RFC 8594).",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Sunset": {
+        "description": "Date after which this endpoint will be removed, in RFC 7231 date format.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Bad request. E.g. no parameter was set"
+      },
+      "CorsBadRequest": {
+        "content": {},
+        "description": "400 response for CORS method",
+        "headers": {
+          "Access-Control-Allow-Headers": {
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Access-Control-Allow-Methods": {
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Access-Control-Allow-Origin": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CorsInternalServerError": {
+        "content": {},
+        "description": "500 response for CORS method",
+        "headers": {
+          "Access-Control-Allow-Headers": {
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Access-Control-Allow-Methods": {
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Access-Control-Allow-Origin": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CorsOk": {
+        "content": {},
+        "description": "200 response for CORS method",
+        "headers": {
+          "Access-Control-Allow-Headers": {
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Access-Control-Allow-Methods": {
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Access-Control-Allow-Origin": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Missing license or permission."
+      },
+      "InternalServerError": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Unexpected error."
+      },
+      "Unauthorized": {
+        "description": "Authorization information is missing or invalid."
+      }
+    },
+    "schemas": {
+      "AlarmConfiguration": {
+        "properties": {
+          "alarm_delay": {
+            "type": "number"
+          },
+          "display_unit": {
+            "type": "string"
+          },
+          "door_contact_delay_in_ms": {
+            "type": "number"
+          },
+          "limit_values_uuid": {
+            "type": "string"
+          },
+          "lower_violation": {
+            "type": "number"
+          },
+          "lower_warning": {
+            "type": "number"
+          },
+          "measuring_rate": {
+            "type": "number"
+          },
+          "upper_violation": {
+            "type": "number"
+          },
+          "upper_warning": {
+            "type": "number"
+          },
+          "valid_from_time": {
+            "type": "number"
+          },
+          "valid_until_time": {
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncAlarmsFileContentObject": {
+        "properties": {
+          "alarm_condition_type": {
+            "description": "Type of alarm (i.e Upper limit, connection timeout)",
+            "type": "string"
+          },
+          "alarm_reason": {
+            "description": "Reason which caused the alarm (e.g. alarm condition is violated)",
+            "type": "string"
+          },
+          "alarm_severity": {
+            "description": "Severity of Alarm",
+            "enum": [
+              "Warning",
+              "Alarm"
+            ],
+            "type": "string"
+          },
+          "alarm_source_uuid": {
+            "description": "Uuid of source that caused the alarm (e.g. sensor_uuid, device_uuid)",
+            "format": "uuid",
+            "type": "string"
+          },
+          "alarm_status": {
+            "description": "Actual status of the Alarm",
+            "enum": [
+              "Alarm",
+              "Ok"
+            ],
+            "type": "string"
+          },
+          "alarm_time": {
+            "description": "Time the alarm occurred in “YYYY-MM-DDThh:mm:ssZ“ in UTC",
+            "format": "date-time",
+            "type": "string"
+          },
+          "alarm_time_local": {
+            "description": "Time the alarm occurred in “YYYY-MM-DDThh:mm:ssZ“ in local Timezone",
+            "format": "date-time",
+            "type": "string"
+          },
+          "alarm_type": {
+            "description": "Type of alarm",
+            "enum": [
+              "measurement_alarm",
+              "device system alarm",
+              "sensor system alarm"
+            ],
+            "type": "string"
+          },
+          "alarm_value": {
+            "description": "Measurement value which caused the alarm",
+            "type": "number"
+          },
+          "customer_site_uuid": {
+            "description": "Actual Restaurant/Site the alarm occurred in",
+            "format": "uuid",
+            "type": "string"
+          },
+          "last_status_change_time": {
+            "description": "Last time the status of the alarm condition changed in “YYYY-MM-DDThh:mm:ssZ“",
+            "format": "date-time",
+            "type": "string"
+          },
+          "physical_unit": {
+            "description": "The measurement unit (e.g. °C, %rF)",
+            "type": "string"
+          },
+          "physical_value": {
+            "description": "Physical value defines channel of alarm (e.g. Temperature, Humidity, Door)",
+            "type": "string"
+          },
+          "physical_value_extension": {
+            "description": "Physical extension defines channel of alarm (e.g. Product Temperature, Relative Humidity, Door Contact)",
+            "type": "string"
+          },
+          "processed_at": {
+            "description": "Time the alarm was received by the Testo Cloud",
+            "format": "date-time",
+            "type": "string"
+          },
+          "serial_no": {
+            "description": "Serial number of the sensor which has detected the alarm",
+            "type": "string"
+          },
+          "source_alarm_event_uuid": {
+            "description": "Source alarm uuid related to the back to normal (only set in case of back to normal)",
+            "format": "uuid",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account in which the datalogger is registered",
+            "format": "uuid",
+            "type": "string"
+          },
+          "uuid": {
+            "description": "Unique identifier of the alarm",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncAlarmsSuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncAlarmsFileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncDevicesPropertiesFileContentObject": {
+        "properties": {
+          "attenuation": {
+            "description": "Product simulation attenuation (product simulation coefficient)",
+            "type": "number"
+          },
+          "channel_equipment_parts_uuid": {
+            "description": "Unique channel equipment part identifier which the sensor is assigned to",
+            "format": "uuid",
+            "type": "string"
+          },
+          "channel_id": {
+            "description": "Unique identifier of the channel",
+            "type": "integer"
+          },
+          "channel_measurement_log_time": {
+            "description": "Interval of measurement time (in milliseconds)",
+            "type": "integer"
+          },
+          "channel_no": {
+            "description": "Number to identify a specific channel of a sensor if it has multiple ones",
+            "type": "integer"
+          },
+          "communication_log_time": {
+            "description": "Interval of communication time (in milliseconds)",
+            "type": "integer"
+          },
+          "customer_site_uuid": {
+            "description": "Site/Restaurant who operates the device",
+            "format": "uuid",
+            "type": "string"
+          },
+          "device_created_at": {
+            "description": "Time point where the device was created in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "device_display_name": {
+            "description": "Name of the logger",
+            "type": "string"
+          },
+          "device_equipment_uuid": {
+            "description": "Unique equipment identifier which the device is assigned to",
+            "format": "uuid",
+            "type": "string"
+          },
+          "device_firmware_version": {
+            "description": "Firmware version of the device",
+            "type": "string"
+          },
+          "device_model_code": {
+            "description": "Device article number",
+            "type": "string"
+          },
+          "device_serial_no": {
+            "description": "Article number of the device",
+            "type": "string"
+          },
+          "device_uuid": {
+            "description": "Unique identifier of the device",
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_calibration_possible": {
+            "description": "Is the probe calibratable (0 for no, 1 for yes)",
+            "type": "boolean"
+          },
+          "is_ethernetprobe": {
+            "description": "Is the probe an ethernet probe (0 for no, 1 for yes)",
+            "type": "boolean"
+          },
+          "is_external": {
+            "description": "Is the probe external (0 for no, 1 for yes)",
+            "type": "boolean"
+          },
+          "is_powersupplieable": {
+            "description": "Is the probe powersupplieable (0 for no, 1 for yes)",
+            "type": "boolean"
+          },
+          "is_wirelessprobe": {
+            "description": "Is the probe a radio probe (0 for no, 1 for yes)",
+            "type": "boolean"
+          },
+          "limit_values_uuid": {
+            "description": "Unique identifier of the limit values set active for the device",
+            "format": "uuid",
+            "type": "string"
+          },
+          "physical_extension": {
+            "description": "Physical extension defines channel (e.g. Air Temperature, Absolute Humidity, Door Contact)",
+            "type": "string"
+          },
+          "physical_property_name": {
+            "description": "Physical property name of channel (e.g. Temperature, Density, Door)",
+            "type": "string"
+          },
+          "physical_unit": {
+            "description": "The measurement unit (e.g. °C, %rF, g/m³)",
+            "type": "string"
+          },
+          "physical_unit_exponent": {
+            "description": "Exponent of the measurement - Number represents amount of decimal places",
+            "type": "integer"
+          },
+          "sensor_display_name": {
+            "description": "Name of the sensor",
+            "type": "string"
+          },
+          "sensor_equipment_parts_uuid": {
+            "description": "Unique equipment part identifier which the sensor is assigned to",
+            "format": "uuid",
+            "type": "string"
+          },
+          "sensor_equipment_uuid": {
+            "description": "Unique equipment identifier which the sensor is assigned to",
+            "format": "uuid",
+            "type": "string"
+          },
+          "sensor_firmware_version": {
+            "description": "Firmware version of the sensor",
+            "type": "string"
+          },
+          "sensor_is_active": {
+            "description": "Is the sensor active (0 for no, 1 for yes)",
+            "type": "boolean"
+          },
+          "sensor_model_code": {
+            "description": "Article number of the sensor",
+            "type": "string"
+          },
+          "sensor_serial_no": {
+            "description": "Serial number of the sensor",
+            "type": "string"
+          },
+          "sensor_uuid": {
+            "description": "Unique identifier of the sensor",
+            "format": "uuid",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncDevicesPropertiesFileContentObjectV2": {
+        "properties": {
+          "channel_attenuation": {
+            "description": "Product simulation attenuation (product simulation coefficient)",
+            "type": "number"
+          },
+          "channel_id": {
+            "description": "Unique identifier of the channel",
+            "format": "int64",
+            "type": "integer"
+          },
+          "channel_is_calibration_possible": {
+            "description": "Is the probe calibratable",
+            "type": "string"
+          },
+          "channel_is_external": {
+            "description": "Is the probe external",
+            "type": "string"
+          },
+          "channel_last_modified": {
+            "description": "Time point where the channel was last modified in iso8601 format",
+            "format": "date-time",
+            "type": "string"
+          },
+          "channel_no": {
+            "description": "Number to identify a specific channel of a sensor if it has multiple ones",
+            "type": "integer"
+          },
+          "channel_physical_extension": {
+            "description": "Physical extension defines channel (e.g. Air Temperature, Absolute Humidity, Door Contact)",
+            "type": "string"
+          },
+          "channel_physical_property_name": {
+            "description": "Physical property name of channel (e.g. Temperature, Density, Door)",
+            "type": "string"
+          },
+          "channel_physical_unit": {
+            "description": "The measurement unit (e.g. °C, %rF, g/m³)",
+            "type": "string"
+          },
+          "channel_physical_unit_exponent": {
+            "description": "Exponent of the measurement - Number represents amount of decimal places",
+            "type": "integer"
+          },
+          "customer_site": {
+            "description": "Identifier for the customer site",
+            "type": "string"
+          },
+          "device_category": {
+            "description": "The category of the device such as LOGGER, GATEWAY, etc.",
+            "type": "string"
+          },
+          "device_communication_log_time": {
+            "description": "Interval of communication time (in milliseconds)",
+            "type": "integer"
+          },
+          "device_display_name": {
+            "description": "Name of the logger",
+            "type": "string"
+          },
+          "device_firmware_version": {
+            "description": "Firmware version of the device",
+            "type": "string"
+          },
+          "device_is_active": {
+            "description": "Denotes that whether device is active or not",
+            "type": "string"
+          },
+          "device_is_ethernetprobe": {
+            "description": "Is the probe an ethernet probe",
+            "type": "string"
+          },
+          "device_is_powersuppliable": {
+            "description": "Is the probe power-suppliable",
+            "type": "string"
+          },
+          "device_is_wirelessprobe": {
+            "description": "Is the probe a radio probe",
+            "type": "string"
+          },
+          "device_last_modified": {
+            "description": "Time point where the device was last modified in iso8601 format",
+            "format": "date-time",
+            "type": "string"
+          },
+          "device_measuring_cycle": {
+            "description": "Interval of device measuring cycle time (in milliseconds)",
+            "type": "integer"
+          },
+          "device_measuring_cycle_effective": {
+            "description": "Interval of device effective measuring cycle time (in milliseconds)",
+            "type": "integer"
+          },
+          "device_model_code": {
+            "description": "Device article number",
+            "type": "string"
+          },
+          "device_serial_no": {
+            "description": "Article number of the device",
+            "type": "string"
+          },
+          "device_supported_battery_types": {
+            "description": "Supported battery types of the device",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "device_uuid": {
+            "description": "Unique identifier of the device",
+            "type": "string"
+          },
+          "equipment_parts_uuid": {
+            "description": "Unique equipment identifier which the sensor is assigned to",
+            "format": "uuid",
+            "type": "string"
+          },
+          "equipment_uuid": {
+            "description": "Unique equipment identifier which the device is assigned to",
+            "format": "uuid",
+            "type": "string"
+          },
+          "sensor_display_name": {
+            "description": "Name of the sensor",
+            "type": "string"
+          },
+          "sensor_firmware_version": {
+            "description": "Firmware version of the sensor",
+            "type": "string"
+          },
+          "sensor_is_connected": {
+            "description": "Is the sensor connected",
+            "type": "string"
+          },
+          "sensor_is_radio": {
+            "description": "Is the sensor wireless",
+            "type": "string"
+          },
+          "sensor_is_wired": {
+            "description": "Is the sensor wired",
+            "type": "string"
+          },
+          "sensor_last_modified": {
+            "description": "Time point where the sensor was last modified in iso8601 format",
+            "format": "date-time",
+            "type": "string"
+          },
+          "sensor_measuring_cycle": {
+            "description": "Interval of sensor measuring cycle time (in milliseconds)",
+            "type": "integer"
+          },
+          "sensor_measuring_cycle_effective": {
+            "description": "Interval of sensor effective measuring cycle time (in milliseconds)",
+            "type": "integer"
+          },
+          "sensor_model_code": {
+            "description": "Article number of the sensor",
+            "type": "string"
+          },
+          "sensor_serial_no": {
+            "description": "Serial number of the sensor",
+            "type": "string"
+          },
+          "sensor_uuid": {
+            "description": "Unique identifier of the sensor",
+            "format": "uuid",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncDevicesPropertiesSuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncDevicesPropertiesFileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncDevicesPropertiesSuccessResponseV2": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncDevicesPropertiesFileContentObjectV2"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncDevicesStatusFileContentObject": {
+        "properties": {
+          "battery_level_percent": {
+            "description": "Battery level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "connection_type": {
+            "description": "Connection type of the device",
+            "enum": [
+              "CT_UNKNOWN",
+              "CT_WIFI",
+              "CT_ETHERNET"
+            ],
+            "type": "string"
+          },
+          "customer_site": {
+            "description": "Site/Restaurant who operates the device",
+            "format": "uuid",
+            "type": "string"
+          },
+          "device_uuid": {
+            "description": "Unique identifier of the device",
+            "format": "uuid",
+            "type": "string"
+          },
+          "fw_version": {
+            "description": "Firmware version of the device",
+            "type": "string"
+          },
+          "is_powersupply_on": {
+            "description": "Is the power supply on?",
+            "type": "boolean"
+          },
+          "last_communication": {
+            "description": "Last time the device communicated in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "last_measurement_time": {
+            "description": "Last time the device took a measurement in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "model_code": {
+            "description": "Article number of the device",
+            "type": "string"
+          },
+          "next_communication": {
+            "description": "Next time the device will communicate in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "processed_at": {
+            "description": "Time point where the device status was processed in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "radio_level_percent": {
+            "description": "Radio level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "serial_no": {
+            "description": "Serial number of the device",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncDevicesStatusSuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncDevicesStatusFileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncDevicesStatusV4FileContentObject": {
+        "properties": {
+          "battery_level_percent": {
+            "description": "Battery level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "battery_temperature": {
+            "description": "Battery temperature in degrees Celsius",
+            "type": "number"
+          },
+          "connection_type": {
+            "description": "Connection type of the device",
+            "enum": [
+              "UNKNOWN",
+              "WIFI",
+              "ETHERNET"
+            ],
+            "type": "string"
+          },
+          "customer_site": {
+            "description": "Site/Restaurant who operates the device",
+            "format": "uuid",
+            "type": "string"
+          },
+          "device_uuid": {
+            "description": "Unique identifier of the device",
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_powersupply_on": {
+            "description": "Is the power supply on?",
+            "type": "boolean"
+          },
+          "last_communication_time": {
+            "description": "Last time the device communicated in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "model_code": {
+            "description": "Article number of the device",
+            "type": "string"
+          },
+          "next_communication_time": {
+            "description": "Next time the device will communicate in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "processed_at": {
+            "description": "Time point where the device status was processed in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "production_date": {
+            "description": "Production date of the device in UTC “YYYY-MM-DD”",
+            "format": "date",
+            "type": "string"
+          },
+          "radio_level_percent": {
+            "description": "Radio level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "serial_no": {
+            "description": "Serial number of the device",
+            "type": "string"
+          },
+          "status_time": {
+            "description": "Last time the device reported a status in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncDevicesStatusV4SuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncDevicesStatusV4FileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncEquipmentsFileContentObject": {
+        "properties": {
+          "alarm_delay": {
+            "description": "Delay in milliseconds for alarms",
+            "type": "number"
+          },
+          "area_title": {
+            "description": "Title of the area",
+            "type": "string"
+          },
+          "area_uuid": {
+            "description": "Unique identifier of the area",
+            "format": "uuid",
+            "type": "string"
+          },
+          "display_unit": {
+            "description": "Display unit of the equipment (e.g. relative humidity, celsius)",
+            "type": "string"
+          },
+          "door_contact_delay_in_ms": {
+            "description": "Delay in milliseconds for the door contact",
+            "type": "number"
+          },
+          "equipment_parts_purpose_title": {
+            "description": "Title of the equipment part purpose",
+            "type": "string"
+          },
+          "equipment_parts_purpose_uuid": {
+            "description": "Unique identifier of the equipment part purpose",
+            "format": "uuid",
+            "type": "string"
+          },
+          "equipment_parts_title": {
+            "description": "Title of the equipment part",
+            "type": "string"
+          },
+          "equipment_parts_uuid": {
+            "description": "Unique identifier of the equipment part",
+            "format": "uuid",
+            "type": "string"
+          },
+          "equipment_title": {
+            "description": "Title of the equipment",
+            "type": "string"
+          },
+          "equipment_type_title": {
+            "description": "Title of the equipment type (e.g. Fridge, Freezer)",
+            "type": "string"
+          },
+          "equipment_type_uuid": {
+            "description": "Unique identifier of the equipment type",
+            "format": "uuid",
+            "type": "string"
+          },
+          "equipment_uuid": {
+            "description": "Unique identifier of the equipment",
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_active": {
+            "description": "Is the equipment active?",
+            "type": "boolean"
+          },
+          "last_modified_at": {
+            "description": "Time point where the equipment was last modified in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "limit_values_uuid": {
+            "description": "Unique identifier of the limit values set active for the equipment",
+            "format": "uuid",
+            "type": "string"
+          },
+          "lower_violation": {
+            "description": "Lower violation limit",
+            "type": "number"
+          },
+          "lower_warning": {
+            "description": "Lower warning limit",
+            "type": "number"
+          },
+          "measuring_rate": {
+            "description": "Measuring rate in milliseconds",
+            "type": "number"
+          },
+          "processed_at": {
+            "description": "Time point where the equipment was processed in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "format": "uuid",
+            "type": "string"
+          },
+          "upper_violation": {
+            "description": "Upper violation limit",
+            "type": "number"
+          },
+          "upper_warning": {
+            "description": "Upper warning limit",
+            "type": "number"
+          },
+          "valid_from_time": {
+            "description": "valid from time",
+            "type": "number"
+          },
+          "valid_until_time": {
+            "description": "valid until time",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncEquipmentsSuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncEquipmentsFileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncLocationsFileContentObject": {
+        "properties": {
+          "last_modified_at": {
+            "description": "Time point that the location was last modified in UTC “YYYY-MM-DDThh:mm:ss.sssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "location_subtype": {
+            "description": "Subtype of the location such as ventilation and flue gas",
+            "type": "string"
+          },
+          "location_type": {
+            "description": "Type of the location such as customer and measurement site",
+            "type": "string"
+          },
+          "location_uuid": {
+            "description": "Unique identifier of the location",
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "description": "Name of the location",
+            "type": "string"
+          },
+          "parent_location_type": {
+            "description": "Type of the parent location such as customer and measurement site",
+            "type": "string"
+          },
+          "parent_uuid": {
+            "description": "Unique identifier of the location parent",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "format": "uuid",
+            "type": "string"
+          },
+          "valid_from": {
+            "description": "Time point that the location was created in UTC “YYYY-MM-DDThh:mm:ss.sssZ”",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncLocationsSuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncLocationsFileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncMeasurementsFileContentObject": {
+        "properties": {
+          "channel_id": {
+            "description": "Unique Identifier of the channel the measurement was taken on",
+            "type": "integer"
+          },
+          "customer_site_uuid": {
+            "description": "Site underneath of the tenant which operates the logger",
+            "format": "uuid",
+            "type": "string"
+          },
+          "device_serial_no": {
+            "description": "Serial Number of the device",
+            "type": "string"
+          },
+          "device_uuid": {
+            "description": "Unique Identifier of the device the sensor measurement belongs to",
+            "format": "uuid",
+            "type": "string"
+          },
+          "measurement_value": {
+            "description": "Measurement value",
+            "type": "number"
+          },
+          "physical_extension": {
+            "description": "Physical value and physical extension defines channel of alarm",
+            "type": "string"
+          },
+          "physical_property_name": {
+            "description": "Property name of channel (e.g.Temperature, Door)",
+            "type": "string"
+          },
+          "physical_unit": {
+            "description": "The measurement unit (e.g. CELSIUS, FAHRENHEIT)",
+            "type": "string"
+          },
+          "processed_at": {
+            "description": "Time the measurement was received by the Testo Cloud",
+            "format": "date-time",
+            "type": "string"
+          },
+          "sensor_serial_no": {
+            "description": "Serial Number of the sensor who took the measurement",
+            "type": "string"
+          },
+          "sensor_uuid": {
+            "description": "Unique identifier of the sensor who took the measurement",
+            "format": "uuid",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account in which the datalogger is registered",
+            "format": "uuid",
+            "type": "string"
+          },
+          "timestamp": {
+            "description": "Time the measurement was taken by the datalogger “YYYY-MM-DDThh:mm:ssZ” in UTC",
+            "format": "date-time",
+            "type": "string"
+          },
+          "timestamp_local": {
+            "description": "Time the measurement was taken by the datalogger “YYYY-MM-DDThh:mm:ssZ” in local timezone",
+            "format": "date-time",
+            "type": "string"
+          },
+          "uuid": {
+            "description": "Unique identifier of the measurement",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncMeasurementsFileContentObjectV2": {
+        "properties": {
+          "channel_no": {
+            "description": "Channel number of the sensor on the sensor",
+            "type": "integer"
+          },
+          "customer_site": {
+            "description": "Site underneath of the tenant which operates the logger",
+            "format": "uuid",
+            "type": "string"
+          },
+          "measurement": {
+            "description": "Measurement value",
+            "type": "number"
+          },
+          "model_code": {
+            "description": "Model code of the sensor",
+            "type": "string"
+          },
+          "physical_extension": {
+            "description": "Physical value and physical extension defines channel of alarm (e.g. Door Contact, Product Temperature)",
+            "type": "string"
+          },
+          "physical_property_name": {
+            "description": "Property name of channel (e.g. Temperature, Humidity, Density)",
+            "type": "string"
+          },
+          "physical_unit": {
+            "description": "The measurement unit (e.g. CELSIUS, FAHRENHEIT)",
+            "type": "string"
+          },
+          "processed_at": {
+            "description": "Time the measurement was received by the Testo Cloud",
+            "format": "date-time",
+            "type": "string"
+          },
+          "sensor_uuid": {
+            "description": "Unique identifier of the sensor who took the measurement",
+            "format": "uuid",
+            "type": "string"
+          },
+          "serial_no": {
+            "description": "Serial number of the sensor",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account in which the datalogger is registered",
+            "format": "uuid",
+            "type": "string"
+          },
+          "timestamp": {
+            "description": "Time the measurement was taken by the datalogger “YYYY-MM-DDThh:mm:ssZ” in UTC",
+            "format": "date-time",
+            "type": "string"
+          },
+          "timestamp_local": {
+            "description": "Time the measurement was taken by the datalogger “YYYY-MM-DDThh:mm:ssZ” in local timezone",
+            "format": "date-time",
+            "type": "string"
+          },
+          "uuid": {
+            "description": "Unique identifier of the measurement",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncMeasurementsSuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncMeasurementsFileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncMeasurementsSuccessResponseV2": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncMeasurementsFileContentObjectV2"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncMeasuringObjectsFileContentObject": {
+        "properties": {
+          "channel_assignments": {
+            "description": "JSON-encoded object which contains information about channel assignments",
+            "format": "json",
+            "type": "string"
+          },
+          "customer_site": {
+            "description": "Identifier for the customer site",
+            "type": "string"
+          },
+          "customer_uuid": {
+            "description": "Unique identifier of the customer account",
+            "format": "uuid",
+            "type": "string"
+          },
+          "measurement_alarm_configuration": {
+            "description": "JSON-encoded object which contains information about alarm configuration for measurments",
+            "format": "json",
+            "type": "string"
+          },
+          "measuring_instructions": {
+            "description": "JSON-encoded object which contains information about measuring instructions",
+            "format": "json",
+            "type": "string"
+          },
+          "mo_uuid": {
+            "description": "Unique identifier of the measuring object",
+            "format": "uuid",
+            "type": "string"
+          },
+          "product_family_id": {
+            "description": "Product family such as savr, sav3, and data layer",
+            "type": "string"
+          },
+          "valid_from": {
+            "description": "Time point that the location was created in UTC “YYYY-MM-DDThh:mm:ss.sssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "version_timestamp": {
+            "description": "Version timestamp in UTC “YYYY-MM-DDThh:mm:ss.sssZ”",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncMeasuringObjectsSuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncMeasuringObjectsFileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncSensorsStatusFileContentObject": {
+        "properties": {
+          "battery_level_percent": {
+            "description": "Battery level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "customer_site": {
+            "description": "Site/Restaurant who operates the sensor",
+            "format": "uuid",
+            "type": "string"
+          },
+          "fw_version": {
+            "description": "Firmware version of the sensor",
+            "type": "string"
+          },
+          "last_communication": {
+            "description": "Last time the sensor communicated in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "model_code": {
+            "description": "Article number of the sensor",
+            "type": "string"
+          },
+          "next_communication": {
+            "description": "Next time the sensor will communicate in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "processed_at": {
+            "description": "Time point where the sensor status was processed in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "radio_level_percent": {
+            "description": "Radio level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sensor_uuid": {
+            "description": "Unique identifier of the sensor",
+            "format": "uuid",
+            "type": "string"
+          },
+          "serial_no": {
+            "description": "Serial number of the sensor",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncSensorsStatusSuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncSensorsStatusFileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncSensorsStatusV4FileContentObject": {
+        "properties": {
+          "battery_level_percent": {
+            "description": "Battery level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "battery_predicted_remaining_operating_days": {
+            "description": "Predicted remaining operating days based on current battery level",
+            "type": "integer"
+          },
+          "battery_temperature": {
+            "description": "Battery temperature in degrees Celsius",
+            "type": "number"
+          },
+          "battery_voltage_mv": {
+            "description": "Battery voltage in millivolts",
+            "type": "integer"
+          },
+          "customer_site": {
+            "description": "Site/Restaurant who operates the sensor",
+            "format": "uuid",
+            "type": "string"
+          },
+          "last_communication_time": {
+            "description": "Last time the sensor communicated in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "model_code": {
+            "description": "Article number of the sensor",
+            "type": "string"
+          },
+          "next_communication_time": {
+            "description": "Next time the sensor will communicate in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "processed_at": {
+            "description": "Time point where the sensor status was processed in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "production_date": {
+            "description": "Production date of the sensor in UTC “YYYY-MM-DD”",
+            "format": "date",
+            "type": "string"
+          },
+          "radio_level_percent": {
+            "description": "Radio level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sensor_uuid": {
+            "description": "Unique identifier of the sensor",
+            "format": "uuid",
+            "type": "string"
+          },
+          "serial_no": {
+            "description": "Serial number of the sensor",
+            "type": "string"
+          },
+          "status_time": {
+            "description": "Time of the sensor status in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncSensorsStatusV4SuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncSensorsStatusV4FileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncTasksFileContentObject": {
+        "properties": {
+          "alarm_log_uuid": {
+            "description": "Unique identifier of the alarm (map alarm_log_uuid to uuid of Alarms api)",
+            "format": "uuid",
+            "type": "string"
+          },
+          "app_version": {
+            "description": "Version of the installed app on the control unit",
+            "type": "string"
+          },
+          "content": {
+            "description": "Context information of the task/process step",
+            "type": "string"
+          },
+          "context": {
+            "description": "Context information of the task/process step",
+            "type": "string"
+          },
+          "has_corrective_action": {
+            "description": "One of the process steps of this task execution was marked as correctiveAction",
+            "type": "boolean"
+          },
+          "marked_as_deleted": {
+            "description": "Detail information for a process step (e.g manual temperature measurements)",
+            "type": "boolean"
+          },
+          "parameters": {
+            "description": "Context information of the task/process step",
+            "type": "string"
+          },
+          "process_control_title": {
+            "description": "Title of the specific process control in the quality manual",
+            "type": "string"
+          },
+          "process_control_uuid": {
+            "description": "Unique identifier of the specific process control in the quality manual",
+            "format": "uuid",
+            "type": "string"
+          },
+          "process_ctrl_category_title": {
+            "description": "Title of the specific process control category in the quality manual (e.g. stationary monitoring)",
+            "type": "string"
+          },
+          "process_ctrl_category_uuid": {
+            "description": "Unique identifier of the process control category",
+            "format": "uuid",
+            "type": "string"
+          },
+          "process_step_corrective_action": {
+            "description": "“Is this step of the task a corrective action“ flag",
+            "type": "string"
+          },
+          "process_step_instructions": {
+            "description": "Detail description of a step of a task",
+            "type": "string"
+          },
+          "process_step_type": {
+            "description": "Definition of process step type (e.g. make comment, take photo, input number)",
+            "type": "string"
+          },
+          "process_step_uuid": {
+            "description": "Unique identifier of process step",
+            "format": "uuid",
+            "type": "string"
+          },
+          "processed_at": {
+            "description": "UTC timestamp of the time the data was processed in the API backend in format “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "quality_manual_uuid": {
+            "description": "Unique identifier of quality manual",
+            "format": "uuid",
+            "type": "string"
+          },
+          "quality_manual_version_title": {
+            "description": "Title of quality manual",
+            "type": "string"
+          },
+          "quality_manual_version_uuid": {
+            "description": "Version of the quality manual",
+            "format": "uuid",
+            "type": "string"
+          },
+          "sequence_no": {
+            "description": "Sequence number of process step (1 is the first step of the task)",
+            "type": "integer"
+          },
+          "serial_no_tablet": {
+            "description": "Serial number of tablet the task was executed",
+            "type": "string"
+          },
+          "shift_begin": {
+            "description": "Time point of the shift start in “YYYY-MM-DDThh:mm:ssZ“",
+            "format": "date-time",
+            "type": "string"
+          },
+          "shift_end": {
+            "description": "Time point of the shift end in “YYYY-MM-DDThh:mm:ssZ“",
+            "format": "date-time",
+            "type": "string"
+          },
+          "shift_uuid": {
+            "description": "Unique identifier of shift the task was scheduled for (null for FLEXIBLE_PLANNED tasks)",
+            "format": "uuid",
+            "type": "string"
+          },
+          "site_name": {
+            "deprecated": true,
+            "description": "Name of the restaurant/location which executed the task. DEPRECATED: This field is not always accurate. For reliable information, retrieve the tenant details using the tenant_uuid from this response with the /v2/tenants-sync or /v2/tenants async endpoint and use the 'organisation_name' field instead.",
+            "type": "string"
+          },
+          "site_number": {
+            "deprecated": true,
+            "description": "Optional restaurant/location identifier. DEPRECATED: This field is not always accurate. For reliable information, retrieve the tenant details using the tenant_uuid from this response with the /v2/tenants-sync or /v2/tenants async endpoint and use the 'organisation_id' field instead.",
+            "type": "string"
+          },
+          "task_execution_uuid": {
+            "description": "Unique identifier of the task execution",
+            "format": "uuid",
+            "type": "string"
+          },
+          "task_status": {
+            "description": "Status of the task execution (e.g. PAUSED or FINISHED)",
+            "type": "string"
+          },
+          "task_timestamp_end": {
+            "description": "Time point of the end of the task execution in “YYYY-MM-DDThh:mm:ssZ“",
+            "format": "date-time",
+            "type": "string"
+          },
+          "task_timestamp_start": {
+            "description": "Time point of the start of the task execution in “YYYY-MM-DDThh:mm:ssZ“",
+            "format": "date-time",
+            "type": "string"
+          },
+          "task_title": {
+            "description": "Name of the task",
+            "type": "string"
+          },
+          "task_type": {
+            "description": "Task type (e.g. ALARM, ADHOC, PLANNED or FLEXIBLE_PLANNED)",
+            "type": "string"
+          },
+          "task_uuid": {
+            "description": "Unique identifier of the task",
+            "format": "uuid",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant",
+            "format": "uuid",
+            "type": "string"
+          },
+          "timestamp": {
+            "description": "Timestamp the process step was reached",
+            "type": "string"
+          },
+          "user_uuid": {
+            "description": "Unique identifier of user who executed the task",
+            "format": "uuid",
+            "type": "string"
+          },
+          "username": {
+            "description": "Username of the user who executed the task",
+            "type": "string"
+          },
+          "uuid": {
+            "description": "Unique identifier of the flat process step joint with task",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncTasksSuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncTasksFileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "AsyncTenantsFileContentObject": {
+        "properties": {
+          "country": {
+            "description": "Country the tenant is located in (e.g. DE)",
+            "type": "string"
+          },
+          "is_operator": {
+            "description": "Is the tenant an restaurant tenant?",
+            "type": "boolean"
+          },
+          "main_language": {
+            "description": "Main language of the tenant (e.g. de_DE)",
+            "type": "string"
+          },
+          "main_timezone": {
+            "description": "Main timezone of the tenant (e.g. Europe/Berlin)",
+            "type": "string"
+          },
+          "organisation_email": {
+            "description": "Email of the tenant",
+            "type": "string"
+          },
+          "organisation_id": {
+            "description": "Id of the tenant",
+            "type": "string"
+          },
+          "organisation_name": {
+            "description": "Name of the tenant",
+            "type": "string"
+          },
+          "parent_uuid": {
+            "description": "Unique identifier of the parent tenant account",
+            "format": "uuid",
+            "type": "string"
+          },
+          "register_time": {
+            "description": "Time point when the tenant was registered in UTC “YYYY-MM-DDThh:mm:ssZ”",
+            "format": "date-time",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "AsyncTenantsSuccessResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StatusRequest"
+          },
+          {
+            "properties": {
+              "x-file-content": {
+                "$ref": "#/components/schemas/AsyncTenantsFileContentObject"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "Channel": {
+        "description": "This object represents a channel",
+        "properties": {
+          "attenuation": {
+            "description": "Is the probe external (0 for no, 1 for yes)",
+            "type": "string"
+          },
+          "channel_id": {
+            "description": "Unique identifier of the channel",
+            "type": "string"
+          },
+          "channel_measurement_log_time": {
+            "description": "Interval of measurement time (in milliseconds)",
+            "type": "string"
+          },
+          "channel_no": {
+            "description": "Number to identify a specific channel of a sensor if he has multiple",
+            "type": "string"
+          },
+          "equipment_parts_uuid": {
+            "description": "Unique identifier of the equipment part",
+            "type": "string"
+          },
+          "is_calibration_possible": {
+            "description": "Is the probe calibratable (0 for no, 1 for yes)",
+            "type": "string"
+          },
+          "is_external": {
+            "description": "Is the probe external (0 for no, 1 for yes)",
+            "type": "string"
+          },
+          "limit_values_uuid": {
+            "description": "Unique identifier of the devices alarm configuration limit value",
+            "type": "string"
+          },
+          "physical_extension": {
+            "description": "Physical value and physical extension defines channel of alarm",
+            "type": "string"
+          },
+          "physical_property_name": {
+            "description": "Property name of channel (e.g.Temperature, Door)",
+            "type": "string"
+          },
+          "physical_unit": {
+            "description": "The measurement unit (e.g. CELSIUS, FAHRENHEIT)",
+            "type": "string"
+          },
+          "physical_unit_exponent": {
+            "description": "Exponent of the measurement - Number represents amount of decimal places",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "DeviceStatus": {
+        "description": "This object represents a device status",
+        "properties": {
+          "battery_level_percent": {
+            "description": "Battery level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "connection_type": {
+            "description": "Connection type",
+            "enum": [
+              "CT_UNKNOWN",
+              "CT_WIFI",
+              "CT_ETHERNET"
+            ],
+            "type": "string"
+          },
+          "device_uuid": {
+            "description": "Unique identifier of the device",
+            "type": "string"
+          },
+          "fw_version": {
+            "description": "Firmware version of the device",
+            "type": "string"
+          },
+          "is_powersupply_on": {
+            "description": "Is the power supply on?",
+            "type": "boolean"
+          },
+          "last_communication": {
+            "description": "Timestamp of the last communication",
+            "type": "string"
+          },
+          "last_measurement_time": {
+            "description": "Timestamp of the last measurement",
+            "type": "string"
+          },
+          "model_code": {
+            "description": "Device article number",
+            "type": "string"
+          },
+          "next_communication": {
+            "description": "Timestamp of the next communication",
+            "type": "string"
+          },
+          "processed_at": {
+            "description": "Timestamp of the last processing",
+            "type": "string"
+          },
+          "radio_level_percent": {
+            "description": "Radio level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "serial_no": {
+            "description": "Article number of the device",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Equipment": {
+        "properties": {
+          "area_title": {
+            "type": "string"
+          },
+          "area_uuid": {
+            "type": "string"
+          },
+          "equipment_parts": {
+            "items": {
+              "$ref": "#/components/schemas/EquipmentPart"
+            },
+            "type": "array"
+          },
+          "equipment_title": {
+            "type": "string"
+          },
+          "equipment_type_title": {
+            "type": "string"
+          },
+          "equipment_type_uuid": {
+            "type": "string"
+          },
+          "equipment_uuid": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "string"
+          },
+          "last_modified_at": {
+            "type": "string"
+          },
+          "processed_at": {
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "EquipmentPart": {
+        "properties": {
+          "alarm_configurations": {
+            "items": {
+              "$ref": "#/components/schemas/AlarmConfiguration"
+            },
+            "type": "array"
+          },
+          "equipment_parts_purpose_title": {
+            "type": "string"
+          },
+          "equipment_parts_purpose_uuid": {
+            "type": "string"
+          },
+          "equipment_parts_title": {
+            "type": "string"
+          },
+          "equipment_parts_uuid": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Error": {
+        "properties": {
+          "message": {
+            "description": "Error Message",
+            "type": "string"
+          },
+          "status": {
+            "description": "Error",
+            "example": "Error",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "GeneralAsyncOptionsV3": {
+        "description": "Additional parameters, such as the file format of the result.",
+        "properties": {
+          "result_file_format": {
+            "default": "CSV",
+            "description": "Type of the result. If not defined, the result file format will be CSV. Hint: The number of files differs depending on the file format.",
+            "enum": [
+              "CSV",
+              "ORC",
+              "PARQUET",
+              "AVRO",
+              "JSON",
+              "TEXTFILE"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "GeneralAsyncRequest": {
+        "description": "This object represents a general asynchronous request, which allows query data for a specific time range",
+        "properties": {
+          "date_time_from": {
+            "description": "Timestamp to define start point for data, if not defined, the date_time_from would be one hour before the current time",
+            "format": "date-time",
+            "type": "string"
+          },
+          "date_time_until": {
+            "description": "Timestamp to define end point for data, if not defined, the date_time_until would be one hour after the date_time_from",
+            "format": "date-time",
+            "type": "string"
+          },
+          "options": {
+            "description": "This property allows to define additional parameters, such as the file format of the result.",
+            "properties": {
+              "result_file_format": {
+                "default": "CSV",
+                "description": "Type of the result, if not defined, the result file format would be CSV. Hint: The number of files differ depending on the file format",
+                "enum": [
+                  "CSV",
+                  "ORC",
+                  "PARQUET",
+                  "AVRO",
+                  "JSON",
+                  "TEXTFILE"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "GeneralAsyncRequestV1": {
+        "description": "This object represents a general asynchronous request without a time range",
+        "properties": {
+          "date_time_from": {
+            "description": "Timestamp to define start point for data, if not defined, the date_time_from would be one hour before the current timewe (Note: This parameter is currently inactive)",
+            "format": "date-time",
+            "type": "string"
+          },
+          "date_time_until": {
+            "description": "Timestamp to define end point for data, if not defined, the date_time_until would be one hour after the date_time_from (Note: This parameter is currently inactive)",
+            "format": "date-time",
+            "type": "string"
+          },
+          "options": {
+            "description": "This property allows to define additional parameters, such as the file format of the result.",
+            "properties": {
+              "result_file_format": {
+                "default": "CSV",
+                "description": "Type of the result, if not defined, the result file format would be CSV. Hint: The number of files differ depending on the file format",
+                "enum": [
+                  "CSV",
+                  "ORC",
+                  "PARQUET",
+                  "AVRO",
+                  "JSON",
+                  "TEXTFILE"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "GeneralAsyncRequestV2": {
+        "description": "This object represents a general asynchronous request v2, which allows query data with specific options",
+        "properties": {
+          "options": {
+            "description": "This property allows to define additional parameters, such as the file format of the result.",
+            "properties": {
+              "result_file_format": {
+                "default": "CSV",
+                "description": "Type of the result. If not defined the result file format would be CSV. Hint: The number of files differ depending on the file format.",
+                "enum": [
+                  "CSV",
+                  "ORC",
+                  "PARQUET",
+                  "AVRO",
+                  "JSON",
+                  "TEXTFILE"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "GeneralAsyncRequestV3": {
+        "description": "General asynchronous request, which allows querying data with specific options and optional OData-style query parameters.",
+        "properties": {
+          "odata": {
+            "$ref": "#/components/schemas/ODataQueryOptions"
+          },
+          "options": {
+            "$ref": "#/components/schemas/GeneralAsyncOptionsV3"
+          }
+        },
+        "type": "object"
+      },
+      "GeneralAsyncRequestWithDatetimeRangeV3": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/GeneralAsyncRequestV3"
+          },
+          {
+            "description": "General asynchronous request with a date time range.",
+            "properties": {
+              "date_time_from": {
+                "description": "Timestamp defining the start for data. If not defined, date_time_from defaults to one hour before the current time.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "date_time_until": {
+                "description": "Timestamp defining the end for data. If not defined, date_time_until defaults to one hour after date_time_from.",
+                "format": "date-time",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "GeneralAsyncSuccessResponse": {
+        "description": "This object represents a general asynchronous success response",
+        "properties": {
+          "request_uuid": {
+            "description": "UUID of a request",
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "description": "Status of the request",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "ODataQueryOptions": {
+        "additionalProperties": false,
+        "description": "Optional OData system query options (applied to the result set).",
+        "properties": {
+          "$filter": {
+            "description": "Filter expression using OData operators (eq, ne, gt, ge, lt, le, and, or, not) and functions (contains, startswith, endswith, etc.)",
+            "type": "string"
+          },
+          "$orderby": {
+            "description": "Comma-separated list of columns with optional 'asc' or 'desc' direction",
+            "type": "string"
+          },
+          "$select": {
+            "description": "Comma-separated list of column names to include in the response",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Probe": {
+        "description": "This object represents a probe",
+        "properties": {
+          "communication_log_time": {
+            "description": "Interval of communication time (in milliseconds)",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "The iso8601 date time for the time the device was created at",
+            "format": "date-time",
+            "type": "string"
+          },
+          "customer_site": {
+            "description": "Identifier for the customer site",
+            "type": "string"
+          },
+          "device_display_name": {
+            "description": "Name of the logger",
+            "type": "string"
+          },
+          "device_firmware_version": {
+            "description": "Firmware version of the device",
+            "type": "string"
+          },
+          "device_model_code": {
+            "description": "Device article number",
+            "type": "string"
+          },
+          "device_serial_no": {
+            "description": "Article number of the device",
+            "type": "string"
+          },
+          "device_uuid": {
+            "description": "Unique identifier of the device",
+            "type": "string"
+          },
+          "equipment_uuid": {
+            "description": "Unique identifier of the equipment connected to the device",
+            "type": "string"
+          },
+          "is_ethernetprobe": {
+            "description": "Is the probe an ethernet probe (0 for no, 1 for yes)",
+            "type": "string"
+          },
+          "is_powersuppliable": {
+            "description": "Is the probe powersupplieable (0 for no, 1 for yes)",
+            "type": "string"
+          },
+          "is_wirelessprobe": {
+            "description": "Is the probe a radio probe (0 for no, 1 for yes)",
+            "type": "string"
+          },
+          "sensors": {
+            "description": "List of sensors",
+            "items": {
+              "$ref": "#/components/schemas/Sensor"
+            },
+            "type": "array"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Sensor": {
+        "description": "This object represents a sensor",
+        "properties": {
+          "channels": {
+            "description": "List of channels",
+            "items": {
+              "$ref": "#/components/schemas/Channel"
+            },
+            "type": "array"
+          },
+          "equipment_parts_uuid": {
+            "description": "Unique identifier of the equipment part",
+            "type": "string"
+          },
+          "equipment_uuid": {
+            "description": "Unique identifier of the equipment",
+            "type": "string"
+          },
+          "sensor_display_name": {
+            "description": "Name of the sensor",
+            "type": "string"
+          },
+          "sensor_firmware_version": {
+            "description": "Firmware version of the sensor",
+            "type": "string"
+          },
+          "sensor_is_active": {
+            "description": "Is the sensor active (0 for no, 1 for yes)",
+            "type": "string"
+          },
+          "sensor_model_code": {
+            "description": "Article number of the sensor",
+            "type": "string"
+          },
+          "sensor_serial_no": {
+            "description": "Serial number of the sensors",
+            "type": "string"
+          },
+          "sensor_uuid": {
+            "description": "Unique identifier of the sensor",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "SensorStatus": {
+        "description": "This object represents a sensor status",
+        "properties": {
+          "battery_level_percent": {
+            "description": "Battery level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fw_version": {
+            "description": "Firmware version of the sensor",
+            "type": "string"
+          },
+          "model_code": {
+            "description": "Article number of the sensor",
+            "type": "string"
+          },
+          "processed_at": {
+            "description": "Timestamp of the last processing",
+            "type": "string"
+          },
+          "radio_level_percent": {
+            "description": "Radio level in percent",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sensor_uuid": {
+            "description": "Unique identifier of the sensor",
+            "type": "string"
+          },
+          "serial_no": {
+            "description": "Serial number of the sensors",
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "description": "Unique identifier of the tenant account",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "StatusRequest": {
+        "properties": {
+          "data_urls": {
+            "description": "URLs to results",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "metadata_url": {
+            "description": "Metadata schema of the result",
+            "type": "string"
+          },
+          "status": {
+            "description": "Status of the request",
+            "enum": [
+              "Completed",
+              "In Progress",
+              "Error"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Tenant": {
+        "properties": {
+          "country": {
+            "type": "string"
+          },
+          "is_operator": {
+            "type": "boolean"
+          },
+          "main_language": {
+            "type": "string"
+          },
+          "main_timezone": {
+            "type": "string"
+          },
+          "organisation_email": {
+            "type": "string"
+          },
+          "organisation_id": {
+            "type": "string"
+          },
+          "organisation_name": {
+            "type": "string"
+          },
+          "parent_uuid": {
+            "type": "string"
+          },
+          "register_time": {
+            "type": "string"
+          },
+          "tenant_uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_uuid",
+          "organisation_email",
+          "organisation_name",
+          "organisation_id",
+          "main_timezone",
+          "register_time",
+          "country",
+          "main_language"
+        ],
+        "type": "object"
+      },
+      "TenantList": {
+        "properties": {
+          "tenants": {
+            "items": {
+              "$ref": "#/components/schemas/Tenant"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "TokenRequest": {
+        "description": "This object represents a token request",
+        "properties": {
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "TokenResponse": {
+        "description": "This object represents a token response",
+        "properties": {
+          "IdToken": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "awsApiKey": {
+        "in": "header",
+        "name": "x-api-key",
+        "type": "apiKey",
+        "x-amazon-apigateway-api-key-source": "HEADER"
+      },
+      "cognitoUserPool": {
+        "in": "header",
+        "name": "Authorization",
+        "type": "apiKey",
+        "x-amazon-apigateway-authorizer": {
+          "providerARNs": [
+            "arn:aws:cognito-idp:eu-central-1:296447531805:userpool/eu-central-1_WSwDbdRL0"
+          ],
+          "type": "cognito_user_pools"
+        },
+        "x-amazon-apigateway-authtype": "cognito_user_pools"
+      },
+      "jwt-rsa-custom-authorizer": {
+        "in": "header",
+        "name": "Authorization",
+        "type": "apiKey",
+        "x-amazon-apigateway-authorizer": {
+          "authorizerCredentials": "arn:aws:iam::296447531805:role/tds-eu-i-data-api-api-gateway-auth-invocation",
+          "authorizerResultTtlInSeconds": 0,
+          "authorizerUri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-lambda-authorizer/invocations",
+          "type": "REQUEST"
+        },
+        "x-amazon-apigateway-authtype": "custom"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "name": "Testo Data Solutions"
+    },
+    "description": "This API provides an interface to retrieve data.",
+    "license": {
+      "name": "Apache 2.0 License",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
+    },
+    "termsOfService": "https://www.testo.com/de-DE/unternehmen/agb",
+    "title": "Smart Connect API",
+    "version": "1.0",
+    "x-logo": {
+      "altText": "Testo SE & Co. KGaA",
+      "url": "https://www.testo.com/medias/Logo-Claim-2017-22mm-right-SVG.svg?context=bWFzdGVyfGltYWdlc3wxNDY2OXxpbWFnZS9zdmcreG1sfGgzOC9oYjUvMTA5MTkzMjk3NTkyNjIuc3ZnfGUwYzA1NTRhMGEzMzBkODM0MjQ1N2Q5M2JlY2NmZjlkOTIzZGJjNGNkOTJjMmVmOTFkZGM2NGJiMjhmZTkwZGQ"
+    }
+  },
+  "openapi": "3.0.0",
+  "paths": {
+    "/v1/locations": {
+      "options": {
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Locations"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      },
+      "post": {
+        "description": "Request data preparation and start a query for locations.",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "with_odata": {
+                  "summary": "Request with OData filter, select and orderby",
+                  "value": {
+                    "odata": {
+                      "$filter": "tenant_uuid eq 'c0514728-da91-431c-8eb3-8f815c5ddcbd' and location_type eq 'MeasurementSite'",
+                      "$orderby": "location_name asc,last_modified_at desc",
+                      "$select": "tenant_uuid,location_uuid,location_name,location_type,parent_uuid,location_subtype"
+                    },
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                },
+                "without_odata": {
+                  "summary": "Minimal request without OData options",
+                  "value": {
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/GeneralAsyncRequestV3"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneralAsyncSuccessResponse"
+                }
+              }
+            },
+            "description": "Success. Contact was created"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Start the data preparation for locations",
+        "tags": [
+          "Locations"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-post-locations-async-v1/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate body"
+      }
+    },
+    "/v1/locations/{request_uuid}": {
+      "get": {
+        "description": "Return the status of the request with a given uuid",
+        "parameters": [
+          {
+            "description": "UUID of the request",
+            "in": "path",
+            "name": "request_uuid",
+            "required": true,
+            "schema": {
+              "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsyncLocationsSuccessResponse"
+                }
+              }
+            },
+            "description": "Status of the request"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Get the status of request",
+        "tags": [
+          "Locations"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-get-locations-async-v1/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate body"
+      },
+      "options": {
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Locations"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      }
+    },
+    "/v1/measuring-objects": {
+      "options": {
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Measuring Objects"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      },
+      "post": {
+        "description": "Request data preparation and start a query for measuring objects.",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "with_odata": {
+                  "summary": "Request with OData filter, select and orderby",
+                  "value": {
+                    "odata": {
+                      "$filter": "customer_uuid eq 'c0514728-da91-431c-8eb3-8f815c5ddcbd' and product_family_id eq 'savr'",
+                      "$orderby": "version_timestamp desc,customer_site asc",
+                      "$select": "customer_uuid,measuring_object_uuid,product_family_id,customer_site,version_timestamp"
+                    },
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                },
+                "without_odata": {
+                  "summary": "Minimal request without OData options",
+                  "value": {
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/GeneralAsyncRequestV3"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneralAsyncSuccessResponse"
+                }
+              }
+            },
+            "description": "Success. Contact was created"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Start the data preparation for measuring objects",
+        "tags": [
+          "Measuring Objects"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-post-measuring-objects-async-v1/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate body"
+      }
+    },
+    "/v1/measuring-objects/{request_uuid}": {
+      "get": {
+        "description": "Return the status of the request with a given uuid",
+        "parameters": [
+          {
+            "description": "UUID of the request",
+            "in": "path",
+            "name": "request_uuid",
+            "required": true,
+            "schema": {
+              "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsyncMeasuringObjectsSuccessResponse"
+                }
+              }
+            },
+            "description": "Status of the request"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Get the status of request",
+        "tags": [
+          "Measuring Objects"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-get-measuring-objects-async-v1/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate body"
+      },
+      "options": {
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Measuring Objects"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      }
+    },
+    "/v2/measurements": {
+      "options": {
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Measurements"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      },
+      "post": {
+        "description": "Request data preparation and start a query for the measurement data for a time range.",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "with_odata": {
+                  "summary": "Request with OData filter, select and orderby",
+                  "value": {
+                    "date_time_from": "2024-06-01T00:00:00.000Z",
+                    "date_time_until": "2024-12-31T23:59:59.000Z",
+                    "odata": {
+                      "$filter": "tenant_uuid eq 'c0514728-da91-431c-8eb3-8f815c5ddcbd' and physical_property_name eq 'Temperature'",
+                      "$orderby": "timestamp desc,sensor_uuid asc",
+                      "$select": "uuid,sensor_uuid,tenant_uuid,timestamp,measurement,physical_property_name,physical_unit"
+                    },
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                },
+                "without_odata": {
+                  "summary": "Minimal request without OData options",
+                  "value": {
+                    "date_time_from": "2024-06-01T00:00:00.000Z",
+                    "date_time_until": "2024-12-31T23:59:59.000Z",
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/GeneralAsyncRequestWithDatetimeRangeV3"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneralAsyncSuccessResponse"
+                }
+              }
+            },
+            "description": "Success. Contact was created"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Start the data preparation for a date-time window.",
+        "tags": [
+          "Measurements"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-post-measurements-v2/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate body"
+      }
+    },
+    "/v2/measurements/{request_uuid}": {
+      "get": {
+        "description": "Return the status of the request with a given uuid",
+        "parameters": [
+          {
+            "description": "UUID of the request",
+            "in": "path",
+            "name": "request_uuid",
+            "required": true,
+            "schema": {
+              "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsyncMeasurementsSuccessResponseV2"
+                }
+              }
+            },
+            "description": "Status of the request"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Get the status of request",
+        "tags": [
+          "Measurements"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-get-measurements-v2/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate query string parameters and headers"
+      },
+      "options": {
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Measurements"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      }
+    },
+    "/v3/alarms": {
+      "options": {
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Alarms"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      },
+      "post": {
+        "description": "Request data preparation and start a query for alarms.",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "with_odata": {
+                  "summary": "Request with OData filter, select and orderby",
+                  "value": {
+                    "date_time_from": "2024-06-01T00:00:00.000Z",
+                    "date_time_until": "2024-12-31T23:59:59.000Z",
+                    "odata": {
+                      "$filter": "alarm_status eq 'Ok' and alarm_severity eq 'Alarm' and tenant_uuid eq 'c0514728-da91-431c-8eb3-8f815c5ddcbd'",
+                      "$orderby": "alarm_time desc,alarm_severity asc",
+                      "$select": "uuid,alarm_status,alarm_severity,alarm_time,alarm_type,tenant_uuid,customer_site"
+                    },
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                },
+                "without_odata": {
+                  "summary": "Minimal request without OData options",
+                  "value": {
+                    "date_time_from": "2024-06-01T00:00:00.000Z",
+                    "date_time_until": "2024-12-31T23:59:59.000Z",
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/GeneralAsyncRequestWithDatetimeRangeV3"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneralAsyncSuccessResponse"
+                }
+              }
+            },
+            "description": "Success. Query was submitted"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Start the data preparation for alarms",
+        "tags": [
+          "Alarms"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-post-alarms-async-v3/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate body"
+      }
+    },
+    "/v3/alarms/{request_uuid}": {
+      "get": {
+        "description": "Return the status of the request with a given uuid",
+        "parameters": [
+          {
+            "description": "UUID of the request",
+            "in": "path",
+            "name": "request_uuid",
+            "required": true,
+            "schema": {
+              "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsyncAlarmsSuccessResponse"
+                }
+              }
+            },
+            "description": "Status of the request"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Get the status of an alarms request",
+        "tags": [
+          "Alarms"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-get-alarms-async-v3/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate body"
+      },
+      "options": {
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Alarms"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      }
+    },
+    "/v3/devices/properties": {
+      "options": {
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Devices Properties"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      },
+      "post": {
+        "description": "Request data preparation and start a query for device metadata.",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "with_odata": {
+                  "summary": "Request with OData filter, select and orderby",
+                  "value": {
+                    "odata": {
+                      "$filter": "tenant_uuid eq 'c0514728-da91-431c-8eb3-8f815c5ddcbd' and device_is_active eq true",
+                      "$orderby": "device_serial_no asc,channel_id asc",
+                      "$select": "tenant_uuid,device_uuid,device_serial_no,sensor_uuid,sensor_serial_no,channel_id,channel_physical_property_name,channel_physical_unit"
+                    },
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                },
+                "without_odata": {
+                  "summary": "Minimal request without OData options",
+                  "value": {
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/GeneralAsyncRequestV3"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneralAsyncSuccessResponse"
+                }
+              }
+            },
+            "description": "Succeeded request"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Start the data preparation for device metadata",
+        "tags": [
+          "Devices Properties"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-post-devices-properties-async-v3/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate body"
+      }
+    },
+    "/v3/devices/properties/{request_uuid}": {
+      "get": {
+        "description": "Return the status of the request with a given uuid",
+        "parameters": [
+          {
+            "description": "UUID of the request",
+            "in": "path",
+            "name": "request_uuid",
+            "required": true,
+            "schema": {
+              "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsyncDevicesPropertiesSuccessResponseV2"
+                }
+              }
+            },
+            "description": "Succeeded request"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Get the status of request",
+        "tags": [
+          "Devices Properties"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-get-devices-properties-async-v3/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate body"
+      },
+      "options": {
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Devices Properties"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      }
+    },
+    "/v3/devices/status": {
+      "options": {
+        "deprecated": true,
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Devices Status"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      },
+      "post": {
+        "deprecated": true,
+        "description": "Request data preparation and start a query for devices status.",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "with_odata": {
+                  "summary": "Request with OData filter, select and orderby",
+                  "value": {
+                    "odata": {
+                      "$filter": "tenant_uuid eq 'c0514728-da91-431c-8eb3-8f815c5ddcbd' and battery_level_percent lt 20",
+                      "$orderby": "last_communication desc,battery_level_percent asc",
+                      "$select": "device_uuid,tenant_uuid,serial_no,model_code,battery_level_percent,last_communication,fw_version"
+                    },
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                },
+                "without_odata": {
+                  "summary": "Minimal request without OData options",
+                  "value": {
+                    "options": {
+                      "result_file_format": "CSV"
+                    }
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/GeneralAsyncRequestV3"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeneralAsyncSuccessResponse"
+                }
+              }
+            },
+            "description": "Success. Contact was created"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Start the data preparation for devices status",
+        "tags": [
+          "Devices Status"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-post-devices-status-async-v3/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate body"
+      }
+    },
+    "/v3/devices/status/{request_uuid}": {
+      "get": {
+        "deprecated": true,
+        "description": "Return the status of the request with a given uuid",
+        "parameters": [
+          {
+            "description": "UUID of the request",
+            "in": "path",
+            "name": "request_uuid",
+            "required": true,
+            "schema": {
+              "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsyncDevicesStatusSuccessResponse"
+                }
+              }
+            },
+            "description": "Status of the request"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        },
+        "security": [
+          {
+            "jwt-rsa-custom-authorizer": []
+          }
+        ],
+        "summary": "Get the status of request",
+        "tags": [
+          "Devices Status"
+        ],
+        "x-amazon-apigateway-integration": {
+          "httpMethod": "POST",
+          "passthroughBehavior": "when_no_match",
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:eu-central-1:lambda:path/2015-03-31/functions/arn:aws:lambda:eu-central-1:296447531805:function:tds-eu-i-data-api-get-devices-status-async-v3/invocations"
+        },
+        "x-amazon-apigateway-request-validator": "Validate body"
+      },
+      "options": {
+        "deprecated": true,
+        "description": "Enable CORS by returning correct headers",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CorsOk"
+          },
+          "400": {
+            "$ref": "#/components/responses/CorsBadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/CorsInternalServerError"
+          }
+        },
+        "security": [],
+        "summary": "CORS support",
+        "tags": [
+          "Devices Status"
+        ],
+        "x-amazon-apigateway-integration": {
+          "requestTemplates": {
+            "application/json": "{\n  \"statusCode\" : 200\n}\n"
+          },
+          "responses": {
+            "200": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "200"
+            },
+            "4\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "400"
+            },
+            "5\\d{2}": {
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                "method.response.header.Access-Control-Allow-Methods": "'*'",
+                "method.response.header.Access-Control-Allow-Origin": "'https://api-docs.eu.i.savr.saveris.net'"
+              },
+              "responseTemplates": {
+                "application/json": "{}   \n"
+              },
+              "statusCode": "500"
+            }
+          },
+          "type": "mock"
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "cognitoUserPool": []
+    }
+  ],
+  "servers": [
+    {
+      "description": "Smart Connect API",
+      "url": "https://data-api.eu.i.smartconnect.testo.com/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Data REST API"
+    }
+  ],
+  "x-amazon-apigateway-gateway-responses": {
+    "ACCESS_DENIED": {
+      "responseTemplates": {
+        "application/json": "{\"message\": \"Missing license or permission.\"}"
+      },
+      "statusCode": 403
+    },
+    "UNAUTHORIZED": {
+      "responseTemplates": {
+        "application/json": "{\"message\": \"Authorization information is missing or invalid.\"}"
+      },
+      "statusCode": 401
+    }
+  },
+  "x-amazon-apigateway-request-validators": {
+    "Validate body": {
+      "validateRequestBody": true,
+      "validateRequestParameters": false
+    },
+    "Validate body, query string parameters, and headers": {
+      "validateRequestBody": true,
+      "validateRequestParameters": true
+    },
+    "Validate query string parameters and headers": {
+      "validateRequestBody": false,
+      "validateRequestParameters": true
+    }
+  }
+}
