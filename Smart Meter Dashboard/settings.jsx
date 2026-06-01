@@ -1,0 +1,1068 @@
+// Settings page — sidebar navigation + section content.
+// All values are mocked / persisted to localStorage. Test buttons simulate calls.
+
+const { useState: sState, useRef: sRef, useEffect: sEff, useMemo: sMemo } = React;
+
+const SETTINGS_KEY = "dash-settings-v1";
+
+const DEFAULT_SETTINGS = {
+  api: {
+    endpoint: "https://api.klima.example/v3",
+    apiKey: "kli_live_8a3f7c2d9e4b1a6f5c8d2e3b9a4f7c8d",
+    pollIntervalSec: 10,
+    timeoutSec: 5,
+    retries: 3,
+  },
+  database: {
+    retentionDays: 365,
+    backupEnabled: true,
+    backupTime: "03:00",
+    autoOptimize: true,
+  },
+  notifications: {
+    pushEnabled: true,
+    emailRecipients: ["betrieb@haus.example", "service@haus.example"],
+    routing: {
+      alarm: "instant",
+      warning: "5min",
+      system: "15min",
+    },
+    quietHoursEnabled: true,
+    quietFrom: "22:00",
+    quietTo: "06:00",
+  },
+  general: {
+    language: "de",
+    timeFormat: "24h",
+    autoRefreshSec: 30,
+    defaultStation: "living",
+  },
+  calibration: {
+    living:   { temperature: 0.0, humidity: 0 },
+    bedroom:  { temperature: 0.0, humidity: 0 },
+    outdoor:  { temperature: 0.0, humidity: 0 },
+    basement: { temperature: 0.0, humidity: 0 },
+  },
+};
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return DEFAULT_SETTINGS;
+    const stored = JSON.parse(raw);
+    // shallow merge with defaults to handle new keys
+    return {
+      ...DEFAULT_SETTINGS,
+      ...stored,
+      api: { ...DEFAULT_SETTINGS.api, ...(stored.api || {}) },
+      database: { ...DEFAULT_SETTINGS.database, ...(stored.database || {}) },
+      notifications: { ...DEFAULT_SETTINGS.notifications, ...(stored.notifications || {}) },
+      general: { ...DEFAULT_SETTINGS.general, ...(stored.general || {}) },
+      calibration: { ...DEFAULT_SETTINGS.calibration, ...(stored.calibration || {}) },
+    };
+  } catch (e) {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+// System snapshot is now fetched dynamically from /api/system/status
+
+const SETTINGS_SECTIONS = [
+  { id: "overview",      label: "Übersicht",          icon: "grid" },
+  { id: "api",           label: "API & Verbindung",   icon: "plug" },
+  { id: "database",      label: "Datenbank",          icon: "db" },
+  { id: "stations",      label: "Messstellen",        icon: "node" },
+  { id: "notifications", label: "Benachrichtigungen", icon: "bell" },
+  { id: "advanced",      label: "Erweitert",          icon: "sliders" },
+];
+
+function SettingsPage({ onClose }) {
+  const [section, setSection] = sState("overview");
+  const [settings, setSettings] = sState(loadSettings);
+  const [savedFlash, setSavedFlash] = sState(false);
+  const [systemStatus, setSystemStatus] = sState(null);
+
+  // Load configuration and diagnostics from backend on mount
+  sEff(() => {
+    fetch('/api/settings')
+      .then(res => res.json())
+      .then(data => {
+        setSettings(s => ({
+          ...s,
+          api: {
+            ...s.api,
+            apiKey: data.api_key || '',
+            apiRegion: data.api_region || 'eu',
+            pollIntervalSec: data.poll_interval_sec || 900
+          },
+          database: {
+            ...s.database,
+            retentionDays: data.retention_days || 365
+          }
+        }));
+      })
+      .catch(err => console.error('Failed to load backend settings:', err));
+
+    const loadStatus = () => {
+      fetch('/api/system/status')
+        .then(res => res.json())
+        .then(data => {
+          setSystemStatus(data);
+        })
+        .catch(err => console.error('Failed to load system diagnostics:', err));
+    };
+
+    loadStatus();
+    const intervalId = setInterval(loadStatus, 10000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  sEff(() => {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+    setSavedFlash(true);
+    const flashId = setTimeout(() => setSavedFlash(false), 1200);
+
+    // Save to backend with a 1-second debounce to avoid spamming keystrokes
+    const saveId = setTimeout(() => {
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: settings.api.apiKey,
+          api_region: settings.api.apiRegion || 'eu',
+          poll_interval_sec: settings.api.pollIntervalSec,
+          retention_days: settings.database.retentionDays
+        })
+      })
+        .then(() => {
+          // Immediately trigger status refresh after settings update
+          fetch('/api/system/status')
+            .then(res => res.json())
+            .then(data => setSystemStatus(data))
+            .catch(() => {});
+        })
+        .catch(err => console.error('Failed to save backend settings:', err));
+    }, 1000);
+
+    return () => {
+      clearTimeout(flashId);
+      clearTimeout(saveId);
+    };
+  }, [settings]);
+
+  function update(path, value) {
+    setSettings((s) => {
+      const next = { ...s };
+      const parts = path.split(".");
+      let cur = next;
+      for (let i = 0; i < parts.length - 1; i++) {
+        cur[parts[i]] = { ...cur[parts[i]] };
+        cur = cur[parts[i]];
+      }
+      cur[parts[parts.length - 1]] = value;
+      return next;
+    });
+  }
+
+  const ctx = { settings, update };
+  let body = null;
+  if (section === "overview")      body = <OverviewSection settings={settings} systemStatus={systemStatus} />;
+  if (section === "api")           body = <ApiSection settings={settings} update={update} systemStatus={systemStatus} />;
+  if (section === "database")      body = <DatabaseSection settings={settings} update={update} systemStatus={systemStatus} />;
+  if (section === "stations")      body = <StationsSection {...ctx} />;
+  if (section === "notifications") body = <NotificationsSection {...ctx} />;
+  if (section === "advanced")      body = <AdvancedSection {...ctx} onReset={() => setSettings(DEFAULT_SETTINGS)} />;
+
+  return (
+    <div className="settings-shell">
+      <aside className="settings-side">
+        <div className="settings-side-head">Einstellungen</div>
+        <nav className="settings-nav">
+          {SETTINGS_SECTIONS.map((s) => (
+            <button key={s.id}
+                    className={`settings-nav-item ${section === s.id ? "active" : ""}`}
+                    onClick={() => setSection(s.id)}>
+              <NavIcon id={s.icon} />
+              <span>{s.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="settings-side-foot">
+          <div className={`save-pill ${savedFlash ? "show" : ""}`}>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2.5 6 5 8.5 9.5 3.5"/></svg>
+            Gespeichert
+          </div>
+        </div>
+      </aside>
+      <main className="settings-main">
+        <div className="settings-content">{body}</div>
+      </main>
+    </div>
+  );
+}
+
+// ---------- Sections ----------
+function OverviewSection({ settings, systemStatus }) {
+  const D = window.DASH_DATA;
+  const stationsOnline = D.stationOrder.filter((id) => D.stations[id].online).length;
+  const stationsTotal  = D.stationOrder.length;
+
+  if (!systemStatus) {
+    return (
+      <>
+        <SectionHead title="Systemübersicht" sub="Zustand aller verbundenen Dienste und Komponenten." />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', color: 'var(--text-muted)' }}>
+          <Spinner /> <span style={{ marginLeft: '8px' }}>Lade Systemdiagnose...</span>
+        </div>
+      </>
+    );
+  }
+
+  const { database, scheduler, storage, api } = systemStatus;
+
+  // Format API status
+  const apiStatus = api.status;
+  const apiValue = api.apiKeyConfigured ? "Schlüssel Aktiv" : "Nicht Konfiguriert";
+  const apiSub = `Region: ${api.region.toUpperCase()} · Letzter Sync: ${scheduler.lastSyncStatus === 'success' ? 'Erfolgreich' : scheduler.lastSyncStatus === 'skipped' ? 'Übersprungen' : scheduler.lastSyncStatus === 'error' ? 'Fehler' : 'Nie'}`;
+
+  // Format Database status
+  const dbStatus = database.status;
+  const dbValue = database.engine; // "SQLite 3"
+  const dbSub = `${database.rowCount.toLocaleString("de-DE")} Datensätze · Größe: ${formatBytes(database.sizeBytes)}`;
+
+  // Format Scheduler status
+  const schedulerStatus = scheduler.isActive ? "ok" : "warn";
+  const schedulerValue = scheduler.isActive ? `Intervall: ${Math.round(scheduler.pollIntervalSec / 60)} Min.` : "Deaktiviert";
+  const schedulerSub = `Zustand: ${scheduler.isSyncing ? "Synchronisiert..." : "Wartend"} · Letzter Sync: ${D.formatRelative(scheduler.lastSyncTime)}`;
+
+  return (
+    <>
+      <SectionHead title="Systemübersicht" sub="Zustand aller verbundenen Dienste und Komponenten." />
+      <div className="health-grid">
+        <HealthCard
+          status={apiStatus}
+          label="Testo Connect API"
+          value={apiValue}
+          sub={apiSub}
+          icon="plug"
+        />
+        <HealthCard
+          status={dbStatus}
+          label="Lokale Datenbank"
+          value={dbValue}
+          sub={dbSub}
+          icon="db"
+        />
+        <HealthCard
+          status={schedulerStatus}
+          label="Hintergrund-Scheduler"
+          value={schedulerValue}
+          sub={schedulerSub}
+          icon="bolt"
+        />
+        <HealthCard
+          status={stationsOnline === stationsTotal ? "ok" : "warn"}
+          label="Messstellen"
+          value={`${stationsOnline}/${stationsTotal} online`}
+          sub={D.stationOrder.map((id) => D.stations[id].name).join(" · ")}
+          icon="node"
+        />
+        <HealthCard
+          status={storage.status}
+          label="Speicherbelegung (Drive)"
+          value={`${storage.usedGb} / ${storage.totalGb} GB`}
+          sub={`${Math.round((storage.usedGb / storage.totalGb) * 100)} % belegt · Pfad: ../klima.db`}
+          icon="disk"
+          progress={storage.usedGb / storage.totalGb}
+        />
+        <HealthCard
+          status="ok"
+          label="Letzter Sync & Aufbewahrung"
+          value={`${settings.database.retentionDays} Tage`}
+          sub={`Ältester Messwert: ${database.oldestRecord ? new Date(database.oldestRecord).toLocaleDateString("de-DE") : 'Keine Daten'}`}
+          icon="archive"
+        />
+      </div>
+
+      <SectionHead title="Aktive Vorgänge" sub="Was das System gerade tut." compact />
+      <div className="ops-list">
+        {scheduler.isSyncing ? (
+          <OpRow status="running" label="Testo API Synchronisation" detail="Lese Messwerte und Gerätestatus aus testo Smart Connect API..." />
+        ) : (
+          <OpRow status="idle" label="Testo API Synchronisation" detail={`Nächste regelmäßige Synchronisation geplant (Intervall: ${Math.round(scheduler.pollIntervalSec / 60)} Min.)`} />
+        )}
+        <OpRow status="idle" label="Datenbereinigung (Retention)" detail={`Geplant nach jedem erfolgreichen Sync (Aufbewahrung: ${settings.database.retentionDays} Tage)`} />
+      </div>
+    </>
+  );
+}
+
+function ApiSection({ settings, update, systemStatus }) {
+  const [testing, setTesting] = sState(false);
+  const [showKey, setShowKey] = sState(false);
+  const [testResult, setTestResult] = sState(null);
+
+  function runTest() {
+    setTesting(true);
+    setTestResult(null);
+    fetch('/api/testo/measuring-objects')
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || 'Verbindung fehlgeschlagen');
+        }
+        return res.json();
+      })
+      .then((data) => {
+        setTesting(false);
+        setTestResult({ ok: true, msg: `${data.length} Messobjekt(e) erfolgreich geladen` });
+      })
+      .catch((err) => {
+        setTesting(false);
+        setTestResult({ ok: false, msg: err.message });
+      });
+  }
+
+  const hasStatus = !!systemStatus;
+  const currentStatus = hasStatus 
+    ? (systemStatus.scheduler.lastSyncStatus === 'error' ? 'err' : (systemStatus.api.apiKeyConfigured ? 'ok' : 'warn'))
+    : 'warn';
+  const lastSyncTime = hasStatus ? systemStatus.scheduler.lastSyncTime : null;
+  const lastSyncError = hasStatus ? systemStatus.scheduler.lastSyncError : null;
+
+  return (
+    <>
+      <SectionHead title="API & Verbindung" sub="Anbindung an den Klima-Datenservice." />
+
+      <Card>
+        <div className="card-head">
+          <StatusPill status={testResult ? (testResult.ok ? "ok" : "err") : currentStatus} />
+          <div className="card-head-text">
+            <div className="card-title">Live-Status (Testo Cloud Sync)</div>
+            <div className="card-sub">
+              {testResult
+                ? (testResult.ok ? `Test erfolgreich: ${testResult.msg}` : `Fehler: ${testResult.msg}`)
+                : lastSyncTime
+                  ? `Zuletzt synchronisiert: ${window.DASH_DATA.formatRelative(lastSyncTime)}${lastSyncError ? ` (Fehler: ${lastSyncError})` : ''}`
+                  : 'Noch nicht synchronisiert. Konfigurieren Sie den API-Schlüssel.'}
+            </div>
+          </div>
+          <button className={`btn ${testing ? "" : "primary"}`} onClick={runTest} disabled={testing}>
+            {testing ? <><Spinner /> Teste …</> : "Verbindung testen"}
+          </button>
+        </div>
+      </Card>
+
+      <Card>
+        <Field label="API-Schlüssel" hint="Wird zur Authentifizierung bei der Testo Smart Connect Cloud verwendet.">
+          <div className="input-row">
+            <input type={showKey ? "text" : "password"} value={settings.api.apiKey} onChange={(e) => update("api.apiKey", e.target.value)} />
+            <button className="btn ghost" onClick={() => setShowKey((v) => !v)} title={showKey ? "Verbergen" : "Anzeigen"}>
+              {showKey ? "Verbergen" : "Anzeigen"}
+            </button>
+          </div>
+        </Field>
+        <Field label="API-Region" hint="Die Region Ihrer Testo Smart Connect Cloud.">
+          <SegmentedControl
+            value={settings.api.apiRegion || 'eu'}
+            options={[{ value: 'eu', label: 'Europa (EU)' }, { value: 'us', label: 'Amerika (US)' }]}
+            onChange={(v) => update("api.apiRegion", v)}
+          />
+        </Field>
+        <div className="field-row">
+          <Field label={`Abfrage-Intervall · ${Math.round(settings.api.pollIntervalSec / 60)} min`}>
+            <input type="range" min="60" max="3600" step="60" value={settings.api.pollIntervalSec || 900}
+                   onChange={(e) => update("api.pollIntervalSec", +e.target.value)} />
+          </Field>
+          <Field label={`Timeout · ${settings.api.timeoutSec} s`}>
+            <input type="range" min="2" max="30" step="1" value={settings.api.timeoutSec}
+                   onChange={(e) => update("api.timeoutSec", +e.target.value)} />
+          </Field>
+          <Field label={`Wiederholungen · ${settings.api.retries}`}>
+            <input type="range" min="0" max="10" step="1" value={settings.api.retries}
+                   onChange={(e) => update("api.retries", +e.target.value)} />
+          </Field>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+function DatabaseSection({ settings, update, systemStatus }) {
+  const [optimizing, setOptimizing] = sState(false);
+  const [backupRunning, setBackupRunning] = sState(false);
+
+  const hasStatus = !!systemStatus;
+  const dbStatus = hasStatus ? systemStatus.database.status : 'ok';
+  const dbEngine = hasStatus ? systemStatus.database.engine : 'SQLite 3';
+  const dbLastWrite = hasStatus ? systemStatus.database.lastWrite : Date.now();
+  const dbSizeBytes = hasStatus ? systemStatus.database.sizeBytes : 0;
+  const dbRowCount = hasStatus ? systemStatus.database.rowCount : 0;
+  const dbOldest = hasStatus ? systemStatus.database.oldestRecord : Date.now();
+
+  return (
+    <>
+      <SectionHead title="Datenbank" sub="Speicherung der historischen Messdaten und Ereignisse." />
+
+      <Card>
+        <div className="card-head">
+          <StatusPill status={dbStatus} />
+          <div className="card-head-text">
+            <div className="card-title">{dbEngine}</div>
+            <div className="card-sub">
+              Verbunden · letzter Schreibvorgang {window.DASH_DATA.formatRelative(dbLastWrite)}
+            </div>
+          </div>
+        </div>
+        <div className="kv-grid">
+          <KV label="Größe"             value={formatBytes(dbSizeBytes)} />
+          <KV label="Datensätze"        value={dbRowCount.toLocaleString("de-DE")} />
+          <KV label="Ältester Eintrag"  value={dbOldest ? new Date(dbOldest).toLocaleDateString("de-DE") : 'Keine'} />
+          <KV label="Engine"            value={dbEngine} />
+        </div>
+      </Card>
+
+      <Card>
+        <Field label="Aufbewahrungszeit" hint="Wie lange Rohmessdaten gespeichert werden. Aggregierte Daten bleiben dauerhaft erhalten.">
+          <SegmentedControl
+            value={settings.database.retentionDays}
+            options={[
+              { value: 30,  label: "30 Tage" },
+              { value: 90,  label: "90 Tage" },
+              { value: 180, label: "6 Monate" },
+              { value: 365, label: "1 Jahr" },
+              { value: 730, label: "2 Jahre" },
+            ]}
+            onChange={(v) => update("database.retentionDays", v)}
+          />
+        </Field>
+
+        <div className="field-row">
+          <Field label="Automatisches Backup">
+            <Toggle checked={settings.database.backupEnabled} onChange={(v) => update("database.backupEnabled", v)}
+                    labelOn="Aktiv" labelOff="Deaktiviert" />
+          </Field>
+          <Field label="Backup-Uhrzeit">
+            <input type="time" value={settings.database.backupTime} onChange={(e) => update("database.backupTime", e.target.value)} disabled={!settings.database.backupEnabled} />
+          </Field>
+          <Field label="Index-Optimierung">
+            <Toggle checked={settings.database.autoOptimize} onChange={(v) => update("database.autoOptimize", v)}
+                    labelOn="Wöchentlich" labelOff="Manuell" />
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="card-title">Wartung</div>
+        <div className="card-sub" style={{ marginBottom: 12 }}>Einmalige Aktionen — laufen im Hintergrund.</div>
+        <div className="action-row">
+          <button className="btn" disabled={backupRunning} onClick={() => {
+            setBackupRunning(true);
+            setTimeout(() => setBackupRunning(false), 1800);
+          }}>
+            {backupRunning ? <><Spinner /> Backup läuft …</> : "Backup jetzt erstellen"}
+          </button>
+          <button className="btn" disabled={optimizing} onClick={() => {
+            setOptimizing(true);
+            setTimeout(() => setOptimizing(false), 2400);
+          }}>
+            {optimizing ? <><Spinner /> Optimiere …</> : "Datenbank optimieren"}
+          </button>
+          <button className="btn ghost">Daten exportieren (CSV)</button>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+function StationsSection({ settings, update }) {
+  const D = window.DASH_DATA;
+  const [editingId, setEditingId] = sState(null);
+  const [adding, setAdding] = sState(false);
+
+  // Form states
+  const [formId, setFormId] = sState('');
+  const [formName, setFormName] = sState('');
+  const [formLocation, setFormLocation] = sState('');
+  const [formMoUuid, setFormMoUuid] = sState('');
+  const [formDeviceUuid, setFormDeviceUuid] = sState('');
+  const [formCalTemp, setFormCalTemp] = sState(0);
+  const [formCalHum, setFormCalHum] = sState(0);
+
+  // Device list from local backend proxy (one entry per physical logger)
+  const [deviceList, setDeviceList] = sState([]);
+  const [loadingDevices, setLoadingDevices] = sState(false);
+  const [deviceError, setDeviceError] = sState(null);
+
+  sEff(() => {
+    if (!editingId && !adding) return;
+    setLoadingDevices(true);
+    setDeviceError(null);
+    fetch('/api/testo/devices')
+      .then(res => {
+        if (!res.ok) throw new Error('API-Fehler oder API-Schlüssel nicht konfiguriert');
+        return res.json();
+      })
+      .then(data => {
+        setDeviceList(data || []);
+        setLoadingDevices(false);
+      })
+      .catch(err => {
+        setDeviceError(err.message);
+        setLoadingDevices(false);
+      });
+  }, [editingId, adding]);
+
+  function startEdit(s) {
+    setEditingId(s.id);
+    setAdding(false);
+    setFormId(s.id);
+    setFormName(s.name);
+    setFormLocation(s.location || '');
+    setFormMoUuid(s.mo_uuid || '');
+    setFormDeviceUuid(s.device_uuid || '');
+    const cal = settings.calibration[s.id] || { temperature: 0, humidity: 0 };
+    setFormCalTemp(cal.temperature);
+    setFormCalHum(cal.humidity);
+  }
+
+  function startAdd() {
+    setAdding(true);
+    setEditingId(null);
+    setFormId('');
+    setFormName('');
+    setFormLocation('');
+    setFormMoUuid('');
+    setFormDeviceUuid('');
+    setFormCalTemp(0);
+    setFormCalHum(0);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setAdding(false);
+  }
+
+  function saveEdit() {
+    const payload = {
+      id: formId,
+      name: formName,
+      location: formLocation,
+      mo_uuid: formMoUuid || null,
+      device_uuid: formDeviceUuid || null
+    };
+
+    fetch('/api/stations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+      .then(res => res.json())
+      .then(() => {
+        // Save calibration offsets to local settings
+        update(`calibration.${formId}`, { temperature: formCalTemp, humidity: formCalHum });
+        // Force reload dashboard data
+        if (window.DASH_DATA && window.DASH_DATA.forceApiRefresh) {
+          window.DASH_DATA.forceApiRefresh();
+        }
+        setEditingId(null);
+        setAdding(false);
+      })
+      .catch(err => console.error('Error saving station:', err));
+  }
+
+  function deleteStation(sid, name) {
+    if (confirm(`Messstelle "${name}" (${sid}) wirklich löschen? Alle zugehörigen Verlaufsdaten werden unwiderruflich aus der Datenbank entfernt.`)) {
+      fetch(`/api/stations/${sid}`, { method: 'DELETE' })
+        .then(res => res.json())
+        .then(() => {
+          if (window.DASH_DATA && window.DASH_DATA.forceApiRefresh) {
+            window.DASH_DATA.forceApiRefresh();
+          }
+        })
+        .catch(err => console.error('Error deleting station:', err));
+    }
+  }
+
+  if (editingId || adding) {
+    return (
+      <>
+        <SectionHead
+          title={adding ? "Messstelle hinzufügen" : `Messstelle bearbeiten: ${formName}`}
+          sub="Zuweisung zu einem physikalischen Sensor in der testo Cloud konfigurieren."
+        />
+        <Card>
+          <Field label="Messstellen-ID (Kürzel)" hint="Eindeutiger Bezeichner, z. B. 'living' oder 'bedroom'. Darf nach Erstellung nicht geändert werden.">
+            <input
+              type="text"
+              value={formId}
+              onChange={(e) => setFormId(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+              disabled={!adding}
+              placeholder="z. B. küche"
+            />
+          </Field>
+          <Field label="Anzeigename" hint="Name der Messstelle im Dashboard (z. B. 'Küche').">
+            <input
+              type="text"
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
+              placeholder="z. B. Küche"
+            />
+          </Field>
+          <Field label="Standort / Beschreibung" hint="Genaue Ortsangabe (z. B. 'EG · Nordseite').">
+            <input
+              type="text"
+              value={formLocation}
+              onChange={(e) => setFormLocation(e.target.value)}
+              placeholder="z. B. EG · Nordseite"
+            />
+          </Field>
+          <Field label="Testo Gerät (Logger)" hint="Verbindet diese Messstelle mit einem physikalischen Logger aus Ihrem testo Account. Alle Sensoren/Kanäle des Geräts fließen in die Metriken.">
+            {loadingDevices ? (
+              <div style={{ padding: '8px 0' }}><Spinner /> Lade Geräte aus testo Cloud...</div>
+            ) : deviceError ? (
+              <div style={{ color: 'var(--alarm)', fontSize: '12px', padding: '8px 0' }}>
+                ⚠️ {deviceError}
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  Bitte stellen Sie sicher, dass Ihr API-Schlüssel in der Rubrik 'API & Verbindung' korrekt eingetragen ist.
+                </div>
+              </div>
+            ) : (
+              <select
+                value={formDeviceUuid}
+                onChange={(e) => setFormDeviceUuid(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '9px 11px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border-strong)',
+                  background: 'var(--surface)',
+                  color: 'var(--text)',
+                  outline: 'none',
+                  fontSize: '13px'
+                }}
+              >
+                <option value="">-- Kein Gerät zugewiesen (statische Simulation) --</option>
+                {deviceList.map(dev => (
+                  <option key={dev.device_uuid} value={dev.device_uuid}>
+                    {dev.name}{dev.serial_no ? ` · ${dev.serial_no}` : ''} ({dev.device_uuid.substring(0, 8)}...)
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <Field label="Geräte-UUID (manuell)" hint="Die device_uuid des Loggers. Wird bei Geräteauswahl automatisch befüllt; nur für manuelle Overrides ändern.">
+            <input
+              type="text"
+              value={formDeviceUuid}
+              onChange={(e) => setFormDeviceUuid(e.target.value)}
+              placeholder="Wird automatisch befüllt oder manuell eingeben"
+            />
+          </Field>
+          
+          <div className="field-row">
+            <Field label="Temperatur Offset (K)" hint="Kompensation von Messabweichungen.">
+              <input
+                type="number"
+                step="0.1"
+                value={formCalTemp}
+                onChange={(e) => setFormCalTemp(parseFloat(e.target.value) || 0)}
+              />
+            </Field>
+            <Field label="Feuchtigkeit Offset (%)" hint="Kompensation von Messabweichungen.">
+              <input
+                type="number"
+                step="0.5"
+                value={formCalHum}
+                onChange={(e) => setFormCalHum(parseFloat(e.target.value) || 0)}
+              />
+            </Field>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+            <button className="btn ghost" onClick={cancelEdit}>Abbrechen</button>
+            <button className="btn primary" onClick={saveEdit} disabled={!formId || !formName}>Zuweisung Speichern</button>
+          </div>
+        </Card>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+        <SectionHead title="Messstellen & Zuweisungs-Manager" sub="Verbinden Sie lokale Dashboard-Räume mit Ihren physikalischen Testo Cloud-Fühlern." />
+        <button className="btn primary" onClick={startAdd}>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" style={{ marginRight: '6px' }}><path d="M7 2v10M2 7h10"/></svg>
+          Messstelle hinzufügen
+        </button>
+      </div>
+
+      <Card noPad>
+        <table className="settings-table">
+          <thead>
+            <tr>
+              <th>Messstelle / Details</th>
+              <th>Status</th>
+              <th>Verbindung</th>
+              <th>API-Zuweisung</th>
+              <th className="th-right" style={{ paddingRight: '24px' }}>Aktionen</th>
+            </tr>
+          </thead>
+          <tbody>
+            {D.stationOrder.map((sid) => {
+              const s = D.stations[sid];
+              if (!s) return null;
+              const hasAssignment = !!(s.mo_uuid || s.device_uuid);
+              const cal = settings.calibration[sid] || { temperature: 0, humidity: 0 };
+              
+              return (
+                <tr key={sid}>
+                  <td>
+                    <div className="cell-name">
+                      <span className={`station-dot ${s.online ? "on" : "off"}`} />
+                      <div>
+                        <div className="cell-title">{s.name}</div>
+                        <div className="cell-sub">
+                          {s.location} · <span className="mono">{sid}</span>
+                          {(cal.temperature !== 0 || cal.humidity !== 0) && (
+                            <span style={{ color: 'var(--accent-dark)', fontWeight: '500', marginLeft: '6px' }}>
+                              (Cal: {cal.temperature > 0 ? `+${cal.temperature}` : cal.temperature}K, {cal.humidity > 0 ? `+${cal.humidity}` : cal.humidity}%)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <StatusBadge status={s.online ? "ok" : "err"} label={s.online ? "Online" : "Offline"} />
+                  </td>
+                  <td className="mono" style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    {s.battery !== null ? "🔋 " + s.battery + "%" : "🔋 —"}
+                    <br />
+                    {s.signal !== null ? "📶 " + s.signal + "%" : "📶 —"}
+                  </td>
+                  <td>
+                    {hasAssignment ? (
+                      <div>
+                        <div style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text)' }}>
+                          Messobjekt: <span className="mono" style={{ fontSize: '11px', color: 'var(--accent-dark)' }}>{s.mo_uuid ? s.mo_uuid.substring(0, 8) : '—'}...</span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          Sensor: <span className="mono">{s.device_uuid ? s.device_uuid.substring(0, 8) : '—'}...</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <span style={{ fontStyle: 'italic', color: 'var(--text-faint)' }}>Nur lokale Simulation</span>
+                    )}
+                  </td>
+                  <td className="td-right" style={{ paddingRight: '24px' }}>
+                    <div style={{ display: 'inline-flex', gap: '6px' }}>
+                      <button className="btn ghost" title="Zuweisung & Details bearbeiten" onClick={() => startEdit(s)}>
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 10.5V12h1.5L11 4.5 9.5 3 2 10.5z"/></svg>
+                        Bearbeiten
+                      </button>
+                      <button className="btn ghost" style={{ color: 'var(--alarm)' }} title="Löschen" onClick={() => deleteStation(sid, s.name)}>
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 3l8 8M11 3l-8 8"/></svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Card>
+    </>
+  );
+}
+
+function NotificationsSection({ settings, update }) {
+  const [newEmail, setNewEmail] = sState("");
+
+  function addEmail() {
+    const v = newEmail.trim();
+    if (!v || !v.includes("@")) return;
+    if (settings.notifications.emailRecipients.includes(v)) return;
+    update("notifications.emailRecipients", [...settings.notifications.emailRecipients, v]);
+    setNewEmail("");
+  }
+  function removeEmail(e) {
+    update("notifications.emailRecipients", settings.notifications.emailRecipients.filter((x) => x !== e));
+  }
+
+  const ROUTING_OPTS = [
+    { value: "instant", label: "Sofort" },
+    { value: "5min",    label: "Nach 5 min" },
+    { value: "15min",   label: "Nach 15 min" },
+    { value: "1h",      label: "Nach 1 h" },
+    { value: "off",     label: "Aus" },
+  ];
+
+  return (
+    <>
+      <SectionHead title="Benachrichtigungen" sub="Wer wird wann wie informiert?" />
+
+      <Card>
+        <Field label="Push-Benachrichtigungen" hint="Native Web-Push an angemeldete Browser/Geräte.">
+          <Toggle checked={settings.notifications.pushEnabled} onChange={(v) => update("notifications.pushEnabled", v)}
+                  labelOn="Aktiv" labelOff="Deaktiviert" />
+        </Field>
+
+        <Field label="E-Mail-Empfänger" hint="Alle Empfänger erhalten Alarme und gewählte Warnungen.">
+          <div className="chips">
+            {settings.notifications.emailRecipients.map((e) => (
+              <span className="chip" key={e}>
+                <span>{e}</span>
+                <button onClick={() => removeEmail(e)} title="Entfernen">×</button>
+              </span>
+            ))}
+            <div className="chip-input">
+              <input type="email" placeholder="adresse@beispiel.de"
+                     value={newEmail} onChange={(e) => setNewEmail(e.target.value)}
+                     onKeyDown={(e) => e.key === "Enter" && addEmail()} />
+              <button className="btn" onClick={addEmail}>Hinzufügen</button>
+            </div>
+          </div>
+        </Field>
+      </Card>
+
+      <Card>
+        <div className="card-title">Verzögerung pro Schweregrad</div>
+        <div className="card-sub" style={{ marginBottom: 12 }}>
+          Verhindert Spam: nur Meldungen, die nach der Verzögerung noch aktiv sind, werden ausgesendet.
+        </div>
+        <Field label="Alarm">
+          <SegmentedControl value={settings.notifications.routing.alarm} options={ROUTING_OPTS}
+                            onChange={(v) => update("notifications.routing.alarm", v)} />
+        </Field>
+        <Field label="Warnung">
+          <SegmentedControl value={settings.notifications.routing.warning} options={ROUTING_OPTS}
+                            onChange={(v) => update("notifications.routing.warning", v)} />
+        </Field>
+        <Field label="System">
+          <SegmentedControl value={settings.notifications.routing.system} options={ROUTING_OPTS}
+                            onChange={(v) => update("notifications.routing.system", v)} />
+        </Field>
+      </Card>
+
+      <Card>
+        <Field label="Stiller Modus" hint="Keine Push-Nachrichten im angegebenen Zeitraum (Alarme werden trotzdem zugestellt).">
+          <Toggle checked={settings.notifications.quietHoursEnabled} onChange={(v) => update("notifications.quietHoursEnabled", v)}
+                  labelOn="Aktiv" labelOff="Deaktiviert" />
+        </Field>
+        {settings.notifications.quietHoursEnabled && (
+          <div className="field-row">
+            <Field label="Von">
+              <input type="time" value={settings.notifications.quietFrom} onChange={(e) => update("notifications.quietFrom", e.target.value)} />
+            </Field>
+            <Field label="Bis">
+              <input type="time" value={settings.notifications.quietTo} onChange={(e) => update("notifications.quietTo", e.target.value)} />
+            </Field>
+          </div>
+        )}
+      </Card>
+    </>
+  );
+}
+
+function AdvancedSection({ settings, update, onReset }) {
+  const D = window.DASH_DATA;
+  return (
+    <>
+      <SectionHead title="Erweitert" sub="Darstellung, Daten und Über das System." />
+
+      <Card>
+        <div className="field-row">
+          <Field label="Sprache">
+            <SegmentedControl value={settings.general.language} options={[{value:"de",label:"Deutsch"},{value:"en",label:"English"}]}
+                              onChange={(v) => update("general.language", v)} />
+          </Field>
+          <Field label="Zeitformat">
+            <SegmentedControl value={settings.general.timeFormat} options={[{value:"24h",label:"24 Std"},{value:"12h",label:"12 Std"}]}
+                              onChange={(v) => update("general.timeFormat", v)} />
+          </Field>
+          <Field label={`Auto-Aktualisierung · ${settings.general.autoRefreshSec} s`}>
+            <input type="range" min="5" max="300" step="5" value={settings.general.autoRefreshSec}
+                   onChange={(e) => update("general.autoRefreshSec", +e.target.value)} />
+          </Field>
+        </div>
+        <Field label="Standard-Messstelle beim Laden">
+          <SegmentedControl
+            value={settings.general.defaultStation}
+            options={D.stationOrder.map((sid) => ({ value: sid, label: D.stations[sid].name }))}
+            onChange={(v) => update("general.defaultStation", v)}
+          />
+        </Field>
+      </Card>
+
+      <Card>
+        <div className="card-title">Daten</div>
+        <div className="action-row">
+          <button className="btn">Konfiguration exportieren (JSON)</button>
+          <button className="btn">Konfiguration importieren</button>
+          <button className="btn ghost">Lokalen Cache leeren</button>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="card-title">Zurücksetzen</div>
+        <div className="card-sub" style={{ marginBottom: 12 }}>
+          Setzt alle Einstellungen auf Werkseinstellungen zurück. Layout und Schwellwerte bleiben erhalten.
+        </div>
+        <button className="btn danger" onClick={() => { if (confirm("Einstellungen auf Werkseinstellungen zurücksetzen?")) onReset(); }}>
+          Auf Werkseinstellungen zurücksetzen
+        </button>
+      </Card>
+
+      <Card>
+        <div className="card-title">Über</div>
+        <div className="kv-grid two-col">
+          <KV label="Version"    value="Klima Dashboard 1.0.0" />
+          <KV label="Build"      value="2026-05-29 · #local" />
+          <KV label="API"        value="v1.0 · Testo Smart Connect" />
+          <KV label="Datenbank"  value="SQLite 3" />
+          <KV label="Lizenz"     value="Open Source" />
+          <KV label="Support"    value="https://github.com/dniehof/testo-smart-abruf" />
+        </div>
+      </Card>
+    </>
+  );
+}
+
+// ---------- Primitives ----------
+function SectionHead({ title, sub, compact }) {
+  return (
+    <div className={`section-head ${compact ? "compact" : ""}`}>
+      <h2>{title}</h2>
+      {sub && <p>{sub}</p>}
+    </div>
+  );
+}
+
+function Card({ children, noPad }) {
+  return <div className={`card ${noPad ? "no-pad" : ""}`}>{children}</div>;
+}
+
+function Field({ label, hint, children }) {
+  return (
+    <div className="setting-field">
+      <div className="setting-field-label">
+        <span className="lbl">{label}</span>
+        {hint && <span className="hint">{hint}</span>}
+      </div>
+      <div className="setting-field-control">{children}</div>
+    </div>
+  );
+}
+
+function Toggle({ checked, onChange, labelOn = "An", labelOff = "Aus" }) {
+  return (
+    <button className={`toggle ${checked ? "on" : ""}`} onClick={() => onChange(!checked)} role="switch" aria-checked={checked}>
+      <span className="toggle-knob" />
+      <span className="toggle-label">{checked ? labelOn : labelOff}</span>
+    </button>
+  );
+}
+
+function SegmentedControl({ value, options, onChange }) {
+  return (
+    <div className="segmented">
+      {options.map((o) => (
+        <button key={o.value} className={value === o.value ? "active" : ""} onClick={() => onChange(o.value)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function StatusPill({ status }) {
+  return (
+    <span className={`status-pill st-${status}`}>
+      <span className="status-pill-dot" />
+      {status === "ok"   && "OK"}
+      {status === "warn" && "Warnung"}
+      {status === "err"  && "Fehler"}
+    </span>
+  );
+}
+
+function StatusBadge({ status, label }) {
+  return (
+    <span className={`status-badge st-${status}`}>
+      <span className="status-badge-dot" />{label}
+    </span>
+  );
+}
+
+function HealthCard({ status, label, value, sub, icon, progress }) {
+  return (
+    <div className={`health-card st-${status}`}>
+      <div className="hc-top">
+        <span className="hc-icon"><NavIcon id={icon} /></span>
+        <StatusBadge status={status} label={status === "ok" ? "OK" : status === "warn" ? "Achtung" : "Fehler"} />
+      </div>
+      <div className="hc-value">{value}</div>
+      <div className="hc-label">{label}</div>
+      {progress != null && (
+        <div className="hc-progress"><span style={{ width: `${Math.min(100, progress * 100)}%` }} /></div>
+      )}
+      <div className="hc-sub">{sub}</div>
+    </div>
+  );
+}
+
+function OpRow({ status, label, detail }) {
+  return (
+    <div className={`op-row st-${status}`}>
+      {status === "running" ? <Spinner /> : <span className={`op-dot st-${status}`} />}
+      <div className="op-text">
+        <div className="op-label">{label}</div>
+        <div className="op-detail">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+function KV({ label, value }) {
+  return (
+    <div className="kv">
+      <span className="kv-label">{label}</span>
+      <span className="kv-value">{value}</span>
+    </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg className="spinner" width="14" height="14" viewBox="0 0 14 14">
+      <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1.8"/>
+      <path d="M7 2a5 5 0 0 1 5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+function NavIcon({ id }) {
+  switch (id) {
+    case "grid":    return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><rect x="1.5" y="1.5" width="4.5" height="4.5" rx="1"/><rect x="8" y="1.5" width="4.5" height="4.5" rx="1"/><rect x="1.5" y="8" width="4.5" height="4.5" rx="1"/><rect x="8" y="8" width="4.5" height="4.5" rx="1"/></svg>;
+    case "plug":    return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M5 1v3M9 1v3M3.5 4h7v3a3.5 3.5 0 0 1-7 0V4zM7 10.5V13"/></svg>;
+    case "db":      return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><ellipse cx="7" cy="3" rx="5" ry="1.6"/><path d="M2 3v8a5 1.6 0 0 0 10 0V3M2 7a5 1.6 0 0 0 10 0"/></svg>;
+    case "node":    return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><circle cx="3" cy="3" r="1.5"/><circle cx="11" cy="3" r="1.5"/><circle cx="3" cy="11" r="1.5"/><circle cx="11" cy="11" r="1.5"/><circle cx="7" cy="7" r="1.5"/><path d="M4.4 4.4 5.6 5.6M9.6 4.4 8.4 5.6M4.4 9.6 5.6 8.4M9.6 9.6 8.4 8.4"/></svg>;
+    case "bell":    return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M3 10V7a4 4 0 0 1 8 0v3l1 1.5H2zM5.5 12a1.5 1.5 0 0 0 3 0"/></svg>;
+    case "sliders": return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M2 4h10M2 7h10M2 10h10"/><circle cx="4" cy="4" r="1.4" fill="white"/><circle cx="9" cy="7" r="1.4" fill="white"/><circle cx="5.5" cy="10" r="1.4" fill="white"/></svg>;
+    case "bolt":    return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"><path d="M8 1 3 8h3l-1 5 5-7H7z"/></svg>;
+    case "disk":    return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><rect x="1.5" y="2" width="11" height="10" rx="1.5"/><rect x="4" y="2" width="6" height="4"/><circle cx="7" cy="9" r="1.4"/></svg>;
+    case "archive": return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><rect x="1.5" y="2.5" width="11" height="3" rx="0.5"/><path d="M2.5 5.5h9V12h-9zM5.5 8h3"/></svg>;
+    default:        return null;
+  }
+}
+
+function formatBytes(b) {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 ** 2) return `${(b / 1024).toFixed(1)} kB`;
+  if (b < 1024 ** 3) return `${(b / 1024 ** 2).toFixed(1)} MB`;
+  return `${(b / 1024 ** 3).toFixed(2)} GB`;
+}
+
+Object.assign(window, { SettingsPage });
