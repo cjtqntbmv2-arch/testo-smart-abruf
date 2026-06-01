@@ -110,3 +110,70 @@ test('Sync completes without throwing when device properties fail', async () => 
   assert.strictEqual(status.lastSyncStatus, 'error');
   closeDb();
 });
+
+test('Multi-sensor device: OR filter covers all sensors and both metrics are distributed', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
+
+  const client = {
+    lastMeasurementParams: null,
+    async fetchDeviceProperties() {
+      return [
+        { device_uuid: 'dev-1', device_serial_no: 'SN1', sensor_uuid: 's-temp', sensor_serial_no: 'SN1-A', channel_physical_property_name: 'Temperature' },
+        { device_uuid: 'dev-1', device_serial_no: 'SN1', sensor_uuid: 's-hum',  sensor_serial_no: 'SN1-B', channel_physical_property_name: 'Humidity' }
+      ];
+    },
+    async fetchDeviceStatus() { return []; },
+    async fetchMeasurements(params) {
+      this.lastMeasurementParams = params;
+      return [
+        { uuid: 'm-t', sensor_uuid: 's-temp', timestamp: '2026-05-29T06:00:00Z', measurement: 21.0, physical_property_name: 'Temperature', physical_unit: '°C' },
+        { uuid: 'm-h', sensor_uuid: 's-hum',  timestamp: '2026-05-29T06:00:00Z', measurement: 48.0, physical_property_name: 'Humidity', physical_unit: '%' }
+      ];
+    },
+    async fetchAlarms() { return []; }
+  };
+
+  await schedulerModule.runSyncCycle(client);
+
+  const f = client.lastMeasurementParams.odata.$filter;
+  assert.ok(f.includes("sensor_uuid eq 's-temp'"));
+  assert.ok(f.includes("sensor_uuid eq 's-hum'"));
+  assert.ok(f.includes(' or '));
+
+  const t = db.prepare("SELECT station_id, physical_property FROM measurements WHERE uuid = 'm-t'").get();
+  const h = db.prepare("SELECT station_id, physical_property FROM measurements WHERE uuid = 'm-h'").get();
+  assert.strictEqual(t.station_id, 'living');
+  assert.strictEqual(t.physical_property, 'temperature');
+  assert.strictEqual(h.station_id, 'living');
+  assert.strictEqual(h.physical_property, 'humidity');
+  closeDb();
+});
+
+test('Unmatched alarm is counted and not inserted', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
+
+  const client = {
+    async fetchDeviceProperties() {
+      return [{ device_uuid: 'dev-1', device_serial_no: 'SN1', sensor_uuid: 's-1', sensor_serial_no: 'SN1-A', channel_physical_property_name: 'Temperature' }];
+    },
+    async fetchDeviceStatus() { return []; },
+    async fetchMeasurements() { return []; },
+    async fetchAlarms() {
+      return [{ uuid: 'alarm-orphan', serial_no: 'UNKNOWN-SERIAL', alarm_source_uuid: 'unknown-uuid', alarm_severity: 'Alarm', alarm_status: 'Active', alarm_value: 1, physical_value: 'Temperature', alarm_time: '2026-05-29T06:00:00Z' }];
+    }
+  };
+
+  await schedulerModule.runSyncCycle(client);
+
+  const row = db.prepare("SELECT uuid FROM events WHERE uuid = 'alarm-orphan'").get();
+  assert.strictEqual(row, undefined, 'orphan alarm should not be inserted');
+  const st = schedulerModule.getSchedulerStatus();
+  assert.strictEqual(st.diagnostics.alarmsUnmatched, 1);
+  closeDb();
+});

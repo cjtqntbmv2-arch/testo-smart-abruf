@@ -39,7 +39,8 @@ function buildDeviceBridge(properties) {
 // Build an OData $filter matching any of the given sensor uuids.
 // Returns null when there are no sensors (caller should skip the request).
 function buildSensorFilter(sensorUuids) {
-  const list = Array.from(sensorUuids || []).filter(Boolean);
+  // Only allow id-shaped tokens (letters, digits, '-', '_') to avoid breaking/injecting the OData string.
+  const list = Array.from(sensorUuids || []).filter((s) => typeof s === 'string' && /^[A-Za-z0-9_-]+$/.test(s));
   if (list.length === 0) return null;
   return list.map((s) => `sensor_uuid eq '${s}'`).join(' or ');
 }

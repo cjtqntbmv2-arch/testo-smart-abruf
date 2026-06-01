@@ -39,7 +39,12 @@ async function runSyncCycle(customClient = null) {
     // Station lookup by device_uuid
     const stationRows = db.prepare("SELECT id, device_uuid FROM stations WHERE device_uuid IS NOT NULL AND device_uuid != ''").all();
     const deviceToStation = new Map();
-    for (const s of stationRows) deviceToStation.set(s.device_uuid, s.id);
+    for (const s of stationRows) {
+      if (deviceToStation.has(s.device_uuid)) {
+        console.warn(`Multiple stations share device_uuid ${s.device_uuid}; station '${s.id}' overrides '${deviceToStation.get(s.device_uuid)}'. One device maps to one station.`);
+      }
+      deviceToStation.set(s.device_uuid, s.id);
+    }
 
     // 0. Device Properties -> bridge maps
     let bridge = { sensorToDevice: new Map(), deviceSensors: new Map(), serialToDevice: new Map(), devices: new Set() };
@@ -95,10 +100,18 @@ async function runSyncCycle(customClient = null) {
       if (!filter) {
         console.log('Skipping measurement sync: no sensors resolved for assigned devices.');
       } else {
-        const latest = db.prepare("SELECT max(timestamp) as max_ts FROM measurements").get();
-        const fromDate = (latest && latest.max_ts)
-          ? new Date(latest.max_ts + 1000)
-          : new Date(Date.now() - 24 * 3600 * 1000);
+        // Window starts at the most-lagging assigned station so none is under-fetched.
+        // INSERT OR IGNORE dedupes rows re-fetched for fresher stations.
+        const dayAgo = Date.now() - 24 * 3600 * 1000;
+        const maxTsStmt = db.prepare("SELECT max(timestamp) as max_ts FROM measurements WHERE station_id = ?");
+        let windowStart = Date.now();
+        for (const s of stationRows) {
+          if (!bridge.deviceSensors.has(s.device_uuid)) continue;
+          const row = maxTsStmt.get(s.id);
+          const stationStart = (row && row.max_ts) ? row.max_ts + 1000 : dayAgo;
+          if (stationStart < windowStart) windowStart = stationStart;
+        }
+        const fromDate = new Date(windowStart);
 
         const measurements = await client.fetchMeasurements({
           date_time_from: fromDate.toISOString(),
@@ -144,9 +157,9 @@ async function runSyncCycle(customClient = null) {
         for (const a of alarms) {
           const dev = bridge.serialToDevice.get(a.serial_no)
             || bridge.sensorToDevice.get(a.alarm_source_uuid)
-            || (bridge.deviceSensors.has(a.alarm_source_uuid) ? a.alarm_source_uuid : null);
+            || (bridge.devices.has(a.alarm_source_uuid) ? a.alarm_source_uuid : null);
           const stationId = dev ? deviceToStation.get(dev) : null;
-          if (!stationId) diag.alarmsUnmatched++;
+          if (!stationId) { diag.alarmsUnmatched++; continue; }
 
           insertAlarmStmt.run(
             a.uuid, stationId,
@@ -159,7 +172,11 @@ async function runSyncCycle(customClient = null) {
         }
       })();
 
-      saveSetting('last_alarm_sync_time', String(Date.now()));
+      // Only advance the watermark when the bridge was available, otherwise alarms
+      // fetched now could not be routed and would be lost on the next cycle.
+      if (bridge.devices.size > 0) {
+        saveSetting('last_alarm_sync_time', String(Date.now()));
+      }
     } catch (e) {
       console.error('Error syncing alarms:', e.message);
       hasError = true; errorMsg = e.message;

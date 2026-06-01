@@ -34,4 +34,5 @@ test('buildSensorFilter joins sensor uuids into an OData filter, null when empty
   assert.strictEqual(buildSensorFilter(new Set(['x'])), "sensor_uuid eq 'x'");
   assert.strictEqual(buildSensorFilter([]), null);
   assert.strictEqual(buildSensorFilter(null), null);
+  assert.strictEqual(buildSensorFilter(['good-1', "bad'value", 42]), "sensor_uuid eq 'good-1'");
 });
