@@ -87,6 +87,89 @@ test('Mock mode returns consistent device properties, measurements and status', 
   assert.ok(!sensorToDevice.has(status[0].device_uuid), 'device_uuid must be distinct from sensor uuids');
 });
 
+// --- Resilience: retry transient network failures + surface the real cause ---
+
+function transientError(code = 'ECONNRESET', msg = 'read ECONNRESET') {
+  const err = new TypeError('fetch failed');
+  err.cause = Object.assign(new Error(msg), { code });
+  return err;
+}
+
+test('_request retries a transient network failure then succeeds', async () => {
+  const client = new TestoClient('test-key', 'eu', { retryBaseMs: 0 });
+  const prev = global.fetch;
+  let attempts = 0;
+  global.fetch = async () => {
+    attempts++;
+    if (attempts < 3) throw transientError('UND_ERR_SOCKET', 'other side closed');
+    return { ok: true, json: async () => ({ status: 'ok' }) };
+  };
+  try {
+    const res = await client._request('/v3/devices/status', 'POST', {});
+    assert.strictEqual(attempts, 3);
+    assert.deepStrictEqual(res, { status: 'ok' });
+  } finally {
+    global.fetch = prev;
+  }
+});
+
+test('_request surfaces the underlying cause after exhausting retries', async () => {
+  const client = new TestoClient('test-key', 'eu', { retryBaseMs: 0 });
+  const prev = global.fetch;
+  global.fetch = async () => { throw transientError('ECONNRESET', 'read ECONNRESET'); };
+  try {
+    await assert.rejects(
+      client._request('/v3/devices/status'),
+      (e) => /ECONNRESET/.test(e.message) && e.cause && e.cause.code === 'ECONNRESET'
+    );
+  } finally {
+    global.fetch = prev;
+  }
+});
+
+test('_request does NOT retry an HTTP error response (4xx/5xx)', async () => {
+  const client = new TestoClient('test-key', 'eu', { retryBaseMs: 0 });
+  const prev = global.fetch;
+  let attempts = 0;
+  global.fetch = async () => {
+    attempts++;
+    return {
+      ok: false,
+      status: 400,
+      arrayBuffer: async () => { const b = Buffer.from('bad request'); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); }
+    };
+  };
+  try {
+    await assert.rejects(client._request('/v3/devices/status'), /status: 400/);
+    assert.strictEqual(attempts, 1, 'HTTP error responses must not be retried');
+  } finally {
+    global.fetch = prev;
+  }
+});
+
+test('_downloadFiles retries a transient failure on the download URL', async () => {
+  const client = new TestoClient('test-key', 'eu', { retryBaseMs: 0 });
+  const prev = global.fetch;
+  let attempts = 0;
+  global.fetch = async () => {
+    attempts++;
+    if (attempts < 2) throw transientError('ETIMEDOUT', 'connect ETIMEDOUT');
+    const payload = JSON.stringify([{ uuid: 'row-1' }]);
+    return {
+      ok: true,
+      arrayBuffer: async () => { const b = Buffer.from(payload); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); }
+    };
+  };
+  try {
+    const data = await client._downloadFiles(['https://s3.example.com/late.json']);
+    assert.strictEqual(attempts, 2);
+    assert.strictEqual(data.length, 1);
+    assert.strictEqual(data[0].uuid, 'row-1');
+  } finally {
+    global.fetch = prev;
+  }
+});
+
 after(() => {
   global.fetch = originalFetch;
 });

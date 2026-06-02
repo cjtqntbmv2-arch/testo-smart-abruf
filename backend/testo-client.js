@@ -1,10 +1,38 @@
 const zlib = require('zlib');
 
 class TestoClient {
-  constructor(apiKey, region = 'eu') {
+  constructor(apiKey, region = 'eu', opts = {}) {
     this.apiKey = apiKey;
     this.region = region;
     this.baseUrl = `https://data-api.${region}.smartconnect.testo.com`;
+    this.retryAttempts = opts.retryAttempts ?? 3;
+    this.retryBaseMs = opts.retryBaseMs ?? 500;
+  }
+
+  // Long-running processes hit transient network failures (stale keep-alive
+  // sockets after sleep/wake, brief DNS/connection drops). fetch() rejects with
+  // a generic "fetch failed" TypeError whose real reason lives in error.cause.
+  // Retry the transport-level rejection with exponential backoff; on final
+  // failure throw an Error that surfaces the cause so it is diagnosable.
+  // A returned response (even a non-ok HTTP status) is NOT retried — that is the
+  // caller's concern.
+  async _fetchWithRetry(url, options) {
+    let lastErr;
+    for (let i = 0; i < this.retryAttempts; i++) {
+      try {
+        return await fetch(url, options);
+      } catch (err) {
+        lastErr = err;
+        if (i < this.retryAttempts - 1) {
+          await new Promise(resolve => setTimeout(resolve, this.retryBaseMs * Math.pow(2, i)));
+        }
+      }
+    }
+    const cause = (lastErr && lastErr.cause) || lastErr;
+    const detail = cause ? `${cause.code || cause.name || 'error'}: ${cause.message}` : 'unknown error';
+    const wrapped = new Error(`fetch failed for ${url} after ${this.retryAttempts} attempt(s) (${detail})`);
+    wrapped.cause = cause;
+    throw wrapped;
   }
 
   async _request(path, method = 'GET', body = null) {
@@ -32,7 +60,7 @@ class TestoClient {
       options.body = JSON.stringify(body);
     }
 
-    const response = await fetch(url, options);
+    const response = await this._fetchWithRetry(url, options);
     if (!response.ok) {
       let errMsg = '';
       try {
@@ -110,7 +138,7 @@ class TestoClient {
           continue;
         }
       }
-      const response = await fetch(url);
+      const response = await this._fetchWithRetry(url);
       if (!response.ok) {
         throw new Error(`Download failed for file: ${url}`);
       }
