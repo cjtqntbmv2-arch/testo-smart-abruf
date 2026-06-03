@@ -14,6 +14,23 @@ test('mapPhysicalProperty maps testo property names to dashboard metrics', () =>
   assert.strictEqual(mapPhysicalProperty(undefined), null);
 });
 
+test('mapPhysicalProperty uses physical_extension to separate derived channels from the primary metric', () => {
+  // Real bug: a testo dewpoint channel reports physical_property_name "Temperature"
+  // (dewpoint IS a temperature). Only physical_extension distinguishes it. Without it,
+  // the dewpoint channel collapses into the temperature series and the values jump.
+  assert.strictEqual(mapPhysicalProperty('Temperature', 'Air Temperature'), 'temperature');
+  assert.strictEqual(mapPhysicalProperty('Temperature', 'Dewpoint Temperature'), 'dewpoint');
+  assert.strictEqual(mapPhysicalProperty('Temperature', 'Dew Point'), 'dewpoint');
+  assert.strictEqual(mapPhysicalProperty('Temperature', 'Taupunkt'), 'dewpoint');
+  // Absolute humidity shares the "Humidity" property name with relative humidity.
+  assert.strictEqual(mapPhysicalProperty('Humidity', 'Relative Humidity'), 'humidity');
+  assert.strictEqual(mapPhysicalProperty('Humidity', 'Absolute Humidity'), 'abshumid');
+  // Backward compatibility: no/empty extension keeps the property-name mapping.
+  assert.strictEqual(mapPhysicalProperty('Temperature'), 'temperature');
+  assert.strictEqual(mapPhysicalProperty('Temperature', ''), 'temperature');
+  assert.strictEqual(mapPhysicalProperty('Humidity', undefined), 'humidity');
+});
+
 test('buildDeviceBridge builds sensor/device/serial maps from device properties', () => {
   const props = [
     { device_uuid: 'dev-1', device_serial_no: 'SN1', sensor_uuid: 's-temp', sensor_serial_no: 'SN1-A', channel_physical_property_name: 'Temperature' },

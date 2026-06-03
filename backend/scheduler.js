@@ -128,7 +128,7 @@ async function runSyncCycle(customClient = null) {
           for (const m of measurements) {
             const dev = bridge.sensorToDevice.get(m.sensor_uuid);
             const stationId = dev ? deviceToStation.get(dev) : null;
-            const prop = mapPhysicalProperty(m.physical_property_name);
+            const prop = mapPhysicalProperty(m.physical_property_name, m.physical_extension);
             if (!stationId || !prop) { diag.measurementsUnmatched++; continue; }
             insertMeasurementStmt.run(
               m.uuid, stationId, parseTimestamp(m.timestamp), m.timestamp_local, m.measurement,
