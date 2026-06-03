@@ -174,7 +174,9 @@
         let stationMetrics = {
           temperature: { series: [], unit: '°C' },
           humidity: { series: [], unit: '%' },
-          pressure: { series: [], unit: 'hPa' }
+          pressure: { series: [], unit: 'hPa' },
+          dewpoint: { series: [], unit: '°C' },
+          abshumid: { series: [], unit: 'g/m³' }
         };
 
         try {
@@ -186,6 +188,8 @@
               if (data.metrics.temperature) stationMetrics.temperature = data.metrics.temperature;
               if (data.metrics.humidity) stationMetrics.humidity = data.metrics.humidity;
               if (data.metrics.pressure) stationMetrics.pressure = data.metrics.pressure;
+              if (data.metrics.dewpoint) stationMetrics.dewpoint = data.metrics.dewpoint;
+              if (data.metrics.abshumid) stationMetrics.abshumid = data.metrics.abshumid;
             }
           }
         } catch (e) {
@@ -246,12 +250,26 @@
           return (Number.isNaN(t) || Number.isNaN(h)) ? NaN : absHumidity(t, h);
         });
 
+        // Prefer the device's MEASURED dewpoint / abs. humidity when the backend
+        // delivers that channel; fall back to the locally computed value per
+        // timestamp wherever the device reports no such channel.
+        const measuredD = (stationMetrics.dewpoint && stationMetrics.dewpoint.series) || [];
+        const measuredA = (stationMetrics.abshumid && stationMetrics.abshumid.series) || [];
+        const finalD = seriesD.map((computed, i) => {
+          const m = measuredD[i];
+          return (typeof m === 'number' && !Number.isNaN(m)) ? m : computed;
+        });
+        const finalA = seriesA.map((computed, i) => {
+          const m = measuredA[i];
+          return (typeof m === 'number' && !Number.isNaN(m)) ? m : computed;
+        });
+
         const allSeries = {
           temperature: seriesT,
           humidity:    seriesH,
           pressure:    seriesP,
-          dewpoint:    seriesD,
-          abshumid:    seriesA,
+          dewpoint:    finalD,
+          abshumid:    finalA,
         };
 
         const metrics = {};
