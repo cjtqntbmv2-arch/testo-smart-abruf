@@ -1,0 +1,16 @@
+{
+  "name": "testo-smart-abruf",
+  "version": "0.1.1",
+  "description": "Local server and dashboard for testo Smart Connect API data sync",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "test": "node --test backend/tests/*.test.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "puppeteer": "^25.1.0"
+  }
+}

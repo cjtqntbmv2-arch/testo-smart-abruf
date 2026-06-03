@@ -152,6 +152,33 @@ test('Multi-sensor device: OR filter covers all sensors and both metrics are dis
   closeDb();
 });
 
+test('Measurement fetch is bounded with date_time_until (~now) so the Testo report returns the full range, not its default page cap', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
+
+  const client = {
+    captured: null,
+    async fetchDeviceProperties() {
+      return [{ device_uuid: 'dev-1', device_serial_no: 'SN1', sensor_uuid: 's-1', sensor_serial_no: 'SN1-A', channel_physical_property_name: 'Temperature' }];
+    },
+    async fetchDeviceStatus() { return []; },
+    async fetchMeasurements(params) { this.captured = params; return []; },
+    async fetchAlarms() { return []; }
+  };
+
+  const before = Date.now();
+  await schedulerModule.runSyncCycle(client);
+  const after = Date.now();
+
+  assert.ok(client.captured.date_time_until, 'date_time_until must be set to bound the report window');
+  const until = new Date(client.captured.date_time_until).getTime();
+  assert.ok(!isNaN(until), 'date_time_until must be a valid ISO timestamp');
+  assert.ok(until >= before && until <= after + 1000, 'date_time_until should be approximately now');
+  closeDb();
+});
+
 test('Unmatched alarm is counted and not inserted', async () => {
   initDb();
   saveSetting('api_key', 'mock-key');

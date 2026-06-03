@@ -1,5 +1,7 @@
 const express = require('express');
 const path = require('path');
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
 const { initDb, getDb, getSetting, saveSetting } = require('./db');
 const { startScheduler, runSyncCycle, getSchedulerStatus } = require('./scheduler');
 const TestoClient = require('./testo-client');

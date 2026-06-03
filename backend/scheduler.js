@@ -113,8 +113,13 @@ async function runSyncCycle(customClient = null) {
         }
         const fromDate = new Date(windowStart);
 
+        // The Testo measurements report caps an open-ended request at a small
+        // default page (~16 records). Without date_time_until the window never
+        // advances past the stored high-water mark and sync freezes. Bounding
+        // the request with an explicit until makes the API return the full range.
         const measurements = await client.fetchMeasurements({
           date_time_from: fromDate.toISOString(),
+          date_time_until: new Date().toISOString(),
           odata: { $filter: filter }
         });
         diag.measurementsFetched = measurements.length;
@@ -151,7 +156,15 @@ async function runSyncCycle(customClient = null) {
         ? new Date(parsedLastSync)
         : new Date(Date.now() - 7 * 24 * 3600 * 1000);
 
-      const alarms = await client.fetchAlarms({ date_time_from: lastSync.toISOString() });
+      // Bound with an explicit until for the same reason as measurements: an
+      // open-ended alarm report is capped at a small default page. Reuse this
+      // instant for the watermark so the next window starts exactly where this
+      // one ended, with no gap.
+      const alarmUntil = Date.now();
+      const alarms = await client.fetchAlarms({
+        date_time_from: lastSync.toISOString(),
+        date_time_until: new Date(alarmUntil).toISOString()
+      });
 
       db.transaction(() => {
         for (const a of alarms) {
@@ -175,7 +188,7 @@ async function runSyncCycle(customClient = null) {
       // Only advance the watermark when the bridge was available, otherwise alarms
       // fetched now could not be routed and would be lost on the next cycle.
       if (bridge.devices.size > 0) {
-        saveSetting('last_alarm_sync_time', String(Date.now()));
+        saveSetting('last_alarm_sync_time', String(alarmUntil));
       }
     } catch (e) {
       console.error('Error syncing alarms:', e.message);
