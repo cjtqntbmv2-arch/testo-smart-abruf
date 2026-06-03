@@ -74,6 +74,26 @@ test('POST /api/stations update preserves measurements and telemetry (no cascade
   assert.strictEqual(station.signal, 77, 'edit must preserve signal telemetry');
 });
 
+test('GET /api/stations/:id/metrics returns measured dewpoint and abshumid series', async () => {
+  const db = getDb();
+  db.prepare("INSERT OR IGNORE INTO stations (id, name) VALUES ('mtest', 'Metric Test')").run();
+  const ts = Date.now() - 3600 * 1000; // within the 24h window
+  db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('mm-t','mtest',?,21.0,'temperature','°C')").run(ts);
+  db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('mm-d','mtest',?,9.5,'dewpoint','°C')").run(ts);
+  db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('mm-a','mtest',?,8.2,'abshumid','g/m³')").run(ts);
+
+  const res = await fetch('http://localhost:3001/api/stations/mtest/metrics');
+  assert.strictEqual(res.status, 200);
+  const body = await res.json();
+  assert.ok(body.metrics.dewpoint, 'response must include a dewpoint series');
+  assert.ok(body.metrics.abshumid, 'response must include an abshumid series');
+  assert.deepStrictEqual(body.metrics.dewpoint.series, [9.5]);
+  assert.deepStrictEqual(body.metrics.abshumid.series, [8.2]);
+  assert.deepStrictEqual(body.metrics.temperature.series, [21.0]);
+  assert.deepStrictEqual(body.metrics.humidity.series, [null]);
+  assert.deepStrictEqual(body.metrics.pressure.series, [null]);
+});
+
 after(() => {
   server.close();
   stopScheduler();

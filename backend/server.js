@@ -80,12 +80,21 @@ app.delete('/api/stations/:id', (req, res) => {
 });
 
 // GET /api/stations/:id/metrics
+// Every dashboard metric the backend can store, with its default unit. The handler
+// forward-fills one aligned series per property so the frontend gets stable arrays.
+const METRIC_PROPS = [
+  { key: 'temperature', unit: '°C' },
+  { key: 'humidity',    unit: '%' },
+  { key: 'pressure',    unit: 'hPa' },
+  { key: 'dewpoint',    unit: '°C' },
+  { key: 'abshumid',    unit: 'g/m³' },
+];
+
 app.get('/api/stations/:id/metrics', (req, res) => {
   const db = getDb();
   const stationId = req.params.id;
   const since = Date.now() - 24 * 3600 * 1000; // last 24h
 
-  // Retrieve all metrics series for this station
   const rows = db.prepare(`
     SELECT timestamp, value, physical_property, unit
     FROM measurements
@@ -93,67 +102,34 @@ app.get('/api/stations/:id/metrics', (req, res) => {
     ORDER BY timestamp ASC
   `).all(stationId, since);
 
-  // Group by unique timestamps in order
-  const timestampSet = new Set();
-  for (const r of rows) {
-    timestampSet.add(r.timestamp);
-  }
-  const sortedTimestamps = Array.from(timestampSet).sort((a, b) => a - b);
+  // Unique, ordered timestamps across all properties.
+  const sortedTimestamps = [...new Set(rows.map((r) => r.timestamp))].sort((a, b) => a - b);
 
-  if (sortedTimestamps.length === 0) {
-    return res.json({
-      timestamps: [],
-      metrics: {
-        temperature: { series: [], unit: '°C' },
-        humidity: { series: [], unit: '%' },
-        pressure: { series: [], unit: 'hPa' }
-      }
-    });
-  }
-
-  // Create a map of timestamp -> property -> value
-  const timeMap = new Map();
-  for (const ts of sortedTimestamps) {
-    timeMap.set(ts, {});
-  }
-
+  // timestamp -> { property -> value }
+  const timeMap = new Map(sortedTimestamps.map((ts) => [ts, {}]));
   const units = {};
   for (const r of rows) {
-    const dataObj = timeMap.get(r.timestamp);
-    if (dataObj) {
-      dataObj[r.physical_property] = r.value;
-    }
+    const slot = timeMap.get(r.timestamp);
+    if (slot) slot[r.physical_property] = r.value;
     units[r.physical_property] = r.unit;
   }
 
-  // Build aligned series. Fall back to previous value or default if missing
-  const metrics = {
-    temperature: { series: [], unit: units.temperature || '°C' },
-    humidity: { series: [], unit: units.humidity || '%' },
-    pressure: { series: [], unit: units.pressure || 'hPa' }
-  };
-
-  let lastTemp = null;
-  let lastHum = null;
-  let lastPres = null;
-
+  // One forward-filled series per known metric. A property the sensor never reports
+  // stays null (the frontend renders that as a gap, not a fabricated value).
+  const metrics = {};
+  for (const { key, unit } of METRIC_PROPS) {
+    metrics[key] = { series: [], unit: units[key] ?? unit };
+  }
+  const last = {};
   for (const ts of sortedTimestamps) {
-    const dataObj = timeMap.get(ts);
-
-    if (dataObj.temperature !== undefined) lastTemp = dataObj.temperature;
-    metrics.temperature.series.push(lastTemp);
-
-    if (dataObj.humidity !== undefined) lastHum = dataObj.humidity;
-    metrics.humidity.series.push(lastHum);
-
-    if (dataObj.pressure !== undefined) lastPres = dataObj.pressure;
-    metrics.pressure.series.push(lastPres);
+    const slot = timeMap.get(ts);
+    for (const { key } of METRIC_PROPS) {
+      if (slot[key] != null) last[key] = slot[key];
+      metrics[key].series.push(last[key] ?? null);
+    }
   }
 
-  res.json({
-    timestamps: sortedTimestamps,
-    metrics
-  });
+  res.json({ timestamps: sortedTimestamps, metrics });
 });
 
 // GET /api/stations/:id/events
