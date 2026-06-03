@@ -53,11 +53,19 @@ app.get('/api/stations', (req, res) => {
 // POST /api/stations (Zuweisungsmanager create/update)
 app.post('/api/stations', (req, res) => {
   const { id, name, location, mo_uuid, device_uuid } = req.body;
-  
-  // Also look up serial_no or keep it empty for status sync update
+
+  // Upsert via ON CONFLICT so an edit UPDATEs only the user-editable fields.
+  // INSERT OR REPLACE would DELETE the existing row first, which (with foreign
+  // keys ON and ON DELETE CASCADE) would wipe the station's measurements/events
+  // and reset its live telemetry columns. ON CONFLICT updates in place instead.
   getDb().prepare(`
-    INSERT OR REPLACE INTO stations (id, name, location, mo_uuid, device_uuid)
+    INSERT INTO stations (id, name, location, mo_uuid, device_uuid)
     VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      location = excluded.location,
+      mo_uuid = excluded.mo_uuid,
+      device_uuid = excluded.device_uuid
   `).run(id, name, location, mo_uuid, device_uuid);
   
   // Trigger immediate sync for the new station
