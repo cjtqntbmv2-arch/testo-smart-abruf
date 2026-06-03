@@ -15,3 +15,4 @@ For any task about the API itself (endpoints, async pattern, authentication, ODa
 - Every `.md` file (except the inner index and `_assets/glossary.md`) carries YAML frontmatter with `source_url`, `snapshot_date`, and `source_chunks`. This frontmatter is load-bearing for re-snapshotting — preserve it on every edit. Mechanics are described in the inner index's "How this directory was built" section.
 - [testo-smart-connect-api/_assets/glossary.md](testo-smart-connect-api/_assets/glossary.md) is the single source of truth for terminology (endpoint names, async status enum, header casing). A cross-consistency reviewer greps for violations — match its spellings exactly.
 - **Do not invent** endpoint paths, status enum values, header names, or schema fields. If a fact is not in an existing snapshot file with a `source_chunks` reference, re-fetch from upstream rather than writing it from memory.
+

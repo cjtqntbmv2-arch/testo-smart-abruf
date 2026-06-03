@@ -81,6 +81,14 @@ function SettingsPage({ onClose }) {
   const [settings, setSettings] = sState(loadSettings);
   const [savedFlash, setSavedFlash] = sState(false);
   const [systemStatus, setSystemStatus] = sState(null);
+  const [, forceTick] = sState(0);
+
+  // Subscribe to dashboard data changes so the UI reflects added/deleted stations immediately
+  sEff(() => {
+    if (window.DASH_DATA && window.DASH_DATA.subscribe) {
+      return window.DASH_DATA.subscribe(() => forceTick(v => v + 1));
+    }
+  }, []);
 
   // Load configuration and diagnostics from backend on mount
   sEff(() => {

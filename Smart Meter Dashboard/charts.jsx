@@ -65,12 +65,12 @@ function Sparkline({ series, color, height = 36 }) {
   const path = useMemo(() => {
     if (!w || !series?.length) return { line: "", area: "" };
     const validSeries = series.filter(v => typeof v === 'number' && !Number.isNaN(v));
-    const min = validSeries.length ? Math.min(...validSeries) : 0;
-    const max = validSeries.length ? Math.max(...validSeries) : 100;
+    const min = validSeries.length ? validSeries.reduce((a, b) => Math.min(a, b), Infinity) : 0;
+    const max = validSeries.length ? validSeries.reduce((a, b) => Math.max(a, b), -Infinity) : 100;
     const pad = 4;
     const yRange = max - min || 1;
     const xs = series.map((_, i) => (i / (series.length - 1)) * (w - 2) + 1);
-    const ys = series.map((v) => pad + (1 - (v - min) / yRange) * (height - pad * 2));
+    const ys = series.map((v) => (typeof v !== 'number' || Number.isNaN(v)) ? NaN : (1 - (v - min) / yRange) * (height - pad * 2) + pad);
     return { line: buildPath(xs, ys), area: buildAreaPath(xs, ys, height - 1) };
   }, [w, series, height]);
 
@@ -109,13 +109,14 @@ function LineChart({ metricIds, stationId, timestamps, showGrid = true, showAxes
     return metrics.map((m) => {
       const s = m.series;
       const validS = s.filter(v => typeof v === 'number' && !Number.isNaN(v));
-      const lo = validS.length ? Math.min(...validS) : 0;
-      const hi = validS.length ? Math.max(...validS) : 100;
+      const lo = validS.length ? validS.reduce((a, b) => Math.min(a, b), Infinity) : 0;
+      const hi = validS.length ? validS.reduce((a, b) => Math.max(a, b), -Infinity) : 100;
       const span = hi - lo || 1;
       const margin = span * 0.12;
       const yLo = lo - margin, yHi = hi + margin;
-      const xs = s.map((_, i) => padL + (i / (s.length - 1)) * plotW);
-      const ys = s.map((v) => padT + (1 - (v - yLo) / (yHi - yLo)) * plotH);
+      const plotH = h - padT - padB;
+      const xs = s.map((_, i) => padL + (i / (s.length - 1)) * (w - padL - padR));
+      const ys = s.map((v) => (typeof v !== 'number' || Number.isNaN(v)) ? NaN : padT + (1 - (v - yLo) / (yHi - yLo)) * plotH);
       return { m, xs, ys, yLo, yHi };
     });
   }, [metrics.map((m) => m.id).join(","), metrics.map((m) => m.series).join("|").length, metrics[0]?.series, plotW, plotH, padL, padT]);
