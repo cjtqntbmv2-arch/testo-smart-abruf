@@ -202,7 +202,7 @@ function App() {
 
           {/* Ghost placeholder during drag/resize */}
           {ghostBox && (
-            <div className="ghost" style={tilePos(null, ghostBox)} />
+            <div className="tile-ghost" style={tilePos(null, ghostBox)} />
           )}
 
           {layout.map((t) => {
