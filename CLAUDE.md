@@ -10,6 +10,10 @@ Documentation-only repository: a curated, AI-readable snapshot of the **testo Sm
 
 For any task about the API itself (endpoints, async pattern, authentication, OData, schemas, limit values, migration from Saveris 2), read [testo-smart-connect-api/CLAUDE.md](testo-smart-connect-api/CLAUDE.md) first — it is the documentation index and routes to the right file. Do not duplicate its content here.
 
+## Ignore: `spec/`
+
+The `spec/` directory is a generated reverse-documentation snapshot (reconstruction spec of the application code), produced as a one-off deliverable. **Ignore it during normal work in this project** — do not read, edit, search, index, or treat it as a source of truth. It is not maintained in lockstep with the code and may go stale. Work from the actual source instead.
+
 ## Editing safety rails
 
 - Every `.md` file (except the inner index and `_assets/glossary.md`) carries YAML frontmatter with `source_url`, `snapshot_date`, and `source_chunks`. This frontmatter is load-bearing for re-snapshotting — preserve it on every edit. Mechanics are described in the inner index's "How this directory was built" section.
