@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline } = require('../device-bridge');
+const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions } = require('../device-bridge');
 
 test('mapPhysicalProperty maps testo property names to dashboard metrics', () => {
   assert.strictEqual(mapPhysicalProperty('Temperature'), 'temperature');
@@ -66,4 +66,22 @@ test('deriveOnline flags a device offline only when its known comm timestamp is 
   assert.strictEqual(deriveOnline(now - grace - 1, null, now), 0);
   // no comm data at all -> assume online, do not fabricate an offline state
   assert.strictEqual(deriveOnline(null, null, now), 1);
+});
+
+test('deriveSystemConditions reports connection and battery system events from a status snapshot', () => {
+  // healthy device -> no system conditions
+  assert.deepStrictEqual(deriveSystemConditions({ online: 1, battery: 80 }), []);
+  // offline -> a single connection condition
+  const offline = deriveSystemConditions({ online: 0, battery: 80 });
+  assert.strictEqual(offline.length, 1);
+  assert.strictEqual(offline[0].type, 'connection');
+  // low battery -> a single battery condition whose detail mentions the level
+  const low = deriveSystemConditions({ online: 1, battery: 12 });
+  assert.strictEqual(low.length, 1);
+  assert.strictEqual(low[0].type, 'battery');
+  assert.match(low[0].detail, /12/);
+  // both at once -> two conditions
+  assert.strictEqual(deriveSystemConditions({ online: 0, battery: 5 }).length, 2);
+  // unknown battery (null) must NOT trigger a battery condition
+  assert.deepStrictEqual(deriveSystemConditions({ online: 1, battery: null }), []);
 });

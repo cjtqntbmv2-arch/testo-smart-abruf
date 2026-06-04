@@ -34,6 +34,30 @@ function deriveOnline(lastCommTs, nextCommTs, now, graceMs = 3600000) {
   return 1;
 }
 
+// Given a device-status snapshot ({ online: 1|0, battery: number|null }), return the
+// list of system conditions currently TRUE. Each entry { type, message, detail } maps
+// straight onto the dashboard's system-event rendering (type -> the system icon;
+// message/detail -> the headline/sub text). type values: 'connection', 'battery'.
+function deriveSystemConditions(snapshot, opts = {}) {
+  const batteryLowPct = opts.batteryLowPct ?? 20;
+  const out = [];
+  if (snapshot.online === 0) {
+    out.push({
+      type: 'connection',
+      message: 'Verbindung verloren',
+      detail: 'Gerät hat sich nicht im erwarteten Intervall gemeldet.',
+    });
+  }
+  if (snapshot.battery != null && snapshot.battery <= batteryLowPct) {
+    out.push({
+      type: 'battery',
+      message: 'Batterie schwach',
+      detail: `Batteriestand bei ${snapshot.battery} %.`,
+    });
+  }
+  return out;
+}
+
 // Build lookup maps from Device Properties rows (one row per channel).
 function buildDeviceBridge(properties) {
   const sensorToDevice = new Map();
@@ -68,4 +92,4 @@ function buildSensorFilter(sensorUuids) {
   return list.map((s) => `sensor_uuid eq '${s}'`).join(' or ');
 }
 
-module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline };
+module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions };
