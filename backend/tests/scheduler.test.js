@@ -204,3 +204,107 @@ test('Unmatched alarm is counted and not inserted', async () => {
   assert.strictEqual(st.diagnostics.alarmsUnmatched, 1);
   closeDb();
 });
+
+test('Device status sync derives online state and opens/closes system events', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
+
+  const lowBatteryClient = {
+    async fetchDeviceProperties() { return []; },
+    async fetchDeviceStatus() {
+      return [{
+        device_uuid: 'dev-1', serial_no: 'SN1', battery_level_percent: 8, radio_level_percent: 50,
+        last_communication: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        next_communication: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+      }];
+    },
+    async fetchMeasurements() { return []; },
+    async fetchAlarms() { return []; }
+  };
+
+  await schedulerModule.runSyncCycle(lowBatteryClient);
+
+  const station = db.prepare("SELECT online FROM stations WHERE id = 'living'").get();
+  assert.strictEqual(station.online, 1, 'a fresh next_communication keeps the device online');
+
+  const batteryEvent = db.prepare("SELECT severity, alarm_condition_type, active FROM events WHERE uuid = 'sys-battery-living'").get();
+  assert.ok(batteryEvent, 'a low battery must open a system event');
+  assert.strictEqual(batteryEvent.severity, 'system');
+  assert.strictEqual(batteryEvent.alarm_condition_type, 'battery');
+  assert.strictEqual(batteryEvent.active, 1);
+  // no connection event while the device is online
+  assert.strictEqual(db.prepare("SELECT 1 FROM events WHERE uuid = 'sys-connection-living'").get(), undefined);
+
+  // Battery recovers -> the open system event auto-closes.
+  const recoveredClient = {
+    async fetchDeviceProperties() { return []; },
+    async fetchDeviceStatus() {
+      return [{
+        device_uuid: 'dev-1', serial_no: 'SN1', battery_level_percent: 90, radio_level_percent: 50,
+        last_communication: new Date().toISOString(),
+        next_communication: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+      }];
+    },
+    async fetchMeasurements() { return []; },
+    async fetchAlarms() { return []; }
+  };
+  await schedulerModule.runSyncCycle(recoveredClient);
+
+  const closed = db.prepare("SELECT active, end_ts FROM events WHERE uuid = 'sys-battery-living'").get();
+  assert.strictEqual(closed.active, 0, 'a recovered battery closes the system event');
+  assert.ok(closed.end_ts, 'a closed system event carries an end timestamp');
+  closeDb();
+});
+
+test('Device status sync opens a connection system event when offline and closes it on recovery', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('hall', 'Flur', 'dev-2');
+
+  const offlineClient = {
+    async fetchDeviceProperties() { return []; },
+    async fetchDeviceStatus() {
+      return [{
+        device_uuid: 'dev-2', serial_no: 'SN2', battery_level_percent: 90, radio_level_percent: 40,
+        last_communication: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
+        next_communication: new Date(Date.now() - 4 * 3600 * 1000).toISOString()
+      }];
+    },
+    async fetchMeasurements() { return []; },
+    async fetchAlarms() { return []; }
+  };
+  await schedulerModule.runSyncCycle(offlineClient);
+
+  let station = db.prepare("SELECT online FROM stations WHERE id = 'hall'").get();
+  assert.strictEqual(station.online, 0, 'an overdue next_communication marks the device offline');
+  const conn = db.prepare("SELECT alarm_condition_type, active FROM events WHERE uuid = 'sys-connection-hall'").get();
+  assert.ok(conn, 'offline opens a connection system event');
+  assert.strictEqual(conn.active, 1);
+  assert.strictEqual(conn.alarm_condition_type, 'connection');
+  // healthy battery -> no battery event
+  assert.strictEqual(db.prepare("SELECT 1 FROM events WHERE uuid = 'sys-battery-hall'").get(), undefined);
+
+  const onlineClient = {
+    async fetchDeviceProperties() { return []; },
+    async fetchDeviceStatus() {
+      return [{
+        device_uuid: 'dev-2', serial_no: 'SN2', battery_level_percent: 90, radio_level_percent: 40,
+        last_communication: new Date().toISOString(),
+        next_communication: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+      }];
+    },
+    async fetchMeasurements() { return []; },
+    async fetchAlarms() { return []; }
+  };
+  await schedulerModule.runSyncCycle(onlineClient);
+
+  station = db.prepare("SELECT online FROM stations WHERE id = 'hall'").get();
+  assert.strictEqual(station.online, 1, 'a fresh next_communication brings the device back online');
+  const closed = db.prepare("SELECT active, end_ts FROM events WHERE uuid = 'sys-connection-hall'").get();
+  assert.strictEqual(closed.active, 0, 'recovery closes the connection event');
+  assert.ok(closed.end_ts, 'closed connection event has an end timestamp');
+  closeDb();
+});

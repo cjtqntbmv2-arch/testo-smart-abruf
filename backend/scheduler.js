@@ -1,6 +1,6 @@
 const { getDb, getSetting, saveSetting } = require('./db');
 const TestoClient = require('./testo-client');
-const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter } = require('./device-bridge');
+const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions } = require('./device-bridge');
 
 let isSyncing = false;
 let lastSyncTime = null;
@@ -13,6 +13,46 @@ const parseTimestamp = (str) => {
   const ts = new Date(str).getTime();
   return isNaN(ts) ? null : ts;
 };
+
+const SYSTEM_EVENT_TYPES = ['connection', 'battery'];
+
+// Reconcile a station's open system events against its current status snapshot.
+// One stable synthetic row per (station, type) — opened on first detection (start_ts
+// preserved across repeats), reopened if it had cleared, and closed (active=0,end_ts)
+// when the condition no longer holds. /api/totals counts the active ones.
+function applySystemEvents(db, stationId, snapshot, now) {
+  const active = new Map(); // type -> { message, detail }
+  for (const c of deriveSystemConditions(snapshot)) active.set(c.type, c);
+
+  for (const type of SYSTEM_EVENT_TYPES) {
+    const uuid = `sys-${type}-${stationId}`;
+    const existing = db.prepare("SELECT active FROM events WHERE uuid = ?").get(uuid);
+
+    if (active.has(type)) {
+      const { message, detail } = active.get(type);
+      if (!existing) {
+        // Synthetic system rows have no testo alarm payload: alarm_status/alarm_value
+        // stay NULL and alarm_reason reuses `message`. Statements are re-prepared per
+        // call by design — better-sqlite3 caches them by SQL text, so this is cheap.
+        db.prepare(`
+          INSERT INTO events (uuid, station_id, severity, alarm_condition_type, alarm_reason,
+                              start_ts, end_ts, active, message, detail)
+          VALUES (?, ?, 'system', ?, ?, ?, NULL, 1, ?, ?)
+        `).run(uuid, stationId, type, message, now, message, detail);
+      } else if (existing.active === 0) {
+        // Reopen as a NEW episode: start_ts is deliberately reset to now.
+        db.prepare("UPDATE events SET active = 1, start_ts = ?, end_ts = NULL, message = ?, detail = ? WHERE uuid = ?")
+          .run(now, message, detail, uuid);
+      } else {
+        // still active — refresh the detail (e.g. battery % changed)
+        db.prepare("UPDATE events SET message = ?, detail = ? WHERE uuid = ?")
+          .run(message, detail, uuid);
+      }
+    } else if (existing && existing.active === 1) {
+      db.prepare("UPDATE events SET active = 0, end_ts = ? WHERE uuid = ?").run(now, uuid);
+    }
+  }
+}
 
 async function runSyncCycle(customClient = null) {
   if (isSyncing) return;
@@ -63,18 +103,27 @@ async function runSyncCycle(customClient = null) {
       UPDATE stations
       SET battery = ?, signal = ?, connection_type = ?, is_powersupply_on = ?,
           fw_version = ?, model_code = ?, last_communication = ?,
-          last_measurement_time = ?, next_communication = ?, serial_no = ?
+          last_measurement_time = ?, next_communication = ?, serial_no = ?, online = ?
       WHERE device_uuid = ?
     `);
     try {
       const statuses = await client.fetchDeviceStatus();
+      const now = Date.now();
       db.transaction(() => {
         for (const s of statuses) {
+          const lastComm = parseTimestamp(s.last_communication);
+          const nextComm = parseTimestamp(s.next_communication);
+          const online = deriveOnline(lastComm, nextComm, now);
           updateStatusStmt.run(
             s.battery_level_percent, s.radio_level_percent, s.connection_type,
             s.is_powersupply_on ? 1 : 0, s.fw_version, s.model_code,
-            parseTimestamp(s.last_communication), parseTimestamp(s.last_measurement_time),
-            parseTimestamp(s.next_communication), s.serial_no, s.device_uuid);
+            lastComm, parseTimestamp(s.last_measurement_time),
+            nextComm, s.serial_no, online, s.device_uuid);
+
+          const stationId = deviceToStation.get(s.device_uuid);
+          if (stationId) {
+            applySystemEvents(db, stationId, { online, battery: s.battery_level_percent }, now);
+          }
         }
       })();
     } catch (e) {
