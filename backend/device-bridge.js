@@ -24,6 +24,16 @@ function mapPhysicalProperty(name, extension) {
   return null;
 }
 
+// Derive a device's online state (1/0) from its communication timestamps (ms epoch).
+// Prefer the device's promised next_communication; if it is overdue past the grace
+// window the device is offline. With no comm data at all we assume online rather than
+// fabricating an offline state for a device that simply has not reported yet.
+function deriveOnline(lastCommTs, nextCommTs, now, graceMs = 3600000) {
+  if (nextCommTs != null) return now <= nextCommTs + graceMs ? 1 : 0;
+  if (lastCommTs != null) return now - lastCommTs <= graceMs ? 1 : 0;
+  return 1;
+}
+
 // Build lookup maps from Device Properties rows (one row per channel).
 function buildDeviceBridge(properties) {
   const sensorToDevice = new Map();
@@ -58,4 +68,4 @@ function buildSensorFilter(sensorUuids) {
   return list.map((s) => `sensor_uuid eq '${s}'`).join(' or ');
 }
 
-module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter };
+module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline };

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter } = require('../device-bridge');
+const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline } = require('../device-bridge');
 
 test('mapPhysicalProperty maps testo property names to dashboard metrics', () => {
   assert.strictEqual(mapPhysicalProperty('Temperature'), 'temperature');
@@ -52,4 +52,18 @@ test('buildSensorFilter joins sensor uuids into an OData filter, null when empty
   assert.strictEqual(buildSensorFilter([]), null);
   assert.strictEqual(buildSensorFilter(null), null);
   assert.strictEqual(buildSensorFilter(['good-1', "bad'value", 42]), "sensor_uuid eq 'good-1'");
+});
+
+test('deriveOnline flags a device offline only when its known comm timestamp is stale', () => {
+  const now = 1_000_000_000_000;
+  const grace = 3600000; // 1h, the default
+  // next_communication still in the future -> online
+  assert.strictEqual(deriveOnline(null, now + 900000, now), 1);
+  // next_communication overdue beyond grace -> offline
+  assert.strictEqual(deriveOnline(null, now - grace - 1, now), 0);
+  // no next_communication: fall back to last_communication freshness
+  assert.strictEqual(deriveOnline(now - 1000, null, now), 1);
+  assert.strictEqual(deriveOnline(now - grace - 1, null, now), 0);
+  // no comm data at all -> assume online, do not fabricate an offline state
+  assert.strictEqual(deriveOnline(null, null, now), 1);
 });
