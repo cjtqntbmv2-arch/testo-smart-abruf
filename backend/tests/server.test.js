@@ -94,6 +94,18 @@ test('GET /api/stations/:id/metrics returns measured dewpoint and abshumid serie
   assert.deepStrictEqual(body.metrics.pressure.series, [null]);
 });
 
+test('GET /api/totals counts active system events', async () => {
+  const db = getDb();
+  db.prepare("INSERT OR IGNORE INTO stations (id, name) VALUES ('totst', 'Totals Test')").run();
+  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, active) VALUES ('sys-x-totst','totst','system',?,1)")
+    .run(Date.now());
+
+  const res = await fetch('http://localhost:3001/api/totals');
+  assert.strictEqual(res.status, 200);
+  const body = await res.json();
+  assert.ok(body.system >= 1, 'active system events must be counted in totals.system');
+});
+
 after(() => {
   server.close();
   stopScheduler();
