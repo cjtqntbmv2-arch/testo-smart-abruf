@@ -926,8 +926,8 @@ function AdvancedSection({ settings, update, onReset }) {
       <Card>
         <div className="card-title">Über</div>
         <div className="kv-grid two-col">
-          <KV label="Version"    value="Klima Dashboard 1.0.0" />
-          <KV label="Build"      value="2026-05-29 · #local" />
+          <KV label="Version"    value="Klima Dashboard 0.1.5" />
+          <KV label="Build"      value="2026-06-03 · #local" />
           <KV label="API"        value="v1.0 · Testo Smart Connect" />
           <KV label="Datenbank"  value="SQLite 3" />
           <KV label="Lizenz"     value="Open Source" />
