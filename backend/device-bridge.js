@@ -8,16 +8,22 @@
 // (e.g. "Temperature") and the specific `physical_extension` (e.g. "Air Temperature"
 // vs "Dewpoint Temperature"). Several derived channels share a property name with a
 // primary metric: a device's dewpoint reports physical_property_name "Temperature"
-// (dewpoint IS a temperature), and absolute humidity shares "Humidity" with relative
-// humidity. Classifying on the property name alone collapses those derived channels
-// into the primary series, producing two values per timestamp and wildly jumping
-// readings. The extension disambiguates them, so check it first.
+// (dewpoint IS a temperature), and absolute humidity reports property name "Density"
+// with extension "Absolute Humidity". Classifying on the property name alone collapses
+// those derived channels into the primary series, producing two values per timestamp
+// and wildly jumping readings. The extension disambiguates them, so check it first.
+//
+// The "absolut" extension token is NOT unique to absolute humidity: barometric pressure
+// reports extension "Absolute Pressure" (unit hPa, ~1000). Matching "absolut" alone
+// routed that pressure channel into the abshumid series — hiding pressure entirely and
+// making abs-humidity jump between ~10 g/m³ and ~1000 hPa. The humidity token in the
+// extension is what separates "Absolute Humidity" from "Absolute Pressure".
 function mapPhysicalProperty(name, extension) {
   const p = (name || '').toLowerCase();
   const ext = (extension || '').toLowerCase();
   // Derived channels (distinguished only by extension) must NOT collapse into a primary metric.
   if (ext.includes('dew') || ext.includes('tau')) return 'dewpoint';
-  if (ext.includes('absolut')) return 'abshumid';
+  if (ext.includes('absolut') && (ext.includes('humid') || ext.includes('feucht'))) return 'abshumid';
   if (p.includes('temp')) return 'temperature';
   if (p.includes('humid') || p.includes('feucht')) return 'humidity';
   if (p.includes('press') || p.includes('druck')) return 'pressure';

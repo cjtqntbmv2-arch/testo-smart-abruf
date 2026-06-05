@@ -25,6 +25,14 @@ test('mapPhysicalProperty uses physical_extension to separate derived channels f
   // Absolute humidity shares the "Humidity" property name with relative humidity.
   assert.strictEqual(mapPhysicalProperty('Humidity', 'Relative Humidity'), 'humidity');
   assert.strictEqual(mapPhysicalProperty('Humidity', 'Absolute Humidity'), 'abshumid');
+  // Real testo strings: absolute humidity reports property name "Density" (it IS a
+  // density, g/m³), and barometric pressure reports extension "Absolute Pressure".
+  // Both extensions contain "absolut": classifying on that token alone routes the
+  // pressure channel (hPa, ~1000) into the abshumid series, hiding pressure entirely
+  // and making abs-humidity jump between ~10 and ~1000. The humidity token in the
+  // extension is what distinguishes the two.
+  assert.strictEqual(mapPhysicalProperty('Density', 'Absolute Humidity'), 'abshumid');
+  assert.strictEqual(mapPhysicalProperty('Pressure', 'Absolute Pressure'), 'pressure');
   // Backward compatibility: no/empty extension keeps the property-name mapping.
   assert.strictEqual(mapPhysicalProperty('Temperature'), 'temperature');
   assert.strictEqual(mapPhysicalProperty('Temperature', ''), 'temperature');
