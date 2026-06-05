@@ -2,29 +2,11 @@
 
 const { useState: aState, useRef: aRef, useEffect: aEff, useMemo: aMemo } = React;
 
-const DEFAULT_LAYOUT = [
-  // Top row: KPIs across all four stations — at-a-glance overview
-  { id: "t-l-temp", type: "kpi", stationId: "living",   title: "Temperatur",   metrics: ["temperature"], x: 0, y: 0, w: 3, h: 3 },
-  { id: "t-b-temp", type: "kpi", stationId: "bedroom",  title: "Temperatur",   metrics: ["temperature"], x: 3, y: 0, w: 3, h: 3 },
-  { id: "t-o-temp", type: "kpi", stationId: "outdoor",  title: "Temperatur",   metrics: ["temperature"], x: 6, y: 0, w: 3, h: 3 },
-  { id: "t-c-temp", type: "kpi", stationId: "basement", title: "Temperatur",   metrics: ["temperature"], x: 9, y: 0, w: 3, h: 3 },
-
-  // Comparison charts: temperature inside vs. outside
-  { id: "t-chart-temp", type: "chart", stationId: "living",  title: "Wohnzimmer · Temperatur & Taupunkt", metrics: ["temperature", "dewpoint"],  x: 0, y: 3, w: 6, h: 4 },
-  { id: "t-chart-out",  type: "chart", stationId: "outdoor", title: "Garten · Temperatur & Feuchte",       metrics: ["temperature", "humidity"],  x: 6, y: 3, w: 6, h: 4 },
-
-  // Humidity gauges
-  { id: "t-l-hum", type: "gauge", stationId: "living",   title: "Rel. Feuchte", metrics: ["humidity"], x: 0, y: 7, w: 3, h: 4 },
-  { id: "t-b-hum", type: "gauge", stationId: "bedroom",  title: "Rel. Feuchte", metrics: ["humidity"], x: 3, y: 7, w: 3, h: 4 },
-  { id: "t-c-hum", type: "gauge", stationId: "basement", title: "Rel. Feuchte", metrics: ["humidity"], x: 6, y: 7, w: 3, h: 4 },
-
-  // Outdoor stats + pressure KPI
-  { id: "t-o-stats", type: "stats", stationId: "outdoor", title: "Außen — Tageswerte", metrics: ["temperature", "humidity", "pressure", "abshumid"], x: 9, y: 7, w: 3, h: 4 },
-
-  // Alerts per station, side by side
-  { id: "t-alerts-out", type: "alerts", stationId: "outdoor", title: "Außensensor",  metrics: ["temperature", "humidity", "pressure", "dewpoint", "abshumid"], x: 0, y: 11, w: 6, h: 5 },
-  { id: "t-alerts-bed", type: "alerts", stationId: "bedroom", title: "Schlafzimmer", metrics: ["temperature", "humidity", "pressure", "dewpoint", "abshumid"], x: 6, y: 11, w: 6, h: 5 },
-];
+// Fresh installs / clean browsers start with no tiles and see the onboarding
+// empty-state instead. Tiles are user-configured and persisted to localStorage
+// (STORAGE_KEY). Seeding demo tiles here would reference station IDs that don't
+// exist in a real install, rendering a wall of "Messstelle gelöscht".
+const DEFAULT_LAYOUT = [];
 
 const STORAGE_KEY = "dash-layout-v3";
 
@@ -187,6 +169,24 @@ function App() {
 
       {view === "settings" ? (
         <SettingsPage onClose={() => setView("dashboard")} />
+      ) : layout.length === 0 ? (
+        <div className="grid-shell">
+          <div className="empty-dash">
+            <div className="empty-dash-card">
+              <div className="empty-dash-icon">
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+                  <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+                  <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+                  <path d="M17.5 14.5 V20.5 M14.5 17.5 H20.5"/>
+                </svg>
+              </div>
+              <div className="empty-dash-title">Noch keine Kacheln</div>
+              <div className="empty-dash-sub">Füge deine erste Kachel hinzu, um Messwerte deiner Messstellen anzuzeigen.</div>
+              <button className="btn primary" onClick={() => setAddOpen(true)}>+ Kachel hinzufügen</button>
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="grid-shell">
         <div className="grid" ref={gridRef}

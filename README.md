@@ -1,6 +1,6 @@
 # testo Smart Connect API Documentation Snapshot
 
-[![Version](https://img.shields.io/badge/version-0.1.5-blue.svg)](VERSION)
+[![Version](https://img.shields.io/badge/version-0.1.6-blue.svg)](VERSION)
 [![API Version](https://img.shields.io/badge/api-v3-orange.svg)](testo-smart-connect-api/CLAUDE.md)
 
 A curated, AI-readable offline snapshot of the official **testo Smart Connect API** documentation.

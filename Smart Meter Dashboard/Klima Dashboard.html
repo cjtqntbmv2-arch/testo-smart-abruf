@@ -139,6 +139,20 @@
     border-radius: 6px;
   }
 
+  /* ---------- Empty dashboard (onboarding) ---------- */
+  .empty-dash { display: grid; place-items: center; min-height: 60vh; }
+  .empty-dash-card {
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+    gap: 12px; max-width: 360px; padding: 40px 32px;
+  }
+  .empty-dash-icon {
+    width: 64px; height: 64px; display: grid; place-items: center;
+    border-radius: 50%; background: var(--accent-tint); color: var(--accent);
+  }
+  .empty-dash-title { font-size: 17px; font-weight: 600; color: var(--text); }
+  .empty-dash-sub { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+  .empty-dash-card .btn { margin-top: 6px; }
+
   /* ---------- Tile ---------- */
   .tile-pos {
     position: absolute;
@@ -1095,10 +1109,10 @@
 
 <!-- ?v=… is a cache-buster: bump it with every release (see VERSION) so a reload
      reliably loads the matching code instead of a stale copy held by the browser. -->
-<script src="data.js?v=0.1.5"></script>
-<script type="text/babel" src="charts.jsx?v=0.1.5"></script>
-<script type="text/babel" src="tiles.jsx?v=0.1.5"></script>
-<script type="text/babel" src="settings.jsx?v=0.1.5"></script>
-<script type="text/babel" src="app.jsx?v=0.1.5"></script>
+<script src="data.js?v=0.1.6"></script>
+<script type="text/babel" src="charts.jsx?v=0.1.6"></script>
+<script type="text/babel" src="tiles.jsx?v=0.1.6"></script>
+<script type="text/babel" src="settings.jsx?v=0.1.6"></script>
+<script type="text/babel" src="app.jsx?v=0.1.6"></script>
 </body>
 </html>
