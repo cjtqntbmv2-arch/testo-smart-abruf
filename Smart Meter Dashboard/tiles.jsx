@@ -270,7 +270,7 @@ function Empty() {
 }
 
 // ---------- Alerts body ----------
-function AlertsBody({ tile, onOpenSettings }) {
+function AlertsBody({ tile }) {
   const [filter, setFilter] = tState("all");
   const ref = tRef(null);
   const size = useSize(ref);
@@ -312,12 +312,6 @@ function AlertsBody({ tile, onOpenSettings }) {
           <span className="pulse-dot" />
           {!narrow && "Aktiv"}
         </button>
-        {onOpenSettings && (
-          <button className="mini-chip ghost-chip" onClick={onOpenSettings} title="Schwellen bearbeiten">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.3"><circle cx="6" cy="6" r="1.6"/><path d="M6 1v1.5M6 9.5V11M11 6H9.5M2.5 6H1M9.5 2.5l-1 1M3.5 8.5l-1 1M9.5 9.5l-1-1M3.5 3.5l-1-1"/></svg>
-            {!narrow && "Schwellen"}
-          </button>
-        )}
       </div>
 
       {!veryCompact && <AlertTimeline events={events} />}
