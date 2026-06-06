@@ -25,14 +25,13 @@ function App() {
   const [editing, setEditing] = aState(null); // tile id being edited
   const [drag, setDrag] = aState(null);  // {id, origin, offset, ghost: {x,y,w,h}}
   const [resize, setResize] = aState(null); // {id, origin, start, ghost}
-  const [thresholdOpen, setThresholdOpen] = aState(null); // stationId | null
   const [stationPickerOpen, setStationPickerOpen] = aState(false);
   const [view, setView] = aState("dashboard"); // 'dashboard' | 'settings'
   const [, forceTick] = aState(0);
   const gridRef = aRef(null);
   const [gridW, setGridW] = aState(1200);
 
-  // Subscribe to data changes (station switch, threshold edits)
+  // Subscribe to data changes (station switch, polling refresh)
   aEff(() => window.DASH_DATA.subscribe(() => forceTick((v) => v + 1)), []);
 
   aEff(() => {
@@ -211,7 +210,6 @@ function App() {
             const pos = isDragging || isResizing ? tilePos(null, (drag || resize).ghost) : tilePos(t);
             const Body = TILE_BODIES[t.type];
             const bodyProps = { tile: t };
-            if (t.type === "alerts") bodyProps.onOpenSettings = () => setThresholdOpen(t.stationId || window.DASH_DATA.activeStationId);
             return (
               <div className="tile-pos" key={t.id} style={pos}>
                 <TileFrame
@@ -239,13 +237,6 @@ function App() {
           tile={layout.find((t) => t.id === editing)}
           onClose={() => setEditing(null)}
           onSave={(patch) => { updateTile(editing, patch); setEditing(null); }}
-        />
-      )}
-      {thresholdOpen && (
-        <ThresholdDialog
-          stationId={thresholdOpen}
-          onClose={() => setThresholdOpen(null)}
-          onChange={() => forceTick((v) => v + 1)}
         />
       )}
     </div>
@@ -639,68 +630,6 @@ function EditTileDialog({ tile, onClose, onSave }) {
                   onClick={() => onSave({ stationId, metrics, title: title.trim() || cfg.label })}>
             Speichern
           </button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-function ThresholdDialog({ stationId, onClose, onChange }) {
-  const D = window.DASH_DATA;
-  const station = D.stations[stationId] || D.activeStation;
-  const [, tick] = aState(0);
-  function setBound(mid, level, idx, v) {
-    const num = parseFloat(v);
-    if (Number.isNaN(num)) return;
-    // Threshold edits target THIS station, not the global active one.
-    station.thresholds[mid][level][idx] = num;
-    // recompute events for this station
-    if (window.DASH_DATA.recomputeStationEvents) {
-      window.DASH_DATA.recomputeStationEvents(station.id);
-    } else {
-      // fallback: use setThreshold via temporary active swap
-      const prev = D.activeStationId;
-      D.setActiveStation(station.id);
-      D.setThreshold(mid, level, idx, num);
-      if (prev !== station.id) D.setActiveStation(prev);
-    }
-    tick((x) => x + 1);
-    onChange?.();
-  }
-  return (
-    <Modal onClose={onClose} title={`Schwellwerte · ${station.name}`}>
-      <div className="dialog">
-        <div className="hint">
-          Für jede Messgröße ein Warn- und ein Alarmbereich. Werte außerhalb lösen automatisch eine Meldung aus; die Rückkehr in den Normalbereich beendet sie. <strong>Diese Werte gelten nur für {station.name} ({station.code}).</strong>
-        </div>
-        <div className="thr-table">
-          <div className="thr-head">
-            <span>Messgröße</span>
-            <span className="thr-col warn">Warnung (von – bis)</span>
-            <span className="thr-col alarm">Alarm (von – bis)</span>
-          </div>
-          {D.metricIds.map((mid) => {
-            const M = station.metrics[mid];
-            const t = station.thresholds[mid];
-            return (
-              <div className="thr-row" key={mid}>
-                <span className="thr-name"><span className="legend-dot" style={{ background: M.color }} />{M.label}<span className="thr-unit">{M.unit}</span></span>
-                <span className="thr-col">
-                  <input type="number" step={M.decimals ? "0.1" : "1"} value={t.warn[0]} onChange={(e) => setBound(mid, "warn", 0, e.target.value)} />
-                  <span className="thr-sep">–</span>
-                  <input type="number" step={M.decimals ? "0.1" : "1"} value={t.warn[1]} onChange={(e) => setBound(mid, "warn", 1, e.target.value)} />
-                </span>
-                <span className="thr-col">
-                  <input type="number" step={M.decimals ? "0.1" : "1"} value={t.alarm[0]} onChange={(e) => setBound(mid, "alarm", 0, e.target.value)} />
-                  <span className="thr-sep">–</span>
-                  <input type="number" step={M.decimals ? "0.1" : "1"} value={t.alarm[1]} onChange={(e) => setBound(mid, "alarm", 1, e.target.value)} />
-                </span>
-              </div>
-            );
-          })}
-        </div>
-        <div className="dialog-foot">
-          <button className="btn primary" onClick={onClose}>Fertig</button>
         </div>
       </div>
     </Modal>
