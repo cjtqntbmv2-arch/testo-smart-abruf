@@ -49,7 +49,7 @@ test('Sync resolves devices via bridge, distributes measurements, links alarms, 
     .run('event-old', 'living', 'warning', 'Cleared', oldTs);
 
   const mockAlarms = [{
-    uuid: 'alarm-123', serial_no: 'SN123', alarm_source_uuid: 'sensor-1', alarm_severity: 'Alarm', alarm_status: 'Active',
+    uuid: 'alarm-123', serial_no: 'SN123', alarm_source_uuid: 'sensor-1', alarm_type: 'measurement_alarm', alarm_severity: 'Alarm', alarm_status: 'Alarm',
     alarm_reason: 'Temperatur zu hoch', alarm_condition_type: 'HighLimit', alarm_value: 28.5, physical_value: 'Temperature',
     alarm_time: '2026-05-29T06:10:00Z', last_status_change_time: '2026-05-29T06:10:00Z'
   }];
@@ -72,11 +72,13 @@ test('Sync resolves devices via bridge, distributes measurements, links alarms, 
   assert.strictEqual(meas.physical_property, 'temperature');
   assert.strictEqual(meas.sensor_uuid, 'sensor-1');
 
-  const event = db.prepare("SELECT station_id, severity, metric FROM events WHERE uuid = ?").get('alarm-123');
+  const event = db.prepare("SELECT station_id, severity, metric, active FROM events WHERE uuid = ?").get('alarm-123');
   assert.ok(event);
   assert.strictEqual(event.station_id, 'living');
   assert.strictEqual(event.severity, 'alarm');
   assert.strictEqual(event.metric, 'temperature');
+  // alarm_status 'Alarm' is the live API's "currently in alarm" state -> active.
+  assert.strictEqual(event.active, 1);
 
   const st = schedulerModule.getSchedulerStatus();
   assert.strictEqual(st.diagnostics.devicesSeen, 1);
@@ -88,6 +90,79 @@ test('Sync resolves devices via bridge, distributes measurements, links alarms, 
   assert.ok(meas2.includes('meas-new'));
   const ev2 = db.prepare("SELECT uuid FROM events WHERE uuid = 'event-old'").all();
   assert.strictEqual(ev2.length, 0);
+
+  closeDb();
+});
+
+test('Sync ingests a testo connection-timeout system alarm as an active system event', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  saveSetting('api_region', 'eu');
+
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
+    .run('emc', 'EMC', 'dev-1');
+
+  // testo reports the connection loss through its alarm feed as a device system alarm,
+  // currently in the 'Alarm' state. It must land as an ACTIVE system event with the
+  // 'connection' subtype the frontend renders, not as an inactive warning.
+  const systemAlarm = [{
+    uuid: 'alarm-conn-1', serial_no: 'SN123', alarm_source_uuid: 'dev-1',
+    alarm_type: 'device system alarm', alarm_severity: 'Warning', alarm_status: 'Alarm',
+    alarm_reason: 'Alarm condition is violated',
+    alarm_condition_type: 'Connection timeout, device did not communicated in expected time',
+    alarm_value: null, physical_value: null,
+    alarm_time: '2026-05-29T06:10:00Z', last_status_change_time: '2026-05-29T06:10:00Z'
+  }];
+
+  await schedulerModule.runSyncCycle(new MockTestoClient(systemAlarm));
+
+  const ev = db.prepare("SELECT severity, alarm_condition_type, active FROM events WHERE uuid = ?").get('alarm-conn-1');
+  assert.ok(ev, 'the connection-timeout alarm must be stored');
+  assert.strictEqual(ev.severity, 'system');
+  assert.strictEqual(ev.alarm_condition_type, 'connection');
+  assert.strictEqual(ev.active, 1);
+
+  closeDb();
+});
+
+test('Sync reconciles violated/adhered transitions so only the latest unresolved alarm stays active', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  saveSetting('api_region', 'eu');
+
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
+    .run('emc', 'EMC', 'dev-1');
+
+  // testo's alarm feed is a transition log: a connection loss is one 'Alarm' row,
+  // its recovery a separate 'Ok' row with a later timestamp. Per (station, condition)
+  // the newest transition wins — a recovery must close the matching violated alarm.
+  const base = Date.parse('2026-05-29T06:00:00Z');
+  const mk = (uuid, status, reason, offsetMin) => ({
+    uuid, serial_no: 'SN123', alarm_source_uuid: 'dev-1',
+    alarm_type: 'device system alarm', alarm_severity: 'Warning', alarm_status: status,
+    alarm_reason: reason,
+    alarm_condition_type: 'Connection timeout, device did not communicated in expected time',
+    alarm_value: null, physical_value: null,
+    alarm_time: new Date(base + offsetMin * 60000).toISOString(),
+    last_status_change_time: new Date(base + offsetMin * 60000).toISOString()
+  });
+
+  // violated -> adhered -> violated: the latest (violated) is the only active one.
+  await schedulerModule.runSyncCycle(new MockTestoClient([
+    mk('conn-violated-1', 'Alarm', 'Alarm condition is violated', 0),
+    mk('conn-adhered-1', 'Ok', 'Alarm condition is adhered', 20),
+    mk('conn-violated-2', 'Alarm', 'Alarm condition is violated', 40),
+  ]));
+
+  const rows = db.prepare("SELECT uuid, severity, active FROM events WHERE station_id = 'emc' ORDER BY start_ts").all();
+  const byUuid = Object.fromEntries(rows.map(r => [r.uuid, r]));
+  assert.strictEqual(byUuid['conn-violated-1'].active, 0, 'an earlier, since-resolved violation is not active');
+  assert.strictEqual(byUuid['conn-adhered-1'].active, 0, 'a recovery transition is never active');
+  assert.strictEqual(byUuid['conn-violated-2'].active, 1, 'the latest unresolved violation is active');
+  // All three remain classified as system messages.
+  for (const r of rows) assert.strictEqual(r.severity, 'system');
 
   closeDb();
 });

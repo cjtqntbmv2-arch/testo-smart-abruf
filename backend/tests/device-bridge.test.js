@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions } = require('../device-bridge');
+const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm } = require('../device-bridge');
 
 test('mapPhysicalProperty maps testo property names to dashboard metrics', () => {
   assert.strictEqual(mapPhysicalProperty('Temperature'), 'temperature');
@@ -74,6 +74,42 @@ test('deriveOnline flags a device offline only when its known comm timestamp is 
   assert.strictEqual(deriveOnline(now - grace - 1, null, now), 0);
   // no comm data at all -> assume online, do not fabricate an offline state
   assert.strictEqual(deriveOnline(null, null, now), 1);
+});
+
+test('classifyAlarm routes testo system alarms to the system severity with a normalized subtype', () => {
+  // Real bug: testo delivers connection/battery problems through its alarm feed as
+  // alarm_type "device system alarm" / "sensor system alarm". Classifying on
+  // alarm_severity alone (Warning/Alarm) buried them among measurement warnings, so
+  // the dashboard never showed them as system messages. alarm_type is what marks a
+  // system alarm; alarm_condition_type supplies the connection/battery subtype the
+  // frontend renders an icon for.
+  assert.deepStrictEqual(
+    classifyAlarm({ alarm_type: 'device system alarm', alarm_severity: 'Warning', alarm_condition_type: 'Connection timeout, device did not communicated in expected time' }),
+    { severity: 'system', systemType: 'connection' });
+  assert.deepStrictEqual(
+    classifyAlarm({ alarm_type: 'sensor system alarm', alarm_severity: 'Warning', alarm_condition_type: 'Battery low' }),
+    { severity: 'system', systemType: 'battery' });
+  // A system alarm whose condition is neither connection nor battery still renders as
+  // a system message, under the generic maintenance subtype.
+  assert.deepStrictEqual(
+    classifyAlarm({ alarm_type: 'device system alarm', alarm_severity: 'Alarm', alarm_condition_type: 'Firmware update required' }),
+    { severity: 'system', systemType: 'maintenance' });
+  // Measurement alarms keep the severity/Warning mapping and carry no system subtype.
+  assert.deepStrictEqual(
+    classifyAlarm({ alarm_type: 'measurement_alarm', alarm_severity: 'Alarm', alarm_condition_type: 'Upper limit' }),
+    { severity: 'alarm', systemType: null });
+  assert.deepStrictEqual(
+    classifyAlarm({ alarm_type: 'measurement_alarm', alarm_severity: 'Warning', alarm_condition_type: 'Upper limit' }),
+    { severity: 'warning', systemType: null });
+  // Fallback: when alarm_type is absent (older rows), a connection/battery condition
+  // string still classifies as a system alarm rather than a plain warning.
+  assert.deepStrictEqual(
+    classifyAlarm({ alarm_severity: 'Warning', alarm_condition_type: 'Connection timeout, device did not communicated in expected time' }),
+    { severity: 'system', systemType: 'connection' });
+  // Fallback with no type hints at all defaults to a warning.
+  assert.deepStrictEqual(
+    classifyAlarm({}),
+    { severity: 'warning', systemType: null });
 });
 
 test('deriveSystemConditions reports connection and battery system events from a status snapshot', () => {

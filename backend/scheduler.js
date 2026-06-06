@@ -1,6 +1,6 @@
 const { getDb, getSetting, saveSetting } = require('./db');
 const TestoClient = require('./testo-client');
-const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions } = require('./device-bridge');
+const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm } = require('./device-bridge');
 
 let isSyncing = false;
 let lastSyncTime = null;
@@ -223,15 +223,53 @@ async function runSyncCycle(customClient = null) {
           const stationId = dev ? deviceToStation.get(dev) : null;
           if (!stationId) { diag.alarmsUnmatched++; continue; }
 
+          // testo connection/battery problems arrive in this same feed as system
+          // alarms; classifyAlarm routes them to severity 'system' with a normalized
+          // subtype. For system alarms store that subtype in alarm_condition_type so
+          // the frontend renders the matching icon (mirrors applySystemEvents); for
+          // measurement alarms keep the raw condition string.
+          const { severity, systemType } = classifyAlarm(a);
+          const conditionForFrontend = systemType || a.alarm_condition_type;
+          // The live API's alarm_status enum is 'Alarm' (currently in alarm) / 'Ok'
+          // (resolved). It never sends 'Active' — that value only existed in the mock
+          // client, which is why every real alarm used to be stored inactive.
+          const isActive = a.alarm_status === 'Alarm' ? 1 : 0;
+
           insertAlarmStmt.run(
             a.uuid, stationId,
-            (a.alarm_severity || 'Warning').toLowerCase() === 'alarm' ? 'alarm' : 'warning',
-            a.alarm_status, a.alarm_reason, a.alarm_condition_type, a.alarm_value,
+            severity,
+            a.alarm_status, a.alarm_reason, conditionForFrontend, a.alarm_value,
             mapPhysicalProperty(a.physical_value), null,
             parseTimestamp(a.alarm_time), parseTimestamp(a.last_status_change_time), a.alarm_value,
-            a.alarm_status === 'Active' ? 1 : 0, a.alarm_reason || 'Grenzwert verletzt',
+            isActive, a.alarm_reason || 'Grenzwert verletzt',
             `Sensor ${a.serial_no} hat einen Wert von ${a.alarm_value} gemeldet.`);
         }
+      })();
+
+      // Reconcile the transition-log feed. testo emits a violation and its recovery as
+      // separate rows (distinct uuids, ascending timestamps), so "currently active" is
+      // a property of a logical alarm group — (station, condition, metric) — not of a
+      // single row: only the most recent transition is live, and only when it is a
+      // violation ('Alarm'). A later 'Ok' recovery closes the whole group. Synthetic
+      // system rows (sys-*, alarm_status IS NULL) are owned by applySystemEvents and
+      // are excluded here. Runs over all stored feed rows so historical pairs settle
+      // even when only one side was fetched this cycle.
+      db.transaction(() => {
+        db.prepare("UPDATE events SET active = 0 WHERE alarm_status IS NOT NULL").run();
+        db.prepare(`
+          UPDATE events SET active = 1 WHERE uuid IN (
+            SELECT uuid FROM (
+              SELECT uuid,
+                ROW_NUMBER() OVER (
+                  PARTITION BY station_id, alarm_condition_type, COALESCE(metric, '')
+                  ORDER BY start_ts DESC, rowid DESC
+                ) AS rn,
+                alarm_status
+              FROM events
+              WHERE alarm_status IS NOT NULL
+            ) WHERE rn = 1 AND alarm_status = 'Alarm'
+          )
+        `).run();
       })();
 
       // Only advance the watermark when the bridge was available, otherwise alarms

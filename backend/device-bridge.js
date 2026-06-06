@@ -64,6 +64,47 @@ function deriveSystemConditions(snapshot, opts = {}) {
   return out;
 }
 
+// Classify a testo alarm-feed row into the dashboard's event model.
+// Returns { severity, systemType }:
+//   severity   - 'system' | 'alarm' | 'warning'
+//   systemType - 'connection' | 'battery' | 'maintenance' for system alarms, else null
+//
+// testo delivers connection/battery/device problems through the SAME alarm feed as
+// measurement threshold breaches, distinguished by `alarm_type`:
+//   measurement_alarm  -> a real limit breach; severity follows alarm_severity
+//   device system alarm / sensor system alarm -> an operational problem
+//                         (e.g. "Connection timeout…", low battery)
+// Classifying purely on alarm_severity (Warning/Alarm) collapsed system alarms into
+// the warning bucket, so the dashboard — which renders system messages only when
+// severity === 'system' — never showed them. The subtype the frontend needs for its
+// icon (connection vs battery) is carried in alarm_condition_type, normalized here to
+// match the synthetic system rows applySystemEvents writes ('connection'/'battery').
+function classifyAlarm(alarm) {
+  const a = alarm || {};
+  const type = (a.alarm_type || '').toLowerCase();
+  const cond = (a.alarm_condition_type || '').toLowerCase();
+
+  const subtypeOf = () => {
+    if (cond.includes('connection') || cond.includes('timeout') || cond.includes('verbind'))
+      return 'connection';
+    if (cond.includes('battery') || cond.includes('batterie') || cond.includes('akku'))
+      return 'battery';
+    return 'maintenance';
+  };
+
+  const isSystemType = type.includes('system');
+  // Fallback for rows lacking alarm_type (older data): a connection/battery condition
+  // string is itself enough to treat the alarm as a system alarm.
+  const condIsSystem = !type && (subtypeOf() !== 'maintenance');
+
+  if (isSystemType || condIsSystem) {
+    return { severity: 'system', systemType: subtypeOf() };
+  }
+
+  const severity = (a.alarm_severity || 'Warning').toLowerCase() === 'alarm' ? 'alarm' : 'warning';
+  return { severity, systemType: null };
+}
+
 // Build lookup maps from Device Properties rows (one row per channel).
 function buildDeviceBridge(properties) {
   const sensorToDevice = new Map();
@@ -98,4 +139,4 @@ function buildSensorFilter(sensorUuids) {
   return list.map((s) => `sensor_uuid eq '${s}'`).join(' or ');
 }
 
-module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions };
+module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm };
