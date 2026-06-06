@@ -25,14 +25,6 @@
   };
   const METRIC_IDS = ["temperature", "humidity", "pressure", "dewpoint", "abshumid"];
 
-  const DEFAULT_THRESHOLDS = {
-    temperature: { warn: [19.0, 23.5], alarm: [17.5, 25.5] },
-    humidity:    { warn: [38,   55],   alarm: [33,   62]   },
-    pressure:    { warn: [1011, 1019], alarm: [1008, 1022] },
-    dewpoint:    { warn: [7.5,  13.0], alarm: [6.0,  14.5] },
-    abshumid:    { warn: [7.5,  11.0], alarm: [6.5,  12.0] },
-  };
-
   // Internal reactive cache
   let STATIONS = {};
   let STATION_ORDER = [];
@@ -45,93 +37,6 @@
     for (const fn of listeners) {
       try { fn(); } catch (e) { console.error(e); }
     }
-  }
-
-  // Retrieve user custom thresholds from localStorage or fall back to defaults
-  function getThresholdsForStation(sid) {
-    const key = `dash-thresholds-${sid}`;
-    try {
-      const stored = localStorage.getItem(key);
-      if (stored) return JSON.parse(stored);
-    } catch (e) {}
-    return JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS));
-  }
-
-  function saveThresholdsForStation(sid, thr) {
-    const key = `dash-thresholds-${sid}`;
-    try {
-      localStorage.setItem(key, JSON.stringify(thr));
-    } catch (e) {}
-  }
-
-  // Re-evaluates local series data to see if threshold breaches occurred
-  function classify(thresholds, metricId, v) {
-    const t = thresholds[metricId];
-    if (!t) return "normal";
-    if (v < t.alarm[0]) return "alarm-low";
-    if (v > t.alarm[1]) return "alarm-high";
-    if (v < t.warn[0])  return "warn-low";
-    if (v > t.warn[1])  return "warn-high";
-    return "normal";
-  }
-
-  function thresholdValue(thresholds, metricId, stateKey) {
-    const t = thresholds[metricId];
-    if (stateKey === "alarm-low")  return t.alarm[0];
-    if (stateKey === "alarm-high") return t.alarm[1];
-    if (stateKey === "warn-low")   return t.warn[0];
-    if (stateKey === "warn-high")  return t.warn[1];
-    return null;
-  }
-
-  function generateLocalThresholdEvents(station) {
-    const events = [];
-    let idc = 1;
-    const nextId = () => `${station.id}-local-e-${idc++}`;
-    const stationTimestamps = timestamps;
-
-    if (!stationTimestamps || stationTimestamps.length === 0) return events;
-
-    for (const mid of METRIC_IDS) {
-      const metricObj = station.metrics[mid];
-      if (!metricObj || !metricObj.series || metricObj.series.length === 0) continue;
-      const series = metricObj.series;
-
-      let state = "normal";
-      let stateSince = null;
-      let extreme = null;
-
-      const closeOpen = (endTs) => {
-        events.push({
-          id: nextId(),
-          severity: state.startsWith("alarm") ? "alarm" : "warning",
-          metric: mid,
-          condition: state.endsWith("high") ? "high" : "low",
-          stateKey: state,
-          threshold: thresholdValue(station.thresholds, mid, state),
-          startTs: stateSince,
-          endTs: endTs,
-          extreme,
-          active: endTs == null,
-        });
-      };
-
-      for (let i = 0; i < series.length; i++) {
-        const cur = classify(station.thresholds, mid, series[i]);
-        const ts = stationTimestamps[i];
-        if (cur !== state) {
-          if (state !== "normal") closeOpen(ts);
-          state = cur;
-          stateSince = ts;
-          extreme = series[i];
-        } else if (state !== "normal") {
-          if (state.endsWith("high") && series[i] > extreme) extreme = series[i];
-          if (state.endsWith("low")  && series[i] < extreme) extreme = series[i];
-        }
-      }
-      if (state !== "normal") closeOpen(null);
-    }
-    return events;
   }
 
   // Statistics helper
@@ -325,8 +230,6 @@
           console.error(`Error fetching events for ${s.id}:`, e);
         }
 
-        const thresholds = getThresholdsForStation(s.id);
-
         const stationObj = {
           id: s.id,
           name: s.name,
@@ -339,13 +242,11 @@
           mo_uuid: s.mo_uuid,
           device_uuid: s.device_uuid,
           metrics,
-          thresholds,
           events: []
         };
 
-        // Combine backend alarms/system events with local threshold breaches
-        const localEvents = generateLocalThresholdEvents(stationObj);
-        stationObj.events = [...backendEvents, ...localEvents];
+        // Events come solely from the API (Testo alarm feed + system events).
+        stationObj.events = backendEvents;
         stationObj.events.sort((a, b) => {
           if (a.active !== b.active) return a.active ? -1 : 1;
           return b.startTs - a.startTs;
@@ -401,7 +302,6 @@
       signal: 100,
       lastSeen: Date.now(),
       metrics,
-      thresholds: JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS)),
       events: []
     };
   }
@@ -436,45 +336,8 @@
 
     // Active-station shortcuts
     get metrics()    { return STATIONS[activeStationId]?.metrics; },
-    get thresholds() { return STATIONS[activeStationId]?.thresholds; },
     get events()     { return STATIONS[activeStationId]?.events; },
 
-    setThreshold(metricId, level, bound, value) {
-      const station = STATIONS[activeStationId];
-      if (!station) return;
-      station.thresholds[metricId][level][bound] = value;
-      saveThresholdsForStation(station.id, station.thresholds);
-
-      // Re-evaluate local events
-      const localEvents = generateLocalThresholdEvents(station);
-      const backendEvents = station.events.filter(e => !e.id.includes('-local-e-'));
-      station.events = [...backendEvents, ...localEvents];
-      station.events.sort((a, b) => {
-        if (a.active !== b.active) return a.active ? -1 : 1;
-        return b.startTs - a.startTs;
-      });
-
-      emit();
-    },
-    recomputeStationEvents(stationId) {
-      const station = STATIONS[stationId];
-      if (!station) return;
-
-      const localEvents = generateLocalThresholdEvents(station);
-      const backendEvents = station.events.filter(e => !e.id.includes('-local-e-'));
-      station.events = [...backendEvents, ...localEvents];
-      station.events.sort((a, b) => {
-        if (a.active !== b.active) return a.active ? -1 : 1;
-        return b.startTs - a.startTs;
-      });
-
-      emit();
-    },
-    classify(metricId, v) {
-      const station = STATIONS[activeStationId];
-      if (!station) return "normal";
-      return classify(station.thresholds, metricId, v);
-    },
     formatValue(metric, v) {
       if (v == null || Number.isNaN(v)) return "—";
       return v.toFixed(metric.decimals) + " " + metric.unit;
