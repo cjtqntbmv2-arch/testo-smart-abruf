@@ -343,6 +343,12 @@ app.get('/api/system/status', (req, res) => {
   });
 });
 
+// Test-only route: lets the test suite prove the 4-arg error middleware works.
+// Guarded by NODE_ENV so it is unreachable in production.
+if (process.env.NODE_ENV === 'test') {
+  app.get('/api/_test/throw', () => { throw new Error('test-boom'); });
+}
+
 // Central error-handling middleware (4-arg form) — catches thrown errors from
 // route handlers and returns a JSON 500 instead of hanging or leaking stack traces.
 // Must be registered AFTER all routes.
@@ -364,7 +370,7 @@ const server = process.env.HOST
     });
 
 // Graceful shutdown on SIGINT / SIGTERM.
-// Guard with a flag so double-registration (e.g. test harness re-require) is idempotent.
+// Guard with a flag in case the module cache is cleared / the module is loaded more than once.
 if (!process.env._KLIMA_SHUTDOWN_REGISTERED) {
   process.env._KLIMA_SHUTDOWN_REGISTERED = '1';
   const shutdown = () => {

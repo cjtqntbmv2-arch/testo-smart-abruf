@@ -254,16 +254,16 @@ test('POST /api/settings with non-empty api_key updates the stored key', async (
 });
 
 // ── H1: Central error middleware returns 500 JSON ─────────────────────────
-test('Error middleware returns 500 JSON on thrown DB error', async () => {
-  // This tests that Express error middleware catches thrown errors in route handlers.
-  // We trigger this via a route that would throw if the DB is broken —
-  // we can't easily break the DB, but we verify the endpoint returns JSON on 500
-  // by checking the error middleware is wired (it's structural; existence is verified by integration).
-  // As a proxy: confirm all error responses are JSON content-type:
-  const res = await fetch('http://localhost:3001/api/testo/devices');
-  // api_key cleared earlier, should be 400 JSON
+// Placed last so a throw in the test-only route does not interfere with other tests.
+// The route /api/_test/throw is only registered when NODE_ENV === 'test'.
+test('Error middleware returns 500 JSON on thrown handler error', async () => {
+  const res = await fetch('http://localhost:3001/api/_test/throw');
+  assert.strictEqual(res.status, 500, 'error middleware must return HTTP 500');
   const ct = res.headers.get('content-type');
-  assert.ok(ct && ct.includes('application/json'), 'error responses must be JSON');
+  assert.ok(ct && ct.includes('application/json'), 'error response must be JSON');
+  const body = await res.json();
+  assert.ok(typeof body.error === 'string' && body.error.length > 0,
+    'response body must have a non-empty error string');
 });
 
 // ── K3: GET /api/system/status returns null for empty DB ──────────────────
