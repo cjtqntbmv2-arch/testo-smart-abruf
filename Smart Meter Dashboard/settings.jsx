@@ -37,12 +37,6 @@ const DEFAULT_SETTINGS = {
     autoRefreshSec: 30,
     defaultStation: "living",
   },
-  calibration: {
-    living:   { temperature: 0.0, humidity: 0 },
-    bedroom:  { temperature: 0.0, humidity: 0 },
-    outdoor:  { temperature: 0.0, humidity: 0 },
-    basement: { temperature: 0.0, humidity: 0 },
-  },
 };
 
 function loadSettings() {
@@ -58,7 +52,6 @@ function loadSettings() {
       database: { ...DEFAULT_SETTINGS.database, ...(stored.database || {}) },
       notifications: { ...DEFAULT_SETTINGS.notifications, ...(stored.notifications || {}) },
       general: { ...DEFAULT_SETTINGS.general, ...(stored.general || {}) },
-      calibration: { ...DEFAULT_SETTINGS.calibration, ...(stored.calibration || {}) },
     };
   } catch (e) {
     return DEFAULT_SETTINGS;
@@ -483,7 +476,7 @@ function DatabaseSection({ settings, update, systemStatus }) {
   );
 }
 
-function StationsSection({ settings, update }) {
+function StationsSection() {
   const D = window.DASH_DATA;
   const [editingId, setEditingId] = sState(null);
   const [adding, setAdding] = sState(false);
@@ -494,8 +487,6 @@ function StationsSection({ settings, update }) {
   const [formLocation, setFormLocation] = sState('');
   const [formMoUuid, setFormMoUuid] = sState('');
   const [formDeviceUuid, setFormDeviceUuid] = sState('');
-  const [formCalTemp, setFormCalTemp] = sState(0);
-  const [formCalHum, setFormCalHum] = sState(0);
 
   // Device list from local backend proxy (one entry per physical logger)
   const [deviceList, setDeviceList] = sState([]);
@@ -529,9 +520,6 @@ function StationsSection({ settings, update }) {
     setFormLocation(s.location || '');
     setFormMoUuid(s.mo_uuid || '');
     setFormDeviceUuid(s.device_uuid || '');
-    const cal = settings.calibration[s.id] || { temperature: 0, humidity: 0 };
-    setFormCalTemp(cal.temperature);
-    setFormCalHum(cal.humidity);
   }
 
   function startAdd() {
@@ -542,8 +530,6 @@ function StationsSection({ settings, update }) {
     setFormLocation('');
     setFormMoUuid('');
     setFormDeviceUuid('');
-    setFormCalTemp(0);
-    setFormCalHum(0);
   }
 
   function cancelEdit() {
@@ -567,8 +553,6 @@ function StationsSection({ settings, update }) {
     })
       .then(res => res.json())
       .then(() => {
-        // Save calibration offsets to local settings
-        update(`calibration.${formId}`, { temperature: formCalTemp, humidity: formCalHum });
         // Force reload dashboard data
         if (window.DASH_DATA && window.DASH_DATA.forceApiRefresh) {
           window.DASH_DATA.forceApiRefresh();
@@ -668,25 +652,6 @@ function StationsSection({ settings, update }) {
             />
           </Field>
           
-          <div className="field-row">
-            <Field label="Temperatur Offset (K)" hint="Kompensation von Messabweichungen.">
-              <input
-                type="number"
-                step="0.1"
-                value={formCalTemp}
-                onChange={(e) => setFormCalTemp(parseFloat(e.target.value) || 0)}
-              />
-            </Field>
-            <Field label="Feuchtigkeit Offset (%)" hint="Kompensation von Messabweichungen.">
-              <input
-                type="number"
-                step="0.5"
-                value={formCalHum}
-                onChange={(e) => setFormCalHum(parseFloat(e.target.value) || 0)}
-              />
-            </Field>
-          </div>
-
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
             <button className="btn ghost" onClick={cancelEdit}>Abbrechen</button>
             <button className="btn primary" onClick={saveEdit} disabled={!formId || !formName}>Zuweisung Speichern</button>
@@ -722,8 +687,7 @@ function StationsSection({ settings, update }) {
               const s = D.stations[sid];
               if (!s) return null;
               const hasAssignment = !!(s.mo_uuid || s.device_uuid);
-              const cal = settings.calibration[sid] || { temperature: 0, humidity: 0 };
-              
+
               return (
                 <tr key={sid}>
                   <td>
@@ -733,11 +697,6 @@ function StationsSection({ settings, update }) {
                         <div className="cell-title">{s.name}</div>
                         <div className="cell-sub">
                           {s.location} · <span className="mono">{sid}</span>
-                          {(cal.temperature !== 0 || cal.humidity !== 0) && (
-                            <span style={{ color: 'var(--accent-dark)', fontWeight: '500', marginLeft: '6px' }}>
-                              (Cal: {cal.temperature > 0 ? `+${cal.temperature}` : cal.temperature}K, {cal.humidity > 0 ? `+${cal.humidity}` : cal.humidity}%)
-                            </span>
-                          )}
                         </div>
                       </div>
                     </div>

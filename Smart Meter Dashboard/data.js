@@ -132,18 +132,8 @@
           }
         }
 
-        // Apply calibration offsets
-        let dashSettings = {};
-        try {
-          const raw = localStorage.getItem("dash-settings-v1");
-          if (raw) dashSettings = JSON.parse(raw);
-        } catch (e) {}
-        const calRaw = (dashSettings.calibration && dashSettings.calibration[s.id]) || {};
-        const calT = calRaw.temperature ?? 0;
-        const calH = calRaw.humidity ?? 0;
-        
-        seriesT = seriesT.map(v => typeof v === 'number' && !Number.isNaN(v) ? v + calT : NaN);
-        seriesH = seriesH.map(v => typeof v === 'number' && !Number.isNaN(v) ? v + calH : NaN);
+        seriesT = seriesT.map(v => typeof v === 'number' && !Number.isNaN(v) ? v : NaN);
+        seriesH = seriesH.map(v => typeof v === 'number' && !Number.isNaN(v) ? v : NaN);
         seriesP = seriesP.map(v => typeof v === 'number' && !Number.isNaN(v) ? v : NaN);
 
         const seriesD = seriesT.map((t, i) => {
