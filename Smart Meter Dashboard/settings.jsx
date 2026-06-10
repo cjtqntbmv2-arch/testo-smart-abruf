@@ -7,9 +7,9 @@ const SETTINGS_KEY = "dash-settings-v1";
 
 const DEFAULT_SETTINGS = {
   api: {
-    endpoint: "https://api.klima.example/v3",
-    apiKey: "kli_live_8a3f7c2d9e4b1a6f5c8d2e3b9a4f7c8d",
-    pollIntervalSec: 10,
+    apiKey: "",           // empty — real key lives in backend only (never stored in frontend)
+    apiRegion: "eu",
+    pollIntervalSec: 900, // 15 min — matches backend default
     timeoutSec: 5,
     retries: 3,
   },
@@ -73,8 +73,29 @@ function SettingsPage({ onClose }) {
   const [section, setSection] = sState("overview");
   const [settings, setSettings] = sState(loadSettings);
   const [savedFlash, setSavedFlash] = sState(false);
+  const [saveError, setSaveError] = sState(false);
+  const [apiKeyConfigured, setApiKeyConfigured] = sState(false);
   const [systemStatus, setSystemStatus] = sState(null);
   const [, forceTick] = sState(0);
+
+  // Hydration gate: tracks whether the initial GET /api/settings has completed AND the resulting
+  // state update has been absorbed. We need TWO counters, not a simple boolean:
+  //   skipCount.current = number of [settings] effect runs still to skip before POSTing.
+  //
+  // Timeline:
+  //   1. Mount  → [settings] effect fires (initial render) — this is NOT a user edit → skip 1.
+  //   2. GET resolves → setSettings(...) fires → [settings] effect fires again — this IS the
+  //      hydration state-update, also NOT a user edit → skip 1 more.
+  //   3. Any subsequent [settings] effect run is a genuine user edit → POST.
+  //
+  // So we pre-load skipCount with 1 (for the mount run), and the GET .then increments it by 1
+  // more (for the hydration run). Total skips = 2 on a successful load; 1 on load failure
+  // (where no setSettings is called and hence no second effect run happens, but hydrated must
+  // still be set so user edits after a failed load do save).
+  //
+  // Edge case: if the GET fails, no setSettings is called, skipCount stays at 1, and the one
+  // initial-mount effect run is consumed. After that, any user edit POSTs normally.
+  const skipCount = sRef(1); // start at 1 to absorb the initial-mount run
 
   // Subscribe to dashboard data changes so the UI reflects added/deleted stations immediately
   sEff(() => {
@@ -83,16 +104,22 @@ function SettingsPage({ onClose }) {
     }
   }, []);
 
-  // Load configuration and diagnostics from backend on mount
+  // Load configuration and diagnostics from backend on mount.
+  // Note: GET /api/settings no longer returns the cleartext api_key — only api_key_set (boolean).
+  // We track that flag in apiKeyConfigured state and never set settings.api.apiKey from the response.
   sEff(() => {
     fetch('/api/settings')
       .then(res => res.json())
       .then(data => {
+        // Update api_key_set flag (shown as placeholder in the key input)
+        setApiKeyConfigured(!!data.api_key_set);
+        // Hydrate other settings from backend. api.apiKey intentionally NOT set here — we never
+        // receive the cleartext key. The field stays empty so the user types a new key only when
+        // actually changing it.
         setSettings(s => ({
           ...s,
           api: {
             ...s.api,
-            apiKey: data.api_key || '',
             apiRegion: data.api_region || 'eu',
             pollIntervalSec: data.poll_interval_sec || 900
           },
@@ -101,8 +128,15 @@ function SettingsPage({ onClose }) {
             retentionDays: data.retention_days || 365
           }
         }));
+        // Increment skip counter so the [settings] effect that fires due to this setSettings
+        // call is also skipped (it's the hydration update, not a user edit).
+        skipCount.current += 1;
       })
-      .catch(err => console.error('Failed to load backend settings:', err));
+      .catch(err => {
+        console.error('Failed to load backend settings:', err);
+        // No setSettings called on failure, so no extra effect run to absorb. skipCount stays
+        // at 1, which was already consumed by the initial-mount run. User edits save normally.
+      });
 
     const loadStatus = () => {
       fetch('/api/system/status')
@@ -119,36 +153,65 @@ function SettingsPage({ onClose }) {
   }, []);
 
   sEff(() => {
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
-    setSavedFlash(true);
-    const flashId = setTimeout(() => setSavedFlash(false), 1200);
+    // K1 hydration gate — consume one skip token per non-user effect run:
+    //   skipCount starts at 1 (initial-mount run). GET success adds 1 more (hydration run).
+    //   User edits fire after all tokens are spent → POST fires.
+    //   - Page open, GET succeeds: 2 skips consumed (mount + hydration) → 0 POSTs.
+    //   - Page open, GET fails:    1 skip consumed (mount only, no setSettings) → 0 POSTs.
+    //   - User changes a field:    skipCount is 0 → POST fires normally.
+    if (skipCount.current > 0) {
+      skipCount.current -= 1;
+      return;
+    }
 
-    // Save to backend with a 1-second debounce to avoid spamming keystrokes
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+
+    // Save to backend with a 1-second debounce to avoid spamming keystrokes.
+    // H4: savedFlash/saveError are set based on actual POST outcome, not just "change happened".
     const saveId = setTimeout(() => {
+      // H2: Only include api_key in the body when the user has actually typed a non-empty value.
+      // An empty field means "leave the stored key unchanged" — omitting it from the POST
+      // prevents accidentally wiping the stored key when changing other settings.
+      const body = {
+        api_region: settings.api.apiRegion || 'eu',
+        poll_interval_sec: settings.api.pollIntervalSec,
+        retention_days: settings.database.retentionDays
+      };
+      if (settings.api.apiKey) {
+        body.api_key = settings.api.apiKey;
+      }
+
       fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          api_key: settings.api.apiKey,
-          api_region: settings.api.apiRegion || 'eu',
-          poll_interval_sec: settings.api.pollIntervalSec,
-          retention_days: settings.database.retentionDays
-        })
+        body: JSON.stringify(body)
       })
-        .then(() => {
-          // Immediately trigger status refresh after settings update
+        .then(res => {
+          if (!res.ok) {
+            // H4: surface backend rejection (e.g. 400 validation) as save error
+            setSaveError(true);
+            setSavedFlash(false);
+            setTimeout(() => setSaveError(false), 3000);
+            return;
+          }
+          setSavedFlash(true);
+          setSaveError(false);
+          setTimeout(() => setSavedFlash(false), 1200);
+          // Immediately trigger status refresh after successful settings update
           fetch('/api/system/status')
-            .then(res => res.json())
+            .then(r => r.json())
             .then(data => setSystemStatus(data))
             .catch(() => {});
         })
-        .catch(err => console.error('Failed to save backend settings:', err));
+        .catch(err => {
+          console.error('Failed to save backend settings:', err);
+          setSaveError(true);
+          setSavedFlash(false);
+          setTimeout(() => setSaveError(false), 3000);
+        });
     }, 1000);
 
-    return () => {
-      clearTimeout(flashId);
-      clearTimeout(saveId);
-    };
+    return () => clearTimeout(saveId);
   }, [settings]);
 
   function update(path, value) {
@@ -168,7 +231,7 @@ function SettingsPage({ onClose }) {
   const ctx = { settings, update };
   let body = null;
   if (section === "overview")      body = <OverviewSection settings={settings} systemStatus={systemStatus} />;
-  if (section === "api")           body = <ApiSection settings={settings} update={update} systemStatus={systemStatus} />;
+  if (section === "api")           body = <ApiSection settings={settings} update={update} systemStatus={systemStatus} apiKeyConfigured={apiKeyConfigured} />;
   if (section === "database")      body = <DatabaseSection settings={settings} update={update} systemStatus={systemStatus} />;
   if (section === "stations")      body = <StationsSection {...ctx} />;
   if (section === "notifications") body = <NotificationsSection {...ctx} />;
@@ -189,10 +252,17 @@ function SettingsPage({ onClose }) {
           ))}
         </nav>
         <div className="settings-side-foot">
-          <div className={`save-pill ${savedFlash ? "show" : ""}`}>
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2.5 6 5 8.5 9.5 3.5"/></svg>
-            Gespeichert
-          </div>
+          {saveError ? (
+            <div className="save-pill show" style={{ background: 'var(--alarm)', color: '#fff' }}>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 2v5M6 9v1"/></svg>
+              Speichern fehlgeschlagen
+            </div>
+          ) : (
+            <div className={`save-pill ${savedFlash ? "show" : ""}`}>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2.5 6 5 8.5 9.5 3.5"/></svg>
+              Gespeichert
+            </div>
+          )}
         </div>
       </aside>
       <main className="settings-main">
@@ -298,7 +368,7 @@ function OverviewSection({ settings, systemStatus }) {
   );
 }
 
-function ApiSection({ settings, update, systemStatus }) {
+function ApiSection({ settings, update, systemStatus, apiKeyConfigured }) {
   const [testing, setTesting] = sState(false);
   const [showKey, setShowKey] = sState(false);
   const [testResult, setTestResult] = sState(null);
@@ -355,9 +425,18 @@ function ApiSection({ settings, update, systemStatus }) {
       </Card>
 
       <Card>
-        <Field label="API-Schlüssel" hint="Wird zur Authentifizierung bei der Testo Smart Connect Cloud verwendet.">
+        <Field label="API-Schlüssel" hint="Wird zur Authentifizierung bei der Testo Smart Connect Cloud verwendet. Leer lassen, um den gespeicherten Schlüssel beizubehalten.">
           <div className="input-row">
-            <input type={showKey ? "text" : "password"} value={settings.api.apiKey} onChange={(e) => update("api.apiKey", e.target.value)} />
+            {/* H2: The backend never returns the cleartext key. The field starts empty.
+                A placeholder indicates whether a key is already stored on the backend.
+                The user types here only when changing the key; an empty field on save
+                means "leave stored key unchanged" (omitted from POST body). */}
+            <input
+              type={showKey ? "text" : "password"}
+              value={settings.api.apiKey}
+              onChange={(e) => update("api.apiKey", e.target.value)}
+              placeholder={apiKeyConfigured ? "•••••••••• (gespeichert)" : "Kein Schlüssel konfiguriert"}
+            />
             <button className="btn ghost" onClick={() => setShowKey((v) => !v)} title={showKey ? "Verbergen" : "Anzeigen"}>
               {showKey ? "Verbergen" : "Anzeigen"}
             </button>
@@ -492,6 +571,7 @@ function StationsSection() {
   const [deviceList, setDeviceList] = sState([]);
   const [loadingDevices, setLoadingDevices] = sState(false);
   const [deviceError, setDeviceError] = sState(null);
+  const [saveStationError, setSaveStationError] = sState(null);
 
   sEff(() => {
     if (!editingId && !adding) return;
@@ -538,6 +618,7 @@ function StationsSection() {
   }
 
   function saveEdit() {
+    setSaveStationError(null);
     const payload = {
       id: formId,
       name: formName,
@@ -551,28 +632,48 @@ function StationsSection() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     })
-      .then(res => res.json())
-      .then(() => {
-        // Force reload dashboard data
-        if (window.DASH_DATA && window.DASH_DATA.forceApiRefresh) {
-          window.DASH_DATA.forceApiRefresh();
+      .then(res => {
+        // H4: check res.ok before treating as success; on 4xx/5xx surface error inline
+        if (!res.ok) {
+          return res.json().catch(() => ({})).then(body => {
+            setSaveStationError(body.error || `Fehler ${res.status}: Speichern fehlgeschlagen`);
+          });
         }
-        setEditingId(null);
-        setAdding(false);
+        return res.json().then(() => {
+          // Force reload dashboard data only on success
+          if (window.DASH_DATA && window.DASH_DATA.forceApiRefresh) {
+            window.DASH_DATA.forceApiRefresh();
+          }
+          setEditingId(null);
+          setAdding(false);
+        });
       })
-      .catch(err => console.error('Error saving station:', err));
+      .catch(err => {
+        console.error('Error saving station:', err);
+        setSaveStationError('Netzwerkfehler: Messstelle konnte nicht gespeichert werden.');
+      });
   }
 
   function deleteStation(sid, name) {
     if (confirm(`Messstelle "${name}" (${sid}) wirklich löschen? Alle zugehörigen Verlaufsdaten werden unwiderruflich aus der Datenbank entfernt.`)) {
       fetch(`/api/stations/${sid}`, { method: 'DELETE' })
-        .then(res => res.json())
-        .then(() => {
-          if (window.DASH_DATA && window.DASH_DATA.forceApiRefresh) {
-            window.DASH_DATA.forceApiRefresh();
+        .then(res => {
+          // H4: check res.ok; on failure alert the user and do not refresh (nothing was deleted)
+          if (!res.ok) {
+            return res.json().catch(() => ({})).then(body => {
+              alert(`Löschen fehlgeschlagen: ${body.error || `Fehler ${res.status}`}`);
+            });
           }
+          return res.json().then(() => {
+            if (window.DASH_DATA && window.DASH_DATA.forceApiRefresh) {
+              window.DASH_DATA.forceApiRefresh();
+            }
+          });
         })
-        .catch(err => console.error('Error deleting station:', err));
+        .catch(err => {
+          console.error('Error deleting station:', err);
+          alert('Netzwerkfehler: Messstelle konnte nicht gelöscht werden.');
+        });
     }
   }
 
@@ -652,6 +753,12 @@ function StationsSection() {
             />
           </Field>
           
+          {/* H4: inline error — shown when saveEdit gets a non-ok response; dialog stays open */}
+          {saveStationError && (
+            <div style={{ color: 'var(--alarm)', fontSize: '12px', marginTop: '12px', padding: '8px 10px', background: 'color-mix(in srgb, var(--alarm) 10%, transparent)', borderRadius: 'var(--radius-sm)', border: '1px solid color-mix(in srgb, var(--alarm) 30%, transparent)' }}>
+              ⚠️ {saveStationError}
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
             <button className="btn ghost" onClick={cancelEdit}>Abbrechen</button>
             <button className="btn primary" onClick={saveEdit} disabled={!formId || !formName}>Zuweisung Speichern</button>
