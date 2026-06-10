@@ -3,7 +3,8 @@
 
 const { useState: sState, useRef: sRef, useEffect: sEff, useMemo: sMemo } = React;
 
-const SETTINGS_KEY = "dash-settings-v1";
+// v2: v1 blob carried a fabricated api key (kli_live_8a3…) + removed calibration keys — abandon it.
+const SETTINGS_KEY = "dash-settings-v2";
 
 const DEFAULT_SETTINGS = {
   api: {
@@ -615,6 +616,7 @@ function StationsSection() {
   function cancelEdit() {
     setEditingId(null);
     setAdding(false);
+    setSaveStationError(null);
   }
 
   function saveEdit() {
