@@ -2,10 +2,21 @@ const express = require('express');
 const path = require('path');
 const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
-const { initDb, getDb, getSetting, saveSetting } = require('./db');
-const { startScheduler, runSyncCycle, getSchedulerStatus } = require('./scheduler');
+const { initDb, getDb, getSetting, saveSetting, closeDb } = require('./db');
+const { startScheduler, runSyncCycle, getSchedulerStatus, stopScheduler } = require('./scheduler');
 const TestoClient = require('./testo-client');
 require('dotenv').config();
+
+// Read application version from VERSION file; fall back to package.json
+const fs = require('fs');
+let appVersion = '0.0.0';
+try {
+  appVersion = fs.readFileSync(path.join(__dirname, '../VERSION'), 'utf8').trim();
+} catch (_e) {
+  try {
+    appVersion = require('../package.json').version || '0.0.0';
+  } catch (_e2) { /* ignore */ }
+}
 
 initDb();
 startScheduler();
@@ -22,9 +33,11 @@ app.get('/', (req, res) => {
 });
 
 // GET /api/settings
+// Returns api_key_set (boolean) instead of the cleartext api_key to prevent leaking secrets.
 app.get('/api/settings', (req, res) => {
+  const storedKey = getSetting('api_key') || '';
   res.json({
-    api_key: getSetting('api_key') || '',
+    api_key_set: storedKey.length > 0,
     api_region: getSetting('api_region') || 'eu',
     poll_interval_sec: parseInt(getSetting('poll_interval_sec') || '900', 10),
     retention_days: parseInt(getSetting('retention_days') || '365', 10)
@@ -34,11 +47,37 @@ app.get('/api/settings', (req, res) => {
 // POST /api/settings
 app.post('/api/settings', (req, res) => {
   const { api_key, api_region, poll_interval_sec, retention_days } = req.body;
-  if (api_key !== undefined) saveSetting('api_key', api_key);
+
+  // Validate poll_interval_sec when present
+  if (poll_interval_sec !== undefined) {
+    const v = parseInt(poll_interval_sec, 10);
+    if (isNaN(v) || v <= 0) {
+      return res.status(400).json({ error: 'poll_interval_sec must be a positive integer' });
+    }
+  }
+
+  // Validate retention_days when present
+  if (retention_days !== undefined) {
+    const v = parseInt(retention_days, 10);
+    if (isNaN(v) || v <= 0) {
+      return res.status(400).json({ error: 'retention_days must be a positive integer' });
+    }
+  }
+
+  // Validate api_region when present
+  if (api_region !== undefined && !['eu', 'us'].includes(api_region)) {
+    return res.status(400).json({ error: "api_region must be 'eu' or 'us'" });
+  }
+
+  // Only overwrite the stored api_key when a non-empty string is supplied;
+  // an absent or empty-string value leaves the key unchanged so it is never wiped.
+  if (api_key !== undefined && api_key !== '') {
+    saveSetting('api_key', api_key);
+  }
   if (api_region !== undefined) saveSetting('api_region', api_region);
-  if (poll_interval_sec !== undefined) saveSetting('poll_interval_sec', poll_interval_sec);
-  if (retention_days !== undefined) saveSetting('retention_days', retention_days);
-  
+  if (poll_interval_sec !== undefined) saveSetting('poll_interval_sec', String(parseInt(poll_interval_sec, 10)));
+  if (retention_days !== undefined) saveSetting('retention_days', String(parseInt(retention_days, 10)));
+
   // Restart scheduler with new interval
   startScheduler();
   res.json({ success: true });
@@ -54,6 +93,17 @@ app.get('/api/stations', (req, res) => {
 app.post('/api/stations', (req, res) => {
   const { id, name, location, mo_uuid, device_uuid } = req.body;
 
+  // Validate required fields
+  if (!id || typeof id !== 'string' || id.trim() === '') {
+    return res.status(400).json({ error: 'id must be a non-empty string' });
+  }
+  if (!/^[a-z0-9_-]+$/.test(id)) {
+    return res.status(400).json({ error: 'id must match /^[a-z0-9_-]+$/ (lowercase letters, digits, hyphens, underscores)' });
+  }
+  if (!name || typeof name !== 'string' || name.trim() === '') {
+    return res.status(400).json({ error: 'name must be a non-empty string' });
+  }
+
   // Upsert via ON CONFLICT so an edit UPDATEs only the user-editable fields.
   // INSERT OR REPLACE would DELETE the existing row first, which (with foreign
   // keys ON and ON DELETE CASCADE) would wipe the station's measurements/events
@@ -66,8 +116,8 @@ app.post('/api/stations', (req, res) => {
       location = excluded.location,
       mo_uuid = excluded.mo_uuid,
       device_uuid = excluded.device_uuid
-  `).run(id, name, location, mo_uuid, device_uuid);
-  
+  `).run(id, name, location ?? null, mo_uuid ?? null, device_uuid ?? null);
+
   // Trigger immediate sync for the new station
   runSyncCycle().catch(console.error);
   res.json({ success: true });
@@ -199,7 +249,6 @@ app.get('/api/testo/devices', async (req, res) => {
 });
 
 // GET /api/system/status
-const fs = require('fs');
 app.get('/api/system/status', (req, res) => {
   const db = getDb();
   const dbPath = process.env.DB_PATH || path.join(__dirname, '../klima.db');
@@ -219,6 +268,7 @@ app.get('/api/system/status', (req, res) => {
     stations: 0,
     settings: 0
   };
+  // lastWrite and oldestRecord remain null when there are genuinely no rows.
   let oldestRecord = null;
   let lastWrite = null;
 
@@ -228,62 +278,58 @@ app.get('/api/system/status', (req, res) => {
     tables.stations = db.prepare("SELECT count(*) as count FROM stations").get().count || 0;
     tables.settings = db.prepare("SELECT count(*) as count FROM settings").get().count || 0;
 
-    // Get oldest and newest record timestamp
+    // Get oldest and newest record timestamp — null when the tables are empty.
     const oldestMeas = db.prepare("SELECT min(timestamp) as min_ts FROM measurements").get();
     const newestMeas = db.prepare("SELECT max(timestamp) as max_ts FROM measurements").get();
     const oldestEvent = db.prepare("SELECT min(start_ts) as min_ts FROM events").get();
     const newestEvent = db.prepare("SELECT max(start_ts) as max_ts FROM events").get();
 
     const times = [];
-    if (oldestMeas && oldestMeas.min_ts) times.push(oldestMeas.min_ts);
-    if (oldestEvent && oldestEvent.min_ts) times.push(oldestEvent.min_ts);
+    if (oldestMeas && oldestMeas.min_ts != null) times.push(oldestMeas.min_ts);
+    if (oldestEvent && oldestEvent.min_ts != null) times.push(oldestEvent.min_ts);
     if (times.length > 0) oldestRecord = Math.min(...times);
 
     const writeTimes = [];
-    if (newestMeas && newestMeas.max_ts) writeTimes.push(newestMeas.max_ts);
-    if (newestEvent && newestEvent.max_ts) writeTimes.push(newestEvent.max_ts);
+    if (newestMeas && newestMeas.max_ts != null) writeTimes.push(newestMeas.max_ts);
+    if (newestEvent && newestEvent.max_ts != null) writeTimes.push(newestEvent.max_ts);
     if (writeTimes.length > 0) lastWrite = Math.max(...writeTimes);
   } catch (e) {
     console.error("Error querying database stats:", e);
   }
 
-  // Get disk storage partition statistics using fs.statfsSync
+  // Get disk storage partition statistics using fs.statfsSync.
+  // Return null fields when the path is :memory: or statfs fails — never fabricate values.
   let storageStats = {
-    usedGb: 0,
-    totalGb: 0,
-    status: 'ok'
+    usedGb: null,
+    totalGb: null,
+    status: 'unknown'
   };
 
-  try {
-    if (dbPath !== ':memory:') {
+  if (dbPath !== ':memory:') {
+    try {
       const stats = fs.statfsSync(path.dirname(dbPath));
       const totalGb = (stats.blocks * stats.bsize) / (1024 ** 3);
       const freeGb = (stats.bavail * stats.bsize) / (1024 ** 3);
       storageStats.totalGb = Math.round(totalGb * 10) / 10;
       storageStats.usedGb = Math.round((totalGb - freeGb) * 10) / 10;
-      if (freeGb < 1.0) {
-        storageStats.status = 'warn';
-      }
-    } else {
-      storageStats.totalGb = 16.0;
-      storageStats.usedGb = 0.1;
+      storageStats.status = freeGb < 1.0 ? 'warn' : 'ok';
+    } catch (e) {
+      console.error("Error retrieving partition storage statistics:", e);
+      // storageStats stays null/unknown — do not fabricate values
     }
-  } catch (e) {
-    console.error("Error retrieving partition storage statistics:", e);
-    storageStats.totalGb = 50.0;
-    storageStats.usedGb = 10.0;
   }
 
   const schedulerStatus = getSchedulerStatus();
   const apiKey = getSetting('api_key');
 
   res.json({
+    appVersion,
     database: {
       status: "ok",
       sizeBytes: dbSize,
       rowCount: tables.measurements + tables.events + tables.stations + tables.settings,
-      lastWrite: lastWrite || Date.now(),
-      oldestRecord: oldestRecord || (Date.now() - 30 * 24 * 3600 * 1000),
+      lastWrite,
+      oldestRecord,
       engine: "SQLite 3",
       tableRows: tables
     },
@@ -297,9 +343,38 @@ app.get('/api/system/status', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
-const server = app.listen(PORT, () => {
-  console.log(`Klima Dashboard server running on http://localhost:${PORT}`);
+// Central error-handling middleware (4-arg form) — catches thrown errors from
+// route handlers and returns a JSON 500 instead of hanging or leaking stack traces.
+// Must be registered AFTER all routes.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, _next) => {
+  console.error('Unhandled route error:', err);
+  res.status(500).json({ error: err.message || 'Internal server error' });
 });
+
+const PORT = process.env.PORT || 3000;
+// Bind to HOST env var when set (e.g. 127.0.0.1 for local-only),
+// otherwise omit the host so Express binds to all interfaces (LAN/tablet access).
+const server = process.env.HOST
+  ? app.listen(PORT, process.env.HOST, () => {
+      console.log(`Klima Dashboard server running on http://${process.env.HOST}:${PORT}`);
+    })
+  : app.listen(PORT, () => {
+      console.log(`Klima Dashboard server running on http://localhost:${PORT}`);
+    });
+
+// Graceful shutdown on SIGINT / SIGTERM.
+// Guard with a flag so double-registration (e.g. test harness re-require) is idempotent.
+if (!process.env._KLIMA_SHUTDOWN_REGISTERED) {
+  process.env._KLIMA_SHUTDOWN_REGISTERED = '1';
+  const shutdown = () => {
+    server.close();
+    stopScheduler();
+    closeDb();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
 
 module.exports = server;

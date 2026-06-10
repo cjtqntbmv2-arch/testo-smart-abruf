@@ -333,6 +333,71 @@ test('Device status sync derives online state and opens/closes system events', a
   closeDb();
 });
 
+// ── M5: Retention must not delete active events ───────────────────────────
+test('Retention deletes old inactive events but preserves old active events', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  saveSetting('retention_days', '30');
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('ret-st', 'Retention Test', 'dev-ret');
+
+  const oldTs = Date.now() - 40 * 24 * 3600 * 1000; // 40 days ago — older than retention window
+
+  // Old but ACTIVE event — must survive
+  db.prepare(`INSERT INTO events (uuid, station_id, severity, start_ts, active) VALUES (?, ?, 'alarm', ?, 1)`)
+    .run('old-active-evt', 'ret-st', oldTs);
+
+  // Old and INACTIVE event — must be deleted
+  db.prepare(`INSERT INTO events (uuid, station_id, severity, start_ts, active) VALUES (?, ?, 'alarm', ?, 0)`)
+    .run('old-inactive-evt', 'ret-st', oldTs);
+
+  const noopClient = {
+    async fetchDeviceProperties() { return []; },
+    async fetchDeviceStatus() { return []; },
+    async fetchMeasurements() { return []; },
+    async fetchAlarms() { return []; }
+  };
+
+  await schedulerModule.runSyncCycle(noopClient);
+
+  const active = db.prepare("SELECT uuid FROM events WHERE uuid = 'old-active-evt'").get();
+  const inactive = db.prepare("SELECT uuid FROM events WHERE uuid = 'old-inactive-evt'").get();
+
+  assert.ok(active, 'old but active event must NOT be deleted by retention');
+  assert.strictEqual(inactive, undefined, 'old inactive event must be deleted by retention');
+
+  closeDb();
+});
+
+// ── M8: Alarm insert must not churn rowid ─────────────────────────────────
+test('Alarm re-fetch preserves rowid (ON CONFLICT DO UPDATE, not INSERT OR REPLACE)', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('rowid-st', 'Rowid Test', 'dev-1');
+
+  const alarm = {
+    uuid: 'alarm-rowid-1', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
+    alarm_type: 'measurement_alarm', alarm_severity: 'Alarm', alarm_status: 'Alarm',
+    alarm_reason: 'Too high', alarm_condition_type: 'HighLimit', alarm_value: 28.5,
+    physical_value: 'Temperature',
+    alarm_time: '2026-05-29T06:10:00Z', last_status_change_time: '2026-05-29T06:10:00Z'
+  };
+
+  // First sync — inserts the alarm
+  await schedulerModule.runSyncCycle(new MockTestoClient([alarm]));
+  const before = db.prepare("SELECT rowid FROM events WHERE uuid = 'alarm-rowid-1'").get();
+  assert.ok(before, 'alarm must be inserted on first sync');
+
+  // Second sync with same alarm uuid — must UPDATE in place, not delete+reinsert
+  await schedulerModule.runSyncCycle(new MockTestoClient([alarm]));
+  const after = db.prepare("SELECT rowid FROM events WHERE uuid = 'alarm-rowid-1'").get();
+  assert.ok(after, 'alarm must still exist after second sync');
+  assert.strictEqual(after.rowid, before.rowid, 'rowid must be stable across re-fetches (ON CONFLICT DO UPDATE)');
+
+  closeDb();
+});
+
 test('Device status sync opens a connection system event when offline and closes it on recovery', async () => {
   initDb();
   saveSetting('api_key', 'mock-key');

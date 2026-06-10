@@ -9,6 +9,10 @@ function initDb() {
   const dbPath = process.env.DB_PATH || path.join(__dirname, '../klima.db');
   db = new Database(dbPath);
   db.pragma('foreign_keys = ON');
+  // WAL mode reduces write contention; no-op/harmless for :memory:
+  if (dbPath !== ':memory:') {
+    db.pragma('journal_mode = WAL');
+  }
 
   // 1. Settings Table
   db.exec(`

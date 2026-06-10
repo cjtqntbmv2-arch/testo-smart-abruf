@@ -191,12 +191,30 @@ async function runSyncCycle(customClient = null) {
     }
 
     // 3. Alarms — resolve device via sensor serial / source uuid, attach to its station
+    // ON CONFLICT DO UPDATE instead of INSERT OR REPLACE so the rowid is stable
+    // across re-fetches. The reconciliation window (rowid DESC tiebreaker) depends
+    // on stable rowids; INSERT OR REPLACE would delete+reinsert, churning them.
     const insertAlarmStmt = db.prepare(`
-      INSERT OR REPLACE INTO events (
+      INSERT INTO events (
         uuid, station_id, severity, alarm_status, alarm_reason,
         alarm_condition_type, alarm_value, metric, threshold, start_ts,
         end_ts, extreme, active, message, detail
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(uuid) DO UPDATE SET
+        station_id = excluded.station_id,
+        severity = excluded.severity,
+        alarm_status = excluded.alarm_status,
+        alarm_reason = excluded.alarm_reason,
+        alarm_condition_type = excluded.alarm_condition_type,
+        alarm_value = excluded.alarm_value,
+        metric = excluded.metric,
+        threshold = excluded.threshold,
+        start_ts = excluded.start_ts,
+        end_ts = excluded.end_ts,
+        extreme = excluded.extreme,
+        active = excluded.active,
+        message = excluded.message,
+        detail = excluded.detail
     `);
     try {
       const lastSyncSetting = getSetting('last_alarm_sync_time');
@@ -289,7 +307,8 @@ async function runSyncCycle(customClient = null) {
       const validDays = isNaN(days) || days <= 0 ? 365 : days;
       const limit = Date.now() - validDays * 24 * 3600 * 1000;
       db.prepare("DELETE FROM measurements WHERE timestamp < ?").run(limit);
-      db.prepare("DELETE FROM events WHERE start_ts < ?").run(limit);
+      // Only purge closed (inactive) events; active alarms must survive regardless of age.
+      db.prepare("DELETE FROM events WHERE start_ts < ? AND active = 0").run(limit);
     } catch (e) {
       console.error('Error executing database retention cleanup:', e.message);
       hasError = true; errorMsg = e.message;
