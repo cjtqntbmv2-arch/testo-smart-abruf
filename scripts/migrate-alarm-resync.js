@@ -32,7 +32,19 @@ const Database = require('better-sqlite3');
 
 const apply = process.argv.includes('--apply');
 const dbArgIdx = process.argv.indexOf('--db');
-const dbPath = dbArgIdx !== -1 ? process.argv[dbArgIdx + 1] : path.join(__dirname, '..', 'klima.db');
+let dbPath;
+
+if (dbArgIdx !== -1) {
+  const providedPath = process.argv[dbArgIdx + 1];
+  // Guard: --db requires a path argument (not another flag or undefined).
+  if (!providedPath || providedPath.startsWith('--')) {
+    console.error('--db requires a path argument');
+    process.exit(1);
+  }
+  dbPath = providedPath;
+} else {
+  dbPath = path.join(__dirname, '..', 'klima.db');
+}
 
 const db = new Database(dbPath);
 

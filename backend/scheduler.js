@@ -253,13 +253,19 @@ async function runSyncCycle(customClient = null) {
           // (resolved). It never sends 'Active' — that value only existed in the mock
           // client, which is why every real alarm used to be stored inactive.
           const isActive = a.alarm_status === 'Alarm' ? 1 : 0;
+          // The live API sends alarm_value as a string (e.g. "35.6").
+          // events.alarm_value and events.extreme are REAL columns, so coerce
+          // to number or null if non-numeric.
+          const alarmValue = Number.isFinite(Number.parseFloat(a.alarm_value))
+            ? Number.parseFloat(a.alarm_value)
+            : null;
 
           insertAlarmStmt.run(
             a.uuid, stationId,
             severity,
-            a.alarm_status, a.alarm_reason, conditionForFrontend, a.alarm_value,
+            a.alarm_status, a.alarm_reason, conditionForFrontend, alarmValue,
             mapPhysicalProperty(a.physical_property_name, a.physical_extension), null,
-            parseTimestamp(a.alarm_time), parseTimestamp(a.last_status_change_time), a.alarm_value,
+            parseTimestamp(a.alarm_time), parseTimestamp(a.last_status_change_time), alarmValue,
             isActive, a.alarm_reason || 'Grenzwert verletzt',
             `Sensor ${a.serial_no} hat einen Wert von ${a.alarm_value} gemeldet.`,
             a.serial_no || null);
