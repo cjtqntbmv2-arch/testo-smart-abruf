@@ -4,11 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-Documentation-only repository: a curated, AI-readable snapshot of the **testo Smart Connect API** docs, structured so an agent can answer questions about the API without re-fetching upstream. No source code, no build / lint / test tooling. The single subdirectory `testo-smart-connect-api/` holds everything.
+A local **climate-monitoring application** for the **testo Smart Connect API**, plus a curated AI-readable snapshot of that API's docs. It has two halves:
+
+- **The app** — a Node/Express/SQLite backend that polls the testo Smart Connect cloud on a schedule and stores measurements, device status and alarms, plus a React (Babel-in-browser, no build step) dashboard that visualises them. Key locations:
+  - `backend/` — `server.js` (Express REST API), `scheduler.js` (sync cycle), `testo-client.js` (async submit→poll→download client), `device-bridge.js` (pure mapping helpers), `db.js` (better-sqlite3 schema + settings). Tests in `backend/tests/` run via `npm test` (`node --test`).
+  - `Smart Meter Dashboard/` — `Klima Dashboard.html` (entry + styles), `app.jsx` (grid shell), `tiles.jsx`, `charts.jsx`, `settings.jsx`, `data.js` (frontend data layer / `window.DASH_DATA`). Note the directory name contains spaces.
+  - `scripts/` — one-off DB migration scripts. `VERSION` + the README badge + the `?v=` query in the HTML script tags all carry the SemVer version and must stay in sync.
+- **The API docs snapshot** — `testo-smart-connect-api/` holds the curated upstream API documentation (endpoints, async pattern, auth, OData, schemas, limit values, Saveris 2 migration).
+
+Run the app with `npm start` (serves on port 3000). Tests: `npm test`.
 
 ## Start here
 
-For any task about the API itself (endpoints, async pattern, authentication, OData, schemas, limit values, migration from Saveris 2), read [testo-smart-connect-api/CLAUDE.md](testo-smart-connect-api/CLAUDE.md) first — it is the documentation index and routes to the right file. Do not duplicate its content here.
+For any task about the **testo API itself** (endpoint paths, async pattern, authentication, OData, schemas, limit values, migration from Saveris 2), read [testo-smart-connect-api/CLAUDE.md](testo-smart-connect-api/CLAUDE.md) first — it is the documentation index and routes to the right file. For application work, start from the `backend/` and `Smart Meter Dashboard/` files listed above. The editing safety rails below apply to the `testo-smart-connect-api/` docs snapshot, not to the application source.
 
 ## Ignore: `spec/`
 
