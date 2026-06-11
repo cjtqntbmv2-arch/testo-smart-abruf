@@ -305,9 +305,8 @@ test('GET /api/limits returns empty array when no limits have been synced', asyn
   const res = await fetch('http://localhost:3001/api/limits');
   assert.strictEqual(res.status, 200);
   const body = await res.json();
-  assert.ok(body.hasOwnProperty('limits'), 'response must have a limits key');
-  assert.ok(Array.isArray(body.limits), 'limits must be an array');
-  assert.strictEqual(body.limits.length, 0, 'no limits synced yet — array must be empty');
+  assert.ok(Array.isArray(body), 'response must be a bare array');
+  assert.strictEqual(body.length, 0, 'no limits synced yet — array must be empty');
 });
 
 test('GET /api/limits returns stored limit rows with correct camelCase fields', async () => {
@@ -322,9 +321,9 @@ test('GET /api/limits returns stored limit rows with correct camelCase fields', 
   const res = await fetch('http://localhost:3001/api/limits');
   assert.strictEqual(res.status, 200);
   const body = await res.json();
-  assert.ok(Array.isArray(body.limits));
+  assert.ok(Array.isArray(body), 'response must be a bare array');
 
-  const tempLimit = body.limits.find(l => l.metric === 'temperature' && l.direction === 'high' && l.severity === 'alarm');
+  const tempLimit = body.find(l => l.metric === 'temperature' && l.direction === 'high' && l.severity === 'alarm');
   assert.ok(tempLimit, 'temperature:high:alarm limit must be present');
   assert.strictEqual(tempLimit.limitValue, 28);
   assert.strictEqual(tempLimit.unit, '°C');
@@ -332,7 +331,7 @@ test('GET /api/limits returns stored limit rows with correct camelCase fields', 
   assert.strictEqual(tempLimit.hysteresis, 0);
   assert.strictEqual(typeof tempLimit.updatedAt, 'number', 'updatedAt must be a number (ms epoch)');
 
-  const humLimit = body.limits.find(l => l.metric === 'humidity' && l.direction === 'low' && l.severity === 'warning');
+  const humLimit = body.find(l => l.metric === 'humidity' && l.direction === 'low' && l.severity === 'warning');
   assert.ok(humLimit, 'humidity:low:warning limit must be present');
   assert.strictEqual(humLimit.limitValue, 35);
   assert.strictEqual(humLimit.unit, '%rF');

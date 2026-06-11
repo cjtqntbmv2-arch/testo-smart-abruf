@@ -229,14 +229,14 @@ async function runSyncCycle(customClient = null) {
     try {
       const limitRows = db.prepare("SELECT metric, direction, severity, limit_value FROM limits").all();
       for (const r of limitRows) limitsCache.set(`${r.metric}:${r.direction}:${r.severity}`, r.limit_value);
-    } catch (_) { /* limits table may not exist in older DBs during migration — ignore */ }
+    } catch (e) { console.error('Could not load limits cache:', e.message); }
 
     const insertAlarmStmt = db.prepare(`
       INSERT INTO events (
         uuid, station_id, severity, alarm_status, alarm_reason,
         alarm_condition_type, alarm_value, metric, threshold, start_ts,
-        end_ts, extreme, active, message, detail
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        end_ts, extreme, active, message, detail, serial_no
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(uuid) DO UPDATE SET
         station_id = excluded.station_id,
         severity = excluded.severity,
@@ -251,7 +251,8 @@ async function runSyncCycle(customClient = null) {
         extreme = excluded.extreme,
         active = excluded.active,
         message = excluded.message,
-        detail = excluded.detail
+        detail = excluded.detail,
+        serial_no = excluded.serial_no
     `);
     try {
       const lastSyncSetting = getSetting('last_alarm_sync_time');
@@ -289,6 +290,12 @@ async function runSyncCycle(customClient = null) {
           // (resolved). It never sends 'Active' — that value only existed in the mock
           // client, which is why every real alarm used to be stored inactive.
           const isActive = a.alarm_status === 'Alarm' ? 1 : 0;
+          // The live API sends alarm_value as a string (e.g. "35.6").
+          // events.alarm_value and events.extreme are REAL columns, so coerce
+          // to number or null if non-numeric.
+          const alarmValue = Number.isFinite(Number.parseFloat(a.alarm_value))
+            ? Number.parseFloat(a.alarm_value)
+            : null;
 
           const metric = mapPhysicalProperty(a.physical_property_name, a.physical_extension);
           // Threshold lookup: system alarms have no measurement threshold; for
@@ -305,22 +312,26 @@ async function runSyncCycle(customClient = null) {
           insertAlarmStmt.run(
             a.uuid, stationId,
             severity,
-            a.alarm_status, a.alarm_reason, conditionForFrontend, a.alarm_value,
+            a.alarm_status, a.alarm_reason, conditionForFrontend, alarmValue,
             metric, threshold,
-            parseTimestamp(a.alarm_time), parseTimestamp(a.last_status_change_time), a.alarm_value,
+            parseTimestamp(a.alarm_time), parseTimestamp(a.last_status_change_time), alarmValue,
             isActive, a.alarm_reason || 'Grenzwert verletzt',
-            `Sensor ${a.serial_no} hat einen Wert von ${a.alarm_value} gemeldet.`);
+            `Sensor ${a.serial_no} hat einen Wert von ${a.alarm_value} gemeldet.`,
+            a.serial_no || null);
         }
       })();
 
       // Reconcile the transition-log feed. testo emits a violation and its recovery as
       // separate rows (distinct uuids, ascending timestamps), so "currently active" is
-      // a property of a logical alarm group — (station, condition, metric) — not of a
-      // single row: only the most recent transition is live, and only when it is a
-      // violation ('Alarm'). A later 'Ok' recovery closes the whole group. Synthetic
-      // system rows (sys-*, alarm_status IS NULL) are owned by applySystemEvents and
-      // are excluded here. Runs over all stored feed rows so historical pairs settle
-      // even when only one side was fetched this cycle.
+      // a property of a logical alarm group — not of a single row: only the most recent
+      // transition is live, and only when it is a violation ('Alarm'). A later 'Ok'
+      // recovery closes the whole group.
+      // Partition key must include serial_no so multi-sensor devices don't cross-close
+      // each other, and severity so a Warning violation isn't extinguished by an
+      // Alarm-severity recovery (they are separate limit bands on the same channel).
+      // Synthetic system rows (sys-*, alarm_status IS NULL) are owned by
+      // applySystemEvents and are excluded here. Runs over all stored feed rows so
+      // historical pairs settle even when only one side was fetched this cycle.
       db.transaction(() => {
         db.prepare("UPDATE events SET active = 0 WHERE alarm_status IS NOT NULL").run();
         db.prepare(`
@@ -328,7 +339,7 @@ async function runSyncCycle(customClient = null) {
             SELECT uuid FROM (
               SELECT uuid,
                 ROW_NUMBER() OVER (
-                  PARTITION BY station_id, alarm_condition_type, COALESCE(metric, '')
+                  PARTITION BY station_id, COALESCE(serial_no,''), alarm_condition_type, severity, COALESCE(metric,'')
                   ORDER BY start_ts DESC, rowid DESC
                 ) AS rn,
                 alarm_status

@@ -144,18 +144,17 @@ function buildSensorFilter(sensorUuids) {
 // Used both at alarm-insert time (to look up the stored limit value) and in the
 // backfill UPDATE so the same logic is applied consistently in one place.
 //
-// Intentionally conservative: "Battery low" must NOT return 'low' — that string
-// describes a system alarm, not a measurement threshold direction.  We only match
-// tokens that unambiguously signal a limit direction: "upper"/"lower", "high"/"low"
-// when they appear directly before or after "limit", "ober"/"unter", or numeric
-// boundary keywords "max"/"min".  Bare "low" without a limit context is rejected.
+// Tokens are drawn from the known live testo condition strings ("Upper limit" /
+// "Lower limit"); revisit if the API adds new variants.  The "low" branch is
+// guarded against system-alarm condition strings (e.g. "Battery low") that share
+// the token but describe an operational problem, not a measurement threshold.
 function alarmConditionDirection(conditionType) {
   const c = (conditionType || '').toLowerCase();
-  // Upper-limit tokens (unambiguous in this domain)
+  // Upper-limit tokens (from the known testo condition-type enum)
   if (c.includes('upper') || c.includes('ober') || c.includes('max')) return 'high';
-  // "HighLimit" / "high limit" — "high" always means an upper threshold in this domain
+  // "HighLimit" / "high limit" — "high" signals an upper threshold in this domain
   if (c.includes('high')) return 'high';
-  // Lower-limit tokens (require "lower" or "under/unter" or "min" — not bare "low")
+  // Lower-limit tokens (from the known testo condition-type enum)
   if (c.includes('lower') || c.includes('unter') || c.includes('min')) return 'low';
   // "LowLimit" or "low limit" — require "limit" / "grenze" nearby so bare "low"
   // (e.g. in "Battery low") does NOT match.

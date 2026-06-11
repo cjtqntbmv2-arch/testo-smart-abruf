@@ -86,6 +86,13 @@ function initDb() {
     )
   `);
 
+  // Idempotent column addition — already present on fresh DBs created after this change;
+  // the guard makes it a no-op re-run for existing databases.
+  const eventsCols = db.pragma('table_info(events)').map(c => c.name);
+  if (!eventsCols.includes('serial_no')) {
+    db.exec('ALTER TABLE events ADD COLUMN serial_no TEXT');
+  }
+
   // 5. Limits Table — alarm threshold configuration per (metric, direction, severity).
   // Populated by the scheduler from the /v1/measuring-objects endpoint; READ by alarm
   // inserts to fill the `threshold` column. Keyed on the triple so an upsert is safe.
