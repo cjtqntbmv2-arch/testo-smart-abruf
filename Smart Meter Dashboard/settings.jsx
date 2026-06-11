@@ -208,7 +208,7 @@ function SettingsPage({ onClose }) {
   if (section === "overview")      body = <OverviewSection settings={settings} systemStatus={systemStatus} />;
   if (section === "api")           body = <ApiSection settings={settings} update={update} systemStatus={systemStatus} apiKeyConfigured={apiKeyConfigured} />;
   if (section === "database")      body = <DatabaseSection settings={settings} update={update} systemStatus={systemStatus} />;
-  if (section === "stations")  body = <StationsSection {...ctx} />;
+  if (section === "stations")  body = <StationsSection />;
   if (section === "advanced")  body = <AdvancedSection {...ctx} systemStatus={systemStatus} onReset={() => setSettings(DEFAULT_SETTINGS)} />;
 
   return (
@@ -433,13 +433,24 @@ function ApiSection({ settings, update, systemStatus, apiKeyConfigured }) {
 }
 
 function DatabaseSection({ settings, update, systemStatus }) {
-  const hasStatus = !!systemStatus;
-  const dbStatus = hasStatus ? systemStatus.database.status : 'ok';
-  const dbEngine = hasStatus ? systemStatus.database.engine : 'SQLite 3';
-  const dbLastWrite = hasStatus ? systemStatus.database.lastWrite : Date.now();
-  const dbSizeBytes = hasStatus ? systemStatus.database.sizeBytes : 0;
-  const dbRowCount = hasStatus ? systemStatus.database.rowCount : 0;
-  const dbOldest = hasStatus ? systemStatus.database.oldestRecord : Date.now();
+  if (!systemStatus) {
+    return (
+      <>
+        <SectionHead title="Datenbank" sub="Speicherung der historischen Messdaten und Ereignisse." />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', color: 'var(--text-muted)' }}>
+          <Spinner /> <span style={{ marginLeft: '8px' }}>Lade Datenbankstatus...</span>
+        </div>
+      </>
+    );
+  }
+
+  const { database } = systemStatus;
+  const dbStatus    = database.status;
+  const dbEngine    = database.engine;
+  const dbLastWrite = database.lastWrite;
+  const dbSizeBytes = database.sizeBytes;
+  const dbRowCount  = database.rowCount;
+  const dbOldest    = database.oldestRecord;
 
   return (
     <>
@@ -451,14 +462,14 @@ function DatabaseSection({ settings, update, systemStatus }) {
           <div className="card-head-text">
             <div className="card-title">{dbEngine}</div>
             <div className="card-sub">
-              Verbunden · letzter Schreibvorgang {window.DASH_DATA.formatRelative(dbLastWrite)}
+              Verbunden · letzter Schreibvorgang {dbLastWrite ? window.DASH_DATA.formatRelative(dbLastWrite) : '—'}
             </div>
           </div>
         </div>
         <div className="kv-grid">
           <KV label="Größe"             value={formatBytes(dbSizeBytes)} />
           <KV label="Datensätze"        value={dbRowCount.toLocaleString("de-DE")} />
-          <KV label="Ältester Eintrag"  value={dbOldest ? new Date(dbOldest).toLocaleDateString("de-DE") : 'Keine'} />
+          <KV label="Ältester Eintrag"  value={dbOldest ? new Date(dbOldest).toLocaleDateString("de-DE") : '—'} />
           <KV label="Engine"            value={dbEngine} />
         </div>
       </Card>
