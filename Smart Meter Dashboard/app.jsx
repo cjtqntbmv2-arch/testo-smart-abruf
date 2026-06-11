@@ -666,7 +666,14 @@ function AddTileDialog({ onClose, onAdd, onGoToSettings }) {
 function EditTileDialog({ tile, onClose, onSave }) {
   const cfg = TILE_TYPES[tile.type];
   const D = window.DASH_DATA;
-  const [stationId, setStationId] = aState(tile.stationId || D.stationOrder[0]);
+
+  // Guard: the tile's station may have been deleted — fall back to first available
+  const noStations = D.stationOrder.length === 0;
+  const initialStationId = D.stations[tile.stationId]
+    ? tile.stationId
+    : (D.stationOrder[0] || tile.stationId);
+
+  const [stationId, setStationId] = aState(initialStationId);
   const [metrics, setMetrics] = aState(tile.metrics);
   const [title, setTitle] = aState(tile.title);
 
@@ -681,6 +688,30 @@ function EditTileDialog({ tile, onClose, onSave }) {
       }
       return [...cur, id];
     });
+  }
+
+  // No stations at all — render a notice instead of the edit form
+  if (noStations) {
+    return (
+      <Modal onClose={onClose} title={`Kachel bearbeiten · ${cfg.label}`}>
+        <div className="dialog">
+          <div className="empty-dash" style={{ padding: "1.5rem 0" }}>
+            <div className="empty-dash-card" style={{ boxShadow: "none", border: "none", background: "transparent" }}>
+              <div className="empty-dash-icon">
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/>
+                </svg>
+              </div>
+              <div className="empty-dash-title">Messstelle nicht mehr vorhanden</div>
+              <div className="empty-dash-sub">
+                Die Messstelle dieser Kachel existiert nicht mehr und es sind keine Messstellen vorhanden.
+              </div>
+              <button className="btn ghost" onClick={onClose}>Schließen</button>
+            </div>
+          </div>
+        </div>
+      </Modal>
+    );
   }
 
   return (
@@ -711,23 +742,27 @@ function EditTileDialog({ tile, onClose, onSave }) {
           </div>
         </div>
 
-        <div className="hint">
-          Messgrößen aus <strong>{station.name}</strong> — {cfg.maxMetrics === 1 ? "eine auswählen" : `bis zu ${cfg.maxMetrics}`}.
-        </div>
-        <div className="metric-grid">
-          {D.metricIds.map((id) => {
-            const M = station.metrics[id];
-            const on = metrics.includes(id);
-            return (
-              <button key={id} className={`metric-card ${on ? "sel" : ""}`} onClick={() => toggleMetric(id)}>
-                <span className="mc-dot" style={{ background: M.color }} />
-                <span className="mc-label">{M.label}</span>
-                <span className="mc-unit">{M.unit}</span>
-                <span className="mc-val">{Number.isNaN(M.series[M.series.length - 1]) || M.series[M.series.length - 1] == null ? "—" : M.series[M.series.length - 1].toFixed(M.decimals)}</span>
-              </button>
-            );
-          })}
-        </div>
+        {station && (
+          <>
+            <div className="hint">
+              Messgrößen aus <strong>{station.name}</strong> — {cfg.maxMetrics === 1 ? "eine auswählen" : `bis zu ${cfg.maxMetrics}`}.
+            </div>
+            <div className="metric-grid">
+              {D.metricIds.map((id) => {
+                const M = station.metrics[id];
+                const on = metrics.includes(id);
+                return (
+                  <button key={id} className={`metric-card ${on ? "sel" : ""}`} onClick={() => toggleMetric(id)}>
+                    <span className="mc-dot" style={{ background: M.color }} />
+                    <span className="mc-label">{M.label}</span>
+                    <span className="mc-unit">{M.unit}</span>
+                    <span className="mc-val">{Number.isNaN(M.series[M.series.length - 1]) || M.series[M.series.length - 1] == null ? "—" : M.series[M.series.length - 1].toFixed(M.decimals)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
         <div className="dialog-foot">
           <button className="btn ghost" onClick={onClose}>Abbrechen</button>
           <button className="btn primary" disabled={!metrics.length}
