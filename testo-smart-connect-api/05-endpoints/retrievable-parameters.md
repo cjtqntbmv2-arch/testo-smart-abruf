@@ -152,6 +152,36 @@ condition type, severity, and status transitions.
 | `tenant_uuid` | string/uuid | Unique identifier of the tenant account |
 | `uuid` | string/uuid | Unique identifier of the alarm (row-level dedupe key) |
 
+> **⚠ Live-API divergence (observed 2026-06-11)**
+>
+> The column definitions above reflect the OpenAPI spec (`_assets/openapi.json`
+> / `AsyncAlarmsFileContentObject`). Live responses from the EU API on
+> 2026-06-11 diverge in several fields:
+>
+> | OpenAPI spec column | Actual live field name | Notes |
+> | --- | --- | --- |
+> | `physical_value` | **`physical_property_name`** | e.g. `"Humidity"` |
+> | `physical_value_extension` | **`physical_extension`** | e.g. `"Unknown"` |
+> | `customer_site_uuid` | **`customer_site`** | no `_uuid` suffix |
+> | `alarm_value` (type: number) | **`alarm_value`** (type: **string**) | value arrives as a quoted string, e.g. `"35.6"` — parse to float before arithmetic |
+>
+> Additionally, enum values differ from what the spec implies:
+>
+> | Field | Spec / expected | Live observed |
+> | --- | --- | --- |
+> | `alarm_type` | `measurement_alarm` (underscore) | **`"measurement alarm"`** (with space) |
+> | `alarm_condition_type` | `"HighLimit"` / `"LowLimit"` | **`"Upper limit"`** / **`"Lower limit"`** (plain text with space) |
+>
+> The full key list actually returned by the live API:
+> `uuid`, `alarm_reason`, `alarm_status`, `last_status_change_time`,
+> `alarm_condition_type`, `alarm_severity`, `alarm_time`, `alarm_time_local`,
+> `alarm_value`, `physical_unit`, `physical_property_name`, `physical_extension`,
+> `alarm_source_uuid`, `serial_no`, `tenant_uuid`, `customer_site`,
+> `alarm_type`, `source_alarm_event_uuid`, `processed_at`.
+>
+> There is **no `threshold` field** in alarm rows — limit values are available
+> only through `POST /v1/measuring-objects` (see [Limit Values](../09-limit-values.md)).
+
 ## Locations (`/v1/locations`)
 
 The location hierarchy (customer sites, measurement sites) with parent
