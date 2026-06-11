@@ -252,8 +252,10 @@ function Gauge({ metricId, stationId, size }) {
   const m = station.metrics[metricId];
   if (!m) return null;
   const v = m.series[m.series.length - 1];
+  const vFinite = typeof v === "number" && Number.isFinite(v);
   const [lo, hi] = m.domain;
-  const t = Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+  // Clamp t to 0 when v is non-finite so NaN never reaches the SVG arc path.
+  const t = vFinite ? Math.max(0, Math.min(1, (v - lo) / (hi - lo))) : 0;
 
   const W = size?.w || 220;
   const H = size?.h || 180;
@@ -299,7 +301,7 @@ function Gauge({ metricId, stationId, size }) {
                 strokeWidth={t.major ? 1.4 : 1} />
         ))}
         <text x={cx} y={cy - r * 0.25} textAnchor="middle" className="g-value">
-          {v.toFixed(m.decimals)}
+          {vFinite ? v.toFixed(m.decimals) : "—"}
         </text>
         <text x={cx} y={cy - r * 0.25 + 18} textAnchor="middle" className="g-unit">{m.unit}</text>
         <text x={cx - r} y={cy + 16} textAnchor="middle" className="g-bound">{lo}</text>

@@ -183,10 +183,14 @@ function KpiBody({ tile }) {
         <span className="unit">{M.unit}</span>
       </div>
       <div className="kpi-trend">
-        <span className={`trend ${trendUp ? "up" : "down"}`}>
-          {trendUp ? "▲" : "▼"} {Math.abs(trend).toFixed(M.decimals)} {M.unit}
-          <span className="trend-pct">({trendPct >= 0 ? "+" : ""}{trendPct.toFixed(1)} %)</span>
-        </span>
+        {(Number.isNaN(s.last) || Number.isNaN(s.first)) ? (
+          <span className="trend down">— {M.unit}</span>
+        ) : (
+          <span className={`trend ${trendUp ? "up" : "down"}`}>
+            {trendUp ? "▲" : "▼"} {Math.abs(trend).toFixed(M.decimals)} {M.unit}
+            <span className="trend-pct">({trendPct >= 0 ? "+" : ""}{trendPct.toFixed(1)} %)</span>
+          </span>
+        )}
         <span className="kpi-range">24 h</span>
       </div>
       <Sparkline series={M.series} color={M.color} height={44} />
@@ -385,7 +389,12 @@ function eventTitle(e) {
   if (e.severity === "system") return e.message;
   const M = window.DASH_DATA.metrics[e.metric] || { short: e.metric || "—", unit: "" };
   const dir = e.condition === "high" ? "über" : "unter";
-  return `${M.short} ${dir} ${e.threshold} ${M.unit}`;
+  // When threshold is absent, use a natural description instead of showing an empty number.
+  if (e.threshold != null && !Number.isNaN(e.threshold)) {
+    return `${M.short} ${dir} ${e.threshold} ${M.unit}`;
+  }
+  const fallback = e.condition === "high" ? "zu hoch" : "zu niedrig";
+  return e.message || `${M.short} ${fallback}`;
 }
 
 function EventRow({ event: e, compact, station }) {
@@ -438,13 +447,22 @@ function EventRow({ event: e, compact, station }) {
         <div className="ev-title">
           <span className="ev-sev-tag">{e.severity === "alarm" ? "Alarm" : "Warnung"}</span>
           <span className="ev-headline">
-            {M.label} <span className="ev-arrow">{arrow}</span> {dir} {e.threshold}<span className="ev-unit">{M.unit}</span>
+            {M.label} <span className="ev-arrow">{arrow}</span>{" "}
+            {(e.threshold != null && !Number.isNaN(e.threshold))
+              ? <>{dir} {e.threshold}<span className="ev-unit">{M.unit}</span></>
+              : (e.condition === "high" ? "zu hoch" : "zu niedrig")}
           </span>
           {e.active && <span className="ev-active-tag">aktiv<span className="pulse-dot small"/></span>}
         </div>
         {!compact && (
           <div className="ev-sub">
-            Spitze {fmtExtreme} {M.unit} · Schwelle {e.threshold} {M.unit}
+            {fmtExtreme !== "—" && <>Spitze {fmtExtreme} {M.unit}</>}
+            {(e.threshold != null && !Number.isNaN(e.threshold)) && (
+              <>{fmtExtreme !== "—" ? " · " : ""}Schwelle {e.threshold} {M.unit}</>
+            )}
+            {e.message && fmtExtreme === "—" && (e.threshold == null || Number.isNaN(e.threshold)) && (
+              <>{e.message}</>
+            )}
           </div>
         )}
       </div>
