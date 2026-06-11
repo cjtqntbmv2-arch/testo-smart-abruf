@@ -8,7 +8,7 @@ const SETTINGS_KEY = "dash-settings-v2";
 
 const DEFAULT_SETTINGS = {
   api: {
-    apiKey: "",           // empty — real key lives in backend only (never stored in frontend)
+    apiKey: "",           // empty — real key lives in backend only; never written to localStorage (stripped before persist)
     apiRegion: "eu",
     pollIntervalSec: 900, // 15 min — matches backend default
   },
@@ -139,7 +139,13 @@ function SettingsPage({ onClose }) {
       return;
     }
 
-    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+    // H2: Never persist the typed api key to localStorage — the backend is the source of truth.
+    // The in-memory settings.api.apiKey is intentionally kept intact (used for the POST body
+    // during the session); only the persisted copy has it stripped.
+    try {
+      const persisted = { ...settings, api: { ...settings.api, apiKey: '' } };
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(persisted));
+    } catch (e) {}
 
     // Save to backend with a 1-second debounce to avoid spamming keystrokes.
     // H4: savedFlash/saveError are set based on actual POST outcome, not just "change happened".
@@ -278,7 +284,7 @@ function OverviewSection({ settings, systemStatus }) {
   // Format Scheduler status
   const schedulerStatus = scheduler.isActive ? "ok" : "warn";
   const schedulerValue = scheduler.isActive ? `Intervall: ${Math.round(scheduler.pollIntervalSec / 60)} Min.` : "Deaktiviert";
-  const schedulerSub = `Zustand: ${scheduler.isSyncing ? "Synchronisiert..." : "Wartend"} · Letzter Sync: ${D.formatRelative(scheduler.lastSyncTime)}`;
+  const schedulerSub = `Zustand: ${scheduler.isSyncing ? "Synchronisiert..." : "Wartend"} · Letzter Sync: ${scheduler.lastSyncTime ? D.formatRelative(scheduler.lastSyncTime) : 'Nie'}`;
 
   return (
     <>
