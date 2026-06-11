@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm } = require('../device-bridge');
+const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration } = require('../device-bridge');
 
 test('mapPhysicalProperty maps testo property names to dashboard metrics', () => {
   assert.strictEqual(mapPhysicalProperty('Temperature'), 'temperature');
@@ -128,4 +128,109 @@ test('deriveSystemConditions reports connection and battery system events from a
   assert.strictEqual(deriveSystemConditions({ online: 0, battery: 5 }).length, 2);
   // unknown battery (null) must NOT trigger a battery condition
   assert.deepStrictEqual(deriveSystemConditions({ online: 1, battery: null }), []);
+});
+
+// ── B2: alarmConditionDirection ───────────────────────────────────────────
+test('alarmConditionDirection maps condition type strings to high/low/null', () => {
+  // Live API strings from verified real fetch
+  assert.strictEqual(alarmConditionDirection('Upper limit'), 'high');
+  assert.strictEqual(alarmConditionDirection('Lower limit'), 'low');
+  // Legacy/variation strings
+  assert.strictEqual(alarmConditionDirection('HighLimit'), 'high');
+  assert.strictEqual(alarmConditionDirection('LowLimit'), 'low');
+  assert.strictEqual(alarmConditionDirection('Obere Grenze'), 'high');
+  assert.strictEqual(alarmConditionDirection('Untere Grenze'), 'low');
+  // System alarms / unknowns return null — no threshold direction for those
+  assert.strictEqual(alarmConditionDirection('Connection timeout'), null);
+  assert.strictEqual(alarmConditionDirection('Battery low'), null);
+  assert.strictEqual(alarmConditionDirection(''), null);
+  assert.strictEqual(alarmConditionDirection(null), null);
+  assert.strictEqual(alarmConditionDirection(undefined), null);
+  // Case-insensitive
+  assert.strictEqual(alarmConditionDirection('UPPER LIMIT'), 'high');
+  assert.strictEqual(alarmConditionDirection('lower limit'), 'low');
+});
+
+// ── B2: parseAlarmConfiguration ──────────────────────────────────────────
+// Live-shaped measuring-object fixture: 8 conditions matching the real tenant
+// (2 metrics × 2 directions × 2 severities).
+function makeMoRow(overrides = {}) {
+  const config = {
+    measurementAlarmConditionSet: [{
+      measurementAlarmConditions: [
+        { measurementAlarmConditionTypeId: 'Lower limit', alarmSeverityId: 'Warning',  physicalProperty: { physicalValueId: 'Temperature' }, limitValue: 20, limitHysteresis: 0, delay: 600000, physicalUnitId: '°C' },
+        { measurementAlarmConditionTypeId: 'Upper limit', alarmSeverityId: 'Warning',  physicalProperty: { physicalValueId: 'Temperature' }, limitValue: 26, limitHysteresis: 0, delay: 600000, physicalUnitId: '°C' },
+        { measurementAlarmConditionTypeId: 'Lower limit', alarmSeverityId: 'Alarm',    physicalProperty: { physicalValueId: 'Temperature' }, limitValue: 18, limitHysteresis: 0, delay: 600000, physicalUnitId: '°C' },
+        { measurementAlarmConditionTypeId: 'Upper limit', alarmSeverityId: 'Alarm',    physicalProperty: { physicalValueId: 'Temperature' }, limitValue: 28, limitHysteresis: 0, delay: 600000, physicalUnitId: '°C' },
+        { measurementAlarmConditionTypeId: 'Lower limit', alarmSeverityId: 'Warning',  physicalProperty: { physicalValueId: 'Humidity' },    limitValue: 35, limitHysteresis: 0, delay: 600000, physicalUnitId: '%rF' },
+        { measurementAlarmConditionTypeId: 'Upper limit', alarmSeverityId: 'Warning',  physicalProperty: { physicalValueId: 'Humidity' },    limitValue: 55, limitHysteresis: 0, delay: 600000, physicalUnitId: '%rF' },
+        { measurementAlarmConditionTypeId: 'Lower limit', alarmSeverityId: 'Alarm',    physicalProperty: { physicalValueId: 'Humidity' },    limitValue: 30, limitHysteresis: 0, delay: 600000, physicalUnitId: '%rF' },
+        { measurementAlarmConditionTypeId: 'Upper limit', alarmSeverityId: 'Alarm',    physicalProperty: { physicalValueId: 'Humidity' },    limitValue: 60, limitHysteresis: 0, delay: 600000, physicalUnitId: '%rF' },
+      ]
+    }]
+  };
+  return Object.assign(
+    { measuring_object_uuid: 'mo-1', measurement_alarm_configuration: JSON.stringify(config), channel_assignments: null },
+    overrides
+  );
+}
+
+test('parseAlarmConfiguration returns 8 entries for a single live-shaped MO row', () => {
+  const result = parseAlarmConfiguration([makeMoRow()]);
+  assert.strictEqual(result.length, 8, 'one row with 8 conditions -> 8 entries');
+
+  // Check a few specific entries for correct field mapping
+  const tempLowAlarm = result.find(e => e.metric === 'temperature' && e.direction === 'low' && e.severity === 'alarm');
+  assert.ok(tempLowAlarm, 'temperature low alarm must be present');
+  assert.strictEqual(tempLowAlarm.limitValue, 18);
+  assert.strictEqual(tempLowAlarm.unit, '°C');
+  assert.strictEqual(tempLowAlarm.delayMs, 600000);
+  assert.strictEqual(tempLowAlarm.hysteresis, 0);
+
+  const humHighWarning = result.find(e => e.metric === 'humidity' && e.direction === 'high' && e.severity === 'warning');
+  assert.ok(humHighWarning);
+  assert.strictEqual(humHighWarning.limitValue, 55);
+  assert.strictEqual(humHighWarning.unit, '%rF');
+});
+
+test('parseAlarmConfiguration deduplicates identical MOs — returns 8 entries (not 16)', () => {
+  // The real tenant has 5 MOs with identical configuration; deduplication keeps 8.
+  const rows = [makeMoRow({ measuring_object_uuid: 'mo-1' }), makeMoRow({ measuring_object_uuid: 'mo-2' })];
+  const result = parseAlarmConfiguration(rows);
+  assert.strictEqual(result.length, 8, 'identical duplicate MOs must not multiply entries');
+});
+
+test('parseAlarmConfiguration drops a key when two MOs disagree on limitValue', () => {
+  // mo-1: temp low alarm = 18, mo-2: temp low alarm = 16 -> conflict -> key dropped
+  const config2 = JSON.parse(makeMoRow().measurement_alarm_configuration);
+  const conds2 = config2.measurementAlarmConditionSet[0].measurementAlarmConditions;
+  conds2.find(c => c.measurementAlarmConditionTypeId === 'Lower limit' && c.alarmSeverityId === 'Alarm' && c.physicalProperty.physicalValueId === 'Temperature').limitValue = 16;
+  const mo2 = makeMoRow({ measuring_object_uuid: 'mo-2', measurement_alarm_configuration: JSON.stringify(config2) });
+
+  const result = parseAlarmConfiguration([makeMoRow(), mo2]);
+  // temperature:low:alarm is dropped; remaining 7 entries survive
+  assert.strictEqual(result.length, 7, 'conflicting key must be dropped');
+  const conflicted = result.find(e => e.metric === 'temperature' && e.direction === 'low' && e.severity === 'alarm');
+  assert.strictEqual(conflicted, undefined, 'conflicted key must not appear in output');
+});
+
+test('parseAlarmConfiguration skips rows with malformed or missing configuration', () => {
+  const rows = [
+    { measuring_object_uuid: 'mo-null', measurement_alarm_configuration: null },
+    { measuring_object_uuid: 'mo-empty', measurement_alarm_configuration: '' },
+    { measuring_object_uuid: 'mo-bad', measurement_alarm_configuration: '{not valid json' },
+    makeMoRow({ measuring_object_uuid: 'mo-good' })
+  ];
+  const result = parseAlarmConfiguration(rows);
+  assert.strictEqual(result.length, 8, 'bad rows are skipped; the good MO produces 8 entries');
+});
+
+test('parseAlarmConfiguration skips conditions with unknown physicalValueId', () => {
+  const config = JSON.parse(makeMoRow().measurement_alarm_configuration);
+  // Replace one condition's physicalValueId with an unknown metric (e.g. CO2)
+  config.measurementAlarmConditionSet[0].measurementAlarmConditions[0].physicalProperty.physicalValueId = 'CO2';
+  const row = makeMoRow({ measurement_alarm_configuration: JSON.stringify(config) });
+  const result = parseAlarmConfiguration([row]);
+  // 8 conditions -> 1 with CO2 (null metric) is skipped -> 7
+  assert.strictEqual(result.length, 7);
 });

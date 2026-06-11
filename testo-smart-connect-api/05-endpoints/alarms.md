@@ -135,3 +135,53 @@ When completed:
   "metadata_url": "https://tds-eu-i-data-storage-query-results.s3.amazonaws.com/alarms/fbf29fed-e3e2-46fb-a304-ee099e849044.csv.metadata?..."
 }
 ```
+
+## Live-API divergence notes
+
+> **⚠ Live-API divergence (observed 2026-06-11)**
+>
+> The result-file columns as described in the OpenAPI spec's
+> `AsyncAlarmsFileContentObject` diverge from what the live EU API returns.
+> The corrections below describe the **result-file rows**, verified against
+> a live download on 2026-06-11. Whether the server-side OData layer
+> (`$select`, `$filter`) accepts the same names was **not** independently
+> verified — test an OData query before relying on either spelling.
+>
+> **Field name corrections:**
+>
+> | OpenAPI spec name | Live API name | Example value |
+> | --- | --- | --- |
+> | `physical_value` | **`physical_property_name`** | `"Humidity"` |
+> | `physical_value_extension` | **`physical_extension`** | `"Unknown"` |
+> | `customer_site_uuid` | **`customer_site`** | (UUID string, no `_uuid` suffix) |
+>
+> **Type correction:**
+>
+> - `alarm_value` is documented as `number` but arrives as a **string**
+>   (e.g. `"35.6"`). Parse it to float before any arithmetic or threshold
+>   comparison.
+>
+> **Enum value corrections:**
+>
+> | Field | OpenAPI / expected | Live observed |
+> | --- | --- | --- |
+> | `alarm_type` | `measurement_alarm` | **`measurement alarm`** (space, not underscore) |
+> | `alarm_condition_type` | `HighLimit` / `LowLimit` | **`Upper limit`** / **`Lower limit`** (plain text, capitalised first word) |
+>
+> **OData example with corrected names** (expected shape, **not
+> live-verified** — the OData layer may still use the spec names; the
+> original example under [OData example](#odata-example) shows those):
+>
+> ```json
+> {
+>   "$filter": "alarm_status eq 'Alarm' and alarm_type eq 'measurement alarm'",
+>   "$select": "uuid,alarm_reason,alarm_status,alarm_severity,alarm_time,alarm_value,physical_unit,physical_property_name,physical_extension,serial_no,customer_site"
+> }
+> ```
+>
+> **No `threshold` field:** alarm rows do not carry the triggering threshold.
+> The configured limits live in `POST /v1/measuring-objects` →
+> `measurement_alarm_configuration`. As an application note (derived from the
+> field shapes of both endpoints, used successfully by this repository's app):
+> correlate by `physical_property_name` + `alarm_severity` +
+> `alarm_condition_type` (see [Limit Values](../09-limit-values.md)).

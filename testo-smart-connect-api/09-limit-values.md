@@ -71,6 +71,26 @@ Each condition object carries:
 | `limitHysteresis`                  | Hysteresis band around the limit.                                    |
 | `delay`                            | Alarm delay in **milliseconds** (e.g. `600000` = 10 min).            |
 
+> **⚠ Live-API divergence (observed 2026-06-11)**
+>
+> The `MACT_*` / `ASV_*` / `PV_*` / `PU_*` prefixed enum identifiers above
+> appeared in an earlier snapshot and in the OpenAPI spec.  The live EU API
+> as of 2026-06-11 returns **plain-text strings** for all four fields:
+>
+> | Field | Prefixed form (earlier snapshot / spec) | Live plain-text form |
+> | --- | --- | --- |
+> | `measurementAlarmConditionTypeId` | `MACT_LOWER_LIMIT` / `MACT_UPPER_LIMIT` | **`"Lower limit"`** / **`"Upper limit"`** |
+> | `alarmSeverityId` | `ASV_WARNING` / `ASV_ALARM` | **`"Warning"`** / **`"Alarm"`** |
+> | `physicalProperty.physicalValueId` | `PV_TEMPERATURE` / `PV_HUMIDITY` | **`"Temperature"`** / **`"Humidity"`** |
+> | `physicalUnitId` | `PU_DEGREE_CELSIUS` / `PU_PERCENT_HUMIDITY` | **`"°C"`** / **`"%rF"`** |
+>
+> Use the plain-text forms when parsing `measurement_alarm_configuration` and
+> when correlating conditions with alarm rows (the alarm row's
+> `alarm_condition_type` also uses plain text: `"Upper limit"` / `"Lower limit"`).
+> `channel_assignments` was `null` for all 5 measuring objects in the
+> 2026-06-11 tenant — consistent with the existing caveat that this field can
+> be empty.
+
 So a single measuring object exposes one condition per
 **property × direction × severity** — e.g. temperature lower-warning,
 temperature lower-alarm, temperature upper-warning, temperature
@@ -112,10 +132,12 @@ and **parse the `measurement_alarm_configuration` string as JSON** to walk
   can be **empty** (it was empty for all objects in the verified tenant);
   in that case there is no direct object→serial link in this payload.
 - **Bridge to an alarm:** an alarm row exposes `serial_no`,
-  `physical_value`, `alarm_value`, and `alarm_severity` (`Warning` /
-  `Alarm`) ([Alarms](05-endpoints/alarms.md)). Match the triggering
-  threshold by property + severity + direction against the measuring
-  object's conditions.
+  `physical_property_name` (live name; spec says `physical_value`),
+  `alarm_value` (arrives as a string — parse to float), and `alarm_severity`
+  (`"Warning"` / `"Alarm"`) ([Alarms](05-endpoints/alarms.md)). Match the
+  triggering threshold by property + severity + direction against the
+  measuring object's conditions, using the plain-text enum values described
+  in the divergence note above.
 
 ## Notes and caveats
 
@@ -132,6 +154,9 @@ and **parse the `measurement_alarm_configuration` string as JSON** to walk
 3. A richer `AsyncEquipmentsFileContentObject` schema (flat limit fields)
    exists in the spec, but **no `/equipments` path exists** — limits are
    available only through `measuring-objects`.
-4. The `MACT_*` / `ASV_*` / `PV_*` / `PU_*` enum lists above are what was
-   observed in one tenant; other deployments may expose additional values
+4. The `MACT_*` / `ASV_*` / `PV_*` / `PU_*` prefixed enum identifiers in
+   the JSON structure above are from the OpenAPI spec and an earlier snapshot.
+   As of 2026-06-11 the live API returns plain-text strings instead (see the
+   divergence note in the [Actual JSON structure](#actual-json-structure)
+   section). Other deployments may expose additional values
    (e.g. more physical properties or units).

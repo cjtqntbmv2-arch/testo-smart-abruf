@@ -86,6 +86,31 @@ function initDb() {
     )
   `);
 
+  // Idempotent column addition — already present on fresh DBs created after this change;
+  // the guard makes it a no-op re-run for existing databases.
+  const eventsCols = db.pragma('table_info(events)').map(c => c.name);
+  if (!eventsCols.includes('serial_no')) {
+    db.exec('ALTER TABLE events ADD COLUMN serial_no TEXT');
+  }
+
+  // 5. Limits Table — alarm threshold configuration per (metric, direction, severity).
+  // Populated by the scheduler from the /v1/measuring-objects endpoint; READ by alarm
+  // inserts to fill the `threshold` column. Keyed on the triple so an upsert is safe.
+  // `updated_at` is milliseconds since epoch (same convention as other timestamp columns).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS limits (
+      metric TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      limit_value REAL NOT NULL,
+      hysteresis REAL,
+      delay_ms INTEGER,
+      unit TEXT,
+      updated_at INTEGER,
+      UNIQUE(metric, direction, severity)
+    )
+  `);
+
   // Seed default settings and stations if empty and not in memory (test) mode
   if (dbPath !== ':memory:') {
     const count = db.prepare("SELECT count(*) as count FROM settings").get().count;

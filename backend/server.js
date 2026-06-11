@@ -192,6 +192,20 @@ app.get('/api/stations/:id/events', (req, res) => {
   res.json(events);
 });
 
+// GET /api/limits
+// Returns the current alarm threshold configuration as synced from the testo
+// measuring-objects endpoint. Empty array when no sync has run yet.
+// Returns a bare array (consistent with every other collection endpoint in this API).
+app.get('/api/limits', (req, res) => {
+  const rows = getDb().prepare(`
+    SELECT metric, direction, severity, limit_value AS limitValue,
+           hysteresis, delay_ms AS delayMs, unit, updated_at AS updatedAt
+    FROM limits
+    ORDER BY metric, direction, severity
+  `).all();
+  res.json(rows);
+});
+
 // GET /api/totals
 app.get('/api/totals', (req, res) => {
   const totals = getDb().prepare(`

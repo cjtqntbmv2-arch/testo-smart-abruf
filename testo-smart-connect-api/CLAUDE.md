@@ -108,7 +108,18 @@ examples live in [05-endpoints/](05-endpoints/).
   row id is `measuring_object_uuid`, not `mo_uuid` as labelled in the
   spec; v4 Device Status file-content schemas exist in the spec but no
   `/v4/devices/status` path is published, and `POST /v3/devices/status` is
-  marked `deprecated: true`. Details and source-of-truth pages:
+  marked `deprecated: true`. **/v3/alarms field-name corrections (observed
+  2026-06-11):** the live API uses `physical_property_name` (not
+  `physical_value`), `physical_extension` (not `physical_value_extension`),
+  and `customer_site` (not `customer_site_uuid`); `alarm_value` is a string
+  not a number; `alarm_type` is `"measurement alarm"` (space) not
+  `measurement_alarm`; `alarm_condition_type` is `"Upper limit"` /
+  `"Lower limit"` (plain text) not `HighLimit` / `LowLimit`. Enum values in
+  `measurement_alarm_configuration` are also plain text (`"Lower limit"`,
+  `"Warning"`, `"Temperature"`, `"°C"`) not the prefixed `MACT_*` / `ASV_*`
+  / `PV_*` / `PU_*` forms. Details:
+  [05-endpoints/alarms.md](05-endpoints/alarms.md),
+  [05-endpoints/retrievable-parameters.md](05-endpoints/retrievable-parameters.md),
   [09-limit-values.md](09-limit-values.md) and
   [05-endpoints/device-status.md](05-endpoints/device-status.md).
 - **Some result columns are JSON-encoded strings.** In

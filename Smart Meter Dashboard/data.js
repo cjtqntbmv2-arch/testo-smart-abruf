@@ -31,6 +31,7 @@
   let activeStationId = null;
   let timestamps = [];
   let totals = { alarm: 0, warning: 0, system: 0 };
+  let limits = []; // B5: flat array from /api/limits; keyed lookup built on demand
   let connectionError = null;
   let lastUpdated = null;
   let isRefreshing = false;
@@ -80,6 +81,16 @@
       const resTotals = await fetch('/api/totals');
       if (resTotals.ok) {
         totals = await resTotals.json();
+      }
+
+      // 3. Fetch alarm limits (B5: threshold units for event display)
+      try {
+        const resLimits = await fetch('/api/limits');
+        if (resLimits.ok) {
+          limits = await resLimits.json();
+        }
+      } catch (e) {
+        console.error('Error fetching limits:', e);
       }
 
       const tempOrder = [];
@@ -353,6 +364,22 @@
 
     totalActive() {
       return totals;
+    },
+
+    // B5: alarm limits from /api/limits
+    get limits() { return limits; },
+
+    // B5: look up the unit for a given metric/direction/severity from the limits table.
+    // direction: 'high'|'low', severity: 'alarm'|'warning'.
+    // Falls back to the static META unit, then to empty string.
+    limitUnit(metric, direction, severity) {
+      const dir = direction === 'high' ? 'high' : 'low';
+      const row = limits.find(l =>
+        l.metric === metric && l.direction === dir && l.severity === severity
+      );
+      if (row && row.unit) return row.unit;
+      // fallback to static META
+      return (META[metric] && META[metric].unit) || '';
     },
 
     // Extra helpers to allow external calls from components (Zuweisungsmanager / Settings)

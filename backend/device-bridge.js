@@ -139,4 +139,114 @@ function buildSensorFilter(sensorUuids) {
   return list.map((s) => `sensor_uuid eq '${s}'`).join(' or ');
 }
 
-module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm };
+// Derive the threshold direction from a testo alarm_condition_type string.
+// Returns 'high' for upper-limit conditions, 'low' for lower-limit, null otherwise.
+// Used both at alarm-insert time (to look up the stored limit value) and in the
+// backfill UPDATE so the same logic is applied consistently in one place.
+//
+// Tokens are drawn from the known live testo condition strings ("Upper limit" /
+// "Lower limit"); revisit if the API adds new variants.  The "low" branch is
+// guarded against system-alarm condition strings (e.g. "Battery low") that share
+// the token but describe an operational problem, not a measurement threshold.
+function alarmConditionDirection(conditionType) {
+  const c = (conditionType || '').toLowerCase();
+  // Upper-limit tokens (from the known testo condition-type enum)
+  if (c.includes('upper') || c.includes('ober') || c.includes('max')) return 'high';
+  // "HighLimit" / "high limit" — "high" signals an upper threshold in this domain
+  if (c.includes('high')) return 'high';
+  // Lower-limit tokens (from the known testo condition-type enum)
+  if (c.includes('lower') || c.includes('unter') || c.includes('min')) return 'low';
+  // "LowLimit" or "low limit" — require "limit" / "grenze" nearby so bare "low"
+  // (e.g. in "Battery low") does NOT match.
+  if (/low\s*(limit|grenze)/.test(c) || /(limit|grenze)\s*low/.test(c)) return 'low';
+  return null;
+}
+
+// Parse the measurement_alarm_configuration JSON strings from measuring-object rows
+// returned by client.fetchMeasuringObjects(), and return a flat deduplicated array of
+// limit entries ready for INSERT into the `limits` table.
+//
+// Shape per entry: { metric, direction, severity, limitValue, hysteresis, delayMs, unit }
+//
+// The live API embeds configuration as a JSON-encoded STRING inside each MO row. A tenant
+// may have multiple MOs with the same configuration — this is expected and fine. If two
+// MOs DISAGREE on the limitValue for the same (metric, direction, severity) key we DROP
+// that key entirely: a missing threshold is safer than a wrong one.
+//
+// Mapping notes:
+//   physicalValueId: "Temperature" / "Humidity" — run through mapPhysicalProperty
+//     (no extension available from this endpoint; extension disambiguates derived
+//      channels like dewpoint, but limits are set on the primary physical property)
+//   measurementAlarmConditionTypeId: "Upper limit" → 'high', "Lower limit" → 'low'
+//   alarmSeverityId: "Alarm" → 'alarm', "Warning" → 'warning'
+function parseAlarmConfiguration(moRows) {
+  // key -> { limitValue, hysteresis, delayMs, unit } or 'conflict' (when MOs disagree)
+  const byKey = new Map();
+
+  for (const row of (moRows || [])) {
+    const raw = row.measurement_alarm_configuration;
+    if (!raw) continue;
+
+    let config;
+    try {
+      config = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (_) {
+      // Malformed JSON in one MO — skip row, don't abort the whole batch.
+      continue;
+    }
+
+    const conditionSets = config?.measurementAlarmConditionSet;
+    if (!Array.isArray(conditionSets)) continue;
+
+    for (const set of conditionSets) {
+      const conditions = set?.measurementAlarmConditions;
+      if (!Array.isArray(conditions)) continue;
+
+      for (const cond of conditions) {
+        const physName = cond?.physicalProperty?.physicalValueId;
+        const metric = mapPhysicalProperty(physName);
+        if (!metric) continue; // unknown metric — skip
+
+        // Direction from the condition type string ("Upper limit" / "Lower limit")
+        const direction = alarmConditionDirection(cond.measurementAlarmConditionTypeId);
+        if (!direction) continue;
+
+        // Severity: "Alarm" or "Warning" (case-insensitive)
+        const sevRaw = (cond.alarmSeverityId || '').toLowerCase();
+        const severity = sevRaw === 'alarm' ? 'alarm' : sevRaw === 'warning' ? 'warning' : null;
+        if (!severity) continue;
+
+        const key = `${metric}:${direction}:${severity}`;
+        const entry = {
+          limitValue: cond.limitValue,
+          hysteresis: cond.limitHysteresis ?? null,
+          delayMs: cond.delay ?? null,
+          unit: cond.physicalUnitId ?? null
+        };
+
+        if (!byKey.has(key)) {
+          byKey.set(key, entry);
+        } else {
+          const existing = byKey.get(key);
+          // 'conflict' sentinel means a prior MO already disagreed — stay conflicted.
+          if (existing === 'conflict') continue;
+          if (existing.limitValue !== entry.limitValue) {
+            byKey.set(key, 'conflict');
+          }
+          // If limitValues agree we keep the first entry (all non-limitValue fields
+          // are expected to be identical across MOs with the same configuration).
+        }
+      }
+    }
+  }
+
+  const results = [];
+  for (const [key, entry] of byKey) {
+    if (entry === 'conflict') continue; // drop conflicted keys
+    const [metric, direction, severity] = key.split(':');
+    results.push({ metric, direction, severity, ...entry });
+  }
+  return results;
+}
+
+module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration };
