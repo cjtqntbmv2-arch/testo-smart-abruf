@@ -142,9 +142,10 @@ When completed:
 >
 > The result-file columns as described in the OpenAPI spec's
 > `AsyncAlarmsFileContentObject` diverge from what the live EU API returns.
-> Use the actual field names below in `$select`, `$filter`, and OData
-> expressions — the spec names will silently produce empty results or
-> missing columns.
+> The corrections below describe the **result-file rows**, verified against
+> a live download on 2026-06-11. Whether the server-side OData layer
+> (`$select`, `$filter`) accepts the same names was **not** independently
+> verified — test an OData query before relying on either spelling.
 >
 > **Field name corrections:**
 >
@@ -167,8 +168,9 @@ When completed:
 > | `alarm_type` | `measurement_alarm` | **`measurement alarm`** (space, not underscore) |
 > | `alarm_condition_type` | `HighLimit` / `LowLimit` | **`Upper limit`** / **`Lower limit`** (plain text, capitalised first word) |
 >
-> **OData example with corrected names** (replaces the example under
-> [OData example](#odata-example)):
+> **OData example with corrected names** (expected shape, **not
+> live-verified** — the OData layer may still use the spec names; the
+> original example under [OData example](#odata-example) shows those):
 >
 > ```json
 > {
@@ -178,7 +180,8 @@ When completed:
 > ```
 >
 > **No `threshold` field:** alarm rows do not carry the triggering threshold.
-> To match an alarm against its configured limit, retrieve the threshold from
-> `POST /v1/measuring-objects` → `measurement_alarm_configuration` and
-> correlate by `physical_property_name` + `alarm_severity` + `alarm_condition_type`
-> (see [Limit Values](../09-limit-values.md)).
+> The configured limits live in `POST /v1/measuring-objects` →
+> `measurement_alarm_configuration`. As an application note (derived from the
+> field shapes of both endpoints, used successfully by this repository's app):
+> correlate by `physical_property_name` + `alarm_severity` +
+> `alarm_condition_type` (see [Limit Values](../09-limit-values.md)).
