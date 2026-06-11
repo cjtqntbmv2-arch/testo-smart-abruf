@@ -31,6 +31,9 @@
   let activeStationId = null;
   let timestamps = [];
   let totals = { alarm: 0, warning: 0, system: 0 };
+  let connectionError = null;
+  let lastUpdated = null;
+  let isRefreshing = false;
   const listeners = new Set();
 
   function emit() {
@@ -54,8 +57,19 @@
     return { min, max, avg: sum / nums.length, last: nums[nums.length - 1], first: nums[0] };
   }
 
+  // Alarm direction helper — case-insensitive, covers English + German terms (M2)
+  function alarmDirection(conditionType) {
+    if (!conditionType) return 'high';
+    const c = conditionType.toLowerCase();
+    if (c.includes('upper') || c.includes('high') || c.includes('max') || c.includes('ober') || c.includes('hoch')) return 'high';
+    if (c.includes('lower') || c.includes('low')  || c.includes('min') || c.includes('unter') || c.includes('niedrig')) return 'low';
+    return 'high';
+  }
+
   // Main API Polling function
   async function refresh() {
+    if (isRefreshing) return; // M7: skip tick if a refresh is already in flight
+    isRefreshing = true;
     try {
       // 1. Fetch stations list
       const resStations = await fetch('/api/stations');
@@ -208,7 +222,7 @@
               message: e.message || e.alarm_reason || 'Grenzwert verletzt',
               detail: e.detail || `Sensorwert: ${e.alarm_value}`,
               metric: e.metric ? e.metric.toLowerCase() : null,
-              condition: e.alarm_condition_type ? (e.alarm_condition_type.includes('UPPER') ? 'high' : 'low') : 'high',
+              condition: alarmDirection(e.alarm_condition_type),
               threshold: e.threshold,
               startTs: e.start_ts,
               endTs: e.end_ts,
@@ -257,45 +271,21 @@
         activeStationId = null;
       }
 
+      // K2: mark successful cycle
+      lastUpdated = Date.now();
+      connectionError = null;
+
       emit();
     } catch (e) {
+      // K2: flag connection error; keep existing STATIONS so last real data stays visible
+      connectionError = e.message || 'Backend nicht erreichbar';
       console.error('Error refreshing dashboard data:', e);
+    } finally {
+      isRefreshing = false; // M7: always release the lock
     }
   }
 
-  // Initialize
-  // Seed local placeholders before the async fetch finishes to avoid startup errors
-  STATION_ORDER = ['living', 'bedroom', 'outdoor', 'basement'];
-  activeStationId = 'living';
-  timestamps = new Array(POINTS).fill(0).map((_, i) => Date.now() - (POINTS - 1 - i) * STEP_MS);
-
-  for (const sid of STATION_ORDER) {
-    const sName = sid === 'living' ? 'Wohnzimmer' : sid === 'bedroom' ? 'Schlafzimmer' : sid === 'outdoor' ? 'Außensensor' : 'Keller';
-    const sLoc = sid === 'living' ? '1. OG · Süd' : sid === 'bedroom' ? '1. OG · Nord' : sid === 'outdoor' ? 'Garten' : 'UG';
-
-    const metrics = {};
-    for (const mid of METRIC_IDS) {
-      metrics[mid] = {
-        ...META[mid],
-        series: new Array(POINTS).fill(mid === 'temperature' ? 20.0 : mid === 'humidity' ? 50.0 : 1013.0),
-        domain: META[mid].domain || [0, 100]
-      };
-    }
-
-    STATIONS[sid] = {
-      id: sid,
-      name: sName,
-      code: sid.substring(0, 3).toUpperCase(),
-      location: sLoc,
-      online: true,
-      battery: 100,
-      signal: 100,
-      lastSeen: Date.now(),
-      metrics,
-      events: []
-    };
-  }
-
+  // Initialize — empty state; first refresh() populates STATIONS
   // Trigger immediate refresh and spin up polling interval
   refresh();
   setInterval(refresh, 5000);
@@ -308,6 +298,10 @@
     metricIds: METRIC_IDS,
     stats,
     get NOW() { return Date.now(); },
+
+    // Connection state (K2)
+    get connectionError() { return connectionError; },
+    get lastUpdated()     { return lastUpdated; },
 
     // Stations
     get stations() { return STATIONS; },
