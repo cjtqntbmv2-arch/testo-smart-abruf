@@ -6,3 +6,4 @@ klima__.db
 klima.backup-*.db
 .env
 
+node_modules
