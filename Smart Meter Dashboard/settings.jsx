@@ -11,32 +11,9 @@ const DEFAULT_SETTINGS = {
     apiKey: "",           // empty — real key lives in backend only (never stored in frontend)
     apiRegion: "eu",
     pollIntervalSec: 900, // 15 min — matches backend default
-    timeoutSec: 5,
-    retries: 3,
   },
   database: {
     retentionDays: 365,
-    backupEnabled: true,
-    backupTime: "03:00",
-    autoOptimize: true,
-  },
-  notifications: {
-    pushEnabled: true,
-    emailRecipients: ["betrieb@haus.example", "service@haus.example"],
-    routing: {
-      alarm: "instant",
-      warning: "5min",
-      system: "15min",
-    },
-    quietHoursEnabled: true,
-    quietFrom: "22:00",
-    quietTo: "06:00",
-  },
-  general: {
-    language: "de",
-    timeFormat: "24h",
-    autoRefreshSec: 30,
-    defaultStation: "living",
   },
 };
 
@@ -51,8 +28,6 @@ function loadSettings() {
       ...stored,
       api: { ...DEFAULT_SETTINGS.api, ...(stored.api || {}) },
       database: { ...DEFAULT_SETTINGS.database, ...(stored.database || {}) },
-      notifications: { ...DEFAULT_SETTINGS.notifications, ...(stored.notifications || {}) },
-      general: { ...DEFAULT_SETTINGS.general, ...(stored.general || {}) },
     };
   } catch (e) {
     return DEFAULT_SETTINGS;
@@ -62,12 +37,11 @@ function loadSettings() {
 // System snapshot is now fetched dynamically from /api/system/status
 
 const SETTINGS_SECTIONS = [
-  { id: "overview",      label: "Übersicht",          icon: "grid" },
-  { id: "api",           label: "API & Verbindung",   icon: "plug" },
-  { id: "database",      label: "Datenbank",          icon: "db" },
-  { id: "stations",      label: "Messstellen",        icon: "node" },
-  { id: "notifications", label: "Benachrichtigungen", icon: "bell" },
-  { id: "advanced",      label: "Erweitert",          icon: "sliders" },
+  { id: "overview",  label: "Übersicht",        icon: "grid" },
+  { id: "api",       label: "API & Verbindung", icon: "plug" },
+  { id: "database",  label: "Datenbank",        icon: "db" },
+  { id: "stations",  label: "Messstellen",      icon: "node" },
+  { id: "advanced",  label: "Erweitert",        icon: "sliders" },
 ];
 
 function SettingsPage({ onClose }) {
@@ -234,9 +208,8 @@ function SettingsPage({ onClose }) {
   if (section === "overview")      body = <OverviewSection settings={settings} systemStatus={systemStatus} />;
   if (section === "api")           body = <ApiSection settings={settings} update={update} systemStatus={systemStatus} apiKeyConfigured={apiKeyConfigured} />;
   if (section === "database")      body = <DatabaseSection settings={settings} update={update} systemStatus={systemStatus} />;
-  if (section === "stations")      body = <StationsSection {...ctx} />;
-  if (section === "notifications") body = <NotificationsSection {...ctx} />;
-  if (section === "advanced")      body = <AdvancedSection {...ctx} onReset={() => setSettings(DEFAULT_SETTINGS)} />;
+  if (section === "stations")  body = <StationsSection {...ctx} />;
+  if (section === "advanced")  body = <AdvancedSection {...ctx} systemStatus={systemStatus} onReset={() => setSettings(DEFAULT_SETTINGS)} />;
 
   return (
     <div className="settings-shell">
@@ -450,29 +423,16 @@ function ApiSection({ settings, update, systemStatus, apiKeyConfigured }) {
             onChange={(v) => update("api.apiRegion", v)}
           />
         </Field>
-        <div className="field-row">
-          <Field label={`Abfrage-Intervall · ${Math.round(settings.api.pollIntervalSec / 60)} min`}>
-            <input type="range" min="60" max="3600" step="60" value={settings.api.pollIntervalSec || 900}
-                   onChange={(e) => update("api.pollIntervalSec", +e.target.value)} />
-          </Field>
-          <Field label={`Timeout · ${settings.api.timeoutSec} s`}>
-            <input type="range" min="2" max="30" step="1" value={settings.api.timeoutSec}
-                   onChange={(e) => update("api.timeoutSec", +e.target.value)} />
-          </Field>
-          <Field label={`Wiederholungen · ${settings.api.retries}`}>
-            <input type="range" min="0" max="10" step="1" value={settings.api.retries}
-                   onChange={(e) => update("api.retries", +e.target.value)} />
-          </Field>
-        </div>
+        <Field label={`Abfrage-Intervall · ${Math.round(settings.api.pollIntervalSec / 60)} min`}>
+          <input type="range" min="60" max="3600" step="60" value={settings.api.pollIntervalSec || 900}
+                 onChange={(e) => update("api.pollIntervalSec", +e.target.value)} />
+        </Field>
       </Card>
     </>
   );
 }
 
 function DatabaseSection({ settings, update, systemStatus }) {
-  const [optimizing, setOptimizing] = sState(false);
-  const [backupRunning, setBackupRunning] = sState(false);
-
   const hasStatus = !!systemStatus;
   const dbStatus = hasStatus ? systemStatus.database.status : 'ok';
   const dbEngine = hasStatus ? systemStatus.database.engine : 'SQLite 3';
@@ -518,39 +478,6 @@ function DatabaseSection({ settings, update, systemStatus }) {
           />
         </Field>
 
-        <div className="field-row">
-          <Field label="Automatisches Backup">
-            <Toggle checked={settings.database.backupEnabled} onChange={(v) => update("database.backupEnabled", v)}
-                    labelOn="Aktiv" labelOff="Deaktiviert" />
-          </Field>
-          <Field label="Backup-Uhrzeit">
-            <input type="time" value={settings.database.backupTime} onChange={(e) => update("database.backupTime", e.target.value)} disabled={!settings.database.backupEnabled} />
-          </Field>
-          <Field label="Index-Optimierung">
-            <Toggle checked={settings.database.autoOptimize} onChange={(v) => update("database.autoOptimize", v)}
-                    labelOn="Wöchentlich" labelOff="Manuell" />
-          </Field>
-        </div>
-      </Card>
-
-      <Card>
-        <div className="card-title">Wartung</div>
-        <div className="card-sub" style={{ marginBottom: 12 }}>Einmalige Aktionen — laufen im Hintergrund.</div>
-        <div className="action-row">
-          <button className="btn" disabled={backupRunning} onClick={() => {
-            setBackupRunning(true);
-            setTimeout(() => setBackupRunning(false), 1800);
-          }}>
-            {backupRunning ? <><Spinner /> Backup läuft …</> : "Backup jetzt erstellen"}
-          </button>
-          <button className="btn" disabled={optimizing} onClick={() => {
-            setOptimizing(true);
-            setTimeout(() => setOptimizing(false), 2400);
-          }}>
-            {optimizing ? <><Spinner /> Optimiere …</> : "Datenbank optimieren"}
-          </button>
-          <button className="btn ghost">Daten exportieren (CSV)</button>
-        </div>
       </Card>
     </>
   );
@@ -853,133 +780,10 @@ function StationsSection() {
   );
 }
 
-function NotificationsSection({ settings, update }) {
-  const [newEmail, setNewEmail] = sState("");
-
-  function addEmail() {
-    const v = newEmail.trim();
-    if (!v || !v.includes("@")) return;
-    if (settings.notifications.emailRecipients.includes(v)) return;
-    update("notifications.emailRecipients", [...settings.notifications.emailRecipients, v]);
-    setNewEmail("");
-  }
-  function removeEmail(e) {
-    update("notifications.emailRecipients", settings.notifications.emailRecipients.filter((x) => x !== e));
-  }
-
-  const ROUTING_OPTS = [
-    { value: "instant", label: "Sofort" },
-    { value: "5min",    label: "Nach 5 min" },
-    { value: "15min",   label: "Nach 15 min" },
-    { value: "1h",      label: "Nach 1 h" },
-    { value: "off",     label: "Aus" },
-  ];
-
+function AdvancedSection({ settings, update, onReset, systemStatus }) {
   return (
     <>
-      <SectionHead title="Benachrichtigungen" sub="Wer wird wann wie informiert?" />
-
-      <Card>
-        <Field label="Push-Benachrichtigungen" hint="Native Web-Push an angemeldete Browser/Geräte.">
-          <Toggle checked={settings.notifications.pushEnabled} onChange={(v) => update("notifications.pushEnabled", v)}
-                  labelOn="Aktiv" labelOff="Deaktiviert" />
-        </Field>
-
-        <Field label="E-Mail-Empfänger" hint="Alle Empfänger erhalten Alarme und gewählte Warnungen.">
-          <div className="chips">
-            {settings.notifications.emailRecipients.map((e) => (
-              <span className="chip" key={e}>
-                <span>{e}</span>
-                <button onClick={() => removeEmail(e)} title="Entfernen">×</button>
-              </span>
-            ))}
-            <div className="chip-input">
-              <input type="email" placeholder="adresse@beispiel.de"
-                     value={newEmail} onChange={(e) => setNewEmail(e.target.value)}
-                     onKeyDown={(e) => e.key === "Enter" && addEmail()} />
-              <button className="btn" onClick={addEmail}>Hinzufügen</button>
-            </div>
-          </div>
-        </Field>
-      </Card>
-
-      <Card>
-        <div className="card-title">Verzögerung pro Schweregrad</div>
-        <div className="card-sub" style={{ marginBottom: 12 }}>
-          Verhindert Spam: nur Meldungen, die nach der Verzögerung noch aktiv sind, werden ausgesendet.
-        </div>
-        <Field label="Alarm">
-          <SegmentedControl value={settings.notifications.routing.alarm} options={ROUTING_OPTS}
-                            onChange={(v) => update("notifications.routing.alarm", v)} />
-        </Field>
-        <Field label="Warnung">
-          <SegmentedControl value={settings.notifications.routing.warning} options={ROUTING_OPTS}
-                            onChange={(v) => update("notifications.routing.warning", v)} />
-        </Field>
-        <Field label="System">
-          <SegmentedControl value={settings.notifications.routing.system} options={ROUTING_OPTS}
-                            onChange={(v) => update("notifications.routing.system", v)} />
-        </Field>
-      </Card>
-
-      <Card>
-        <Field label="Stiller Modus" hint="Keine Push-Nachrichten im angegebenen Zeitraum (Alarme werden trotzdem zugestellt).">
-          <Toggle checked={settings.notifications.quietHoursEnabled} onChange={(v) => update("notifications.quietHoursEnabled", v)}
-                  labelOn="Aktiv" labelOff="Deaktiviert" />
-        </Field>
-        {settings.notifications.quietHoursEnabled && (
-          <div className="field-row">
-            <Field label="Von">
-              <input type="time" value={settings.notifications.quietFrom} onChange={(e) => update("notifications.quietFrom", e.target.value)} />
-            </Field>
-            <Field label="Bis">
-              <input type="time" value={settings.notifications.quietTo} onChange={(e) => update("notifications.quietTo", e.target.value)} />
-            </Field>
-          </div>
-        )}
-      </Card>
-    </>
-  );
-}
-
-function AdvancedSection({ settings, update, onReset }) {
-  const D = window.DASH_DATA;
-  return (
-    <>
-      <SectionHead title="Erweitert" sub="Darstellung, Daten und Über das System." />
-
-      <Card>
-        <div className="field-row">
-          <Field label="Sprache">
-            <SegmentedControl value={settings.general.language} options={[{value:"de",label:"Deutsch"},{value:"en",label:"English"}]}
-                              onChange={(v) => update("general.language", v)} />
-          </Field>
-          <Field label="Zeitformat">
-            <SegmentedControl value={settings.general.timeFormat} options={[{value:"24h",label:"24 Std"},{value:"12h",label:"12 Std"}]}
-                              onChange={(v) => update("general.timeFormat", v)} />
-          </Field>
-          <Field label={`Auto-Aktualisierung · ${settings.general.autoRefreshSec} s`}>
-            <input type="range" min="5" max="300" step="5" value={settings.general.autoRefreshSec}
-                   onChange={(e) => update("general.autoRefreshSec", +e.target.value)} />
-          </Field>
-        </div>
-        <Field label="Standard-Messstelle beim Laden">
-          <SegmentedControl
-            value={settings.general.defaultStation}
-            options={D.stationOrder.map((sid) => ({ value: sid, label: D.stations[sid].name }))}
-            onChange={(v) => update("general.defaultStation", v)}
-          />
-        </Field>
-      </Card>
-
-      <Card>
-        <div className="card-title">Daten</div>
-        <div className="action-row">
-          <button className="btn">Konfiguration exportieren (JSON)</button>
-          <button className="btn">Konfiguration importieren</button>
-          <button className="btn ghost">Lokalen Cache leeren</button>
-        </div>
-      </Card>
+      <SectionHead title="Erweitert" sub="Zurücksetzen und Über das System." />
 
       <Card>
         <div className="card-title">Zurücksetzen</div>
@@ -994,9 +798,8 @@ function AdvancedSection({ settings, update, onReset }) {
       <Card>
         <div className="card-title">Über</div>
         <div className="kv-grid two-col">
-          <KV label="Version"    value="Klima Dashboard 0.1.5" />
-          <KV label="Build"      value="2026-06-03 · #local" />
-          <KV label="API"        value="v1.0 · Testo Smart Connect" />
+          <KV label="Version"    value={`Klima Dashboard ${systemStatus?.appVersion || '—'}`} />
+          <KV label="API"        value="v3 · Testo Smart Connect" />
           <KV label="Datenbank"  value="SQLite 3" />
           <KV label="Lizenz"     value="Open Source" />
           <KV label="Support"    value="https://github.com/dniehof/testo-smart-abruf" />
