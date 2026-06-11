@@ -85,6 +85,12 @@ function initDb() {
       FOREIGN KEY (station_id) REFERENCES stations(id) ON DELETE CASCADE
     )
   `);
+  // Idempotent column addition — already present on fresh DBs created after this change;
+  // the guard makes it a no-op re-run for existing databases.
+  const eventsCols = db.pragma('table_info(events)').map(c => c.name);
+  if (!eventsCols.includes('serial_no')) {
+    db.exec('ALTER TABLE events ADD COLUMN serial_no TEXT');
+  }
 
   // Seed default settings and stations if empty and not in memory (test) mode
   if (dbPath !== ':memory:') {

@@ -127,7 +127,7 @@ class TestoClient {
           continue;
         } else if (url === 'mock://alarms') {
           allRecords = allRecords.concat([
-            { uuid: `alarm-${Date.now()}`, serial_no: 'MOCK123-S1', alarm_source_uuid: 'mock-sensor-temp', alarm_type: 'measurement_alarm', alarm_severity: 'Warning', alarm_status: 'Alarm', alarm_reason: 'High temperature', alarm_condition_type: 'Threshold', alarm_value: 23.5, physical_value: 'Temperature', alarm_time: new Date(Date.now() - 3600000).toISOString(), last_status_change_time: new Date().toISOString() }
+            { uuid: `alarm-${Date.now()}`, serial_no: 'MOCK123-S1', alarm_source_uuid: 'mock-sensor-temp', alarm_type: 'measurement alarm', alarm_severity: 'Warning', alarm_status: 'Alarm', alarm_reason: 'High temperature', alarm_condition_type: 'Upper limit', alarm_value: '23.5', physical_property_name: 'Temperature', physical_extension: 'Unknown', alarm_time: new Date(Date.now() - 3600000).toISOString(), last_status_change_time: new Date().toISOString() }
           ]);
           continue;
         } else if (url === 'mock://properties') {
