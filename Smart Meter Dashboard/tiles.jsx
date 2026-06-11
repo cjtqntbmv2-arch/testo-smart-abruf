@@ -387,11 +387,15 @@ function AlertTimeline({ events }) {
 
 function eventTitle(e) {
   if (e.severity === "system") return e.message;
-  const M = window.DASH_DATA.metrics[e.metric] || { short: e.metric || "—", unit: "" };
+  const fromMetrics = window.DASH_DATA.metrics && window.DASH_DATA.metrics[e.metric];
+  const unit = fromMetrics ? fromMetrics.unit
+    : window.DASH_DATA.limitUnit(e.metric, e.condition, e.severity);
+  const M = fromMetrics || { short: e.metric || "—", unit };
   const dir = e.condition === "high" ? "über" : "unter";
   // When threshold is absent, use a natural description instead of showing an empty number.
   if (e.threshold != null && !Number.isNaN(e.threshold)) {
-    return `${M.short} ${dir} ${e.threshold} ${M.unit}`;
+    const unitStr = unit ? ` ${unit}` : "";
+    return `${M.short} ${dir} ${e.threshold}${unitStr}`;
   }
   const fallback = e.condition === "high" ? "zu hoch" : "zu niedrig";
   return e.message || `${M.short} ${fallback}`;
@@ -430,7 +434,12 @@ function EventRow({ event: e, compact, station }) {
     );
   }
 
-  const M = station.metrics[e.metric] || { color: "var(--text-faint)", label: e.metric || "—", short: e.metric || "—", unit: "", decimals: 1 };
+  // B5: when the station doesn't carry a metric entry (e.g. pressure on humidity-only probe),
+  // fall back to the limits table for the unit so threshold display shows "über 25 °C" not "über 25".
+  const metricEntry = station.metrics[e.metric];
+  const fallbackUnit = metricEntry ? metricEntry.unit
+    : D.limitUnit(e.metric, e.condition, e.severity);
+  const M = metricEntry || { color: "var(--text-faint)", label: e.metric || "—", short: e.metric || "—", unit: fallbackUnit, decimals: 1 };
   const dir = e.condition === "high" ? "über" : "unter";
   const arrow = e.condition === "high" ? "▲" : "▼";
   const fmtExtreme = (e.extreme == null || Number.isNaN(e.extreme)) ? "—" : e.extreme.toFixed(M.decimals);
