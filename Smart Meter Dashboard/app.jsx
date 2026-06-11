@@ -13,9 +13,56 @@ const STORAGE_KEY = "dash-layout-v3";
 function loadLayout() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return DEFAULT_LAYOUT;
+      // Keep only well-formed entries. Unknown types would make TILE_BODIES[t.type]
+      // undefined and crash React, so we filter them out rather than blow up.
+      return parsed.filter((t) =>
+        t !== null &&
+        typeof t === "object" &&
+        typeof t.id === "string" &&
+        typeof t.type === "string" && t.type in TILE_TYPES &&
+        typeof t.x === "number" && typeof t.y === "number" &&
+        typeof t.w === "number" && typeof t.h === "number"
+      ).map((t) => ({ ...t, metrics: Array.isArray(t.metrics) ? t.metrics : [] }));
+    }
   } catch (e) {}
   return DEFAULT_LAYOUT;
+}
+
+// Per-tile error boundary: one failing tile degrades to an inline error card
+// while the rest of the dashboard keeps working. Class components are the only
+// way to catch render-phase errors — function components cannot do this.
+class TileErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error("[TileErrorBoundary] Tile render error:", error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      const title = this.props.tileTitle || "Kachel";
+      return (
+        <div className="tile-error-card" title={this.state.error?.message}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--alarm)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: "0.8rem" }}>{title}</div>
+            <div style={{ fontSize: "0.75rem", opacity: 0.75 }}>Diese Kachel konnte nicht angezeigt werden.</div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function App() {
@@ -166,6 +213,22 @@ function App() {
         onLeaveSettings={() => setView("dashboard")}
       />
 
+      {/* K2: offline / stale-data banner — only shown in dashboard view */}
+      {view !== "settings" && window.DASH_DATA.connectionError && (
+        <div className="offline-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span>
+            Backend nicht erreichbar — Anzeige ist möglicherweise veraltet
+            {window.DASH_DATA.lastUpdated
+              ? ` (zuletzt aktualisiert ${window.DASH_DATA.formatRelative(window.DASH_DATA.lastUpdated)})`
+              : ""}
+          </span>
+        </div>
+      )}
+
       {view === "settings" ? (
         <SettingsPage onClose={() => setView("dashboard")} />
       ) : layout.length === 0 ? (
@@ -222,7 +285,9 @@ function App() {
                   onRemove={() => removeTile(t.id)}
                   onEdit={() => setEditing(t.id)}
                 >
-                  <Body {...bodyProps} />
+                  <TileErrorBoundary tileTitle={t.title}>
+                    <Body {...bodyProps} />
+                  </TileErrorBoundary>
                 </TileFrame>
               </div>
             );
@@ -231,7 +296,13 @@ function App() {
       </div>
       )}
 
-      {addOpen && <AddTileDialog onClose={() => setAddOpen(false)} onAdd={addTile} />}
+      {addOpen && (
+        <AddTileDialog
+          onClose={() => setAddOpen(false)}
+          onAdd={addTile}
+          onGoToSettings={() => { setAddOpen(false); setView("settings"); }}
+        />
+      )}
       {editing && (
         <EditTileDialog
           tile={layout.find((t) => t.id === editing)}
@@ -406,7 +477,7 @@ function SignalIcon({ level }) {
 }
 
 // ---------- Add tile dialog ----------
-function AddTileDialog({ onClose, onAdd }) {
+function AddTileDialog({ onClose, onAdd, onGoToSettings }) {
   const [step, setStep] = aState(1);
   const [type, setType] = aState("chart");
   const [stationId, setStationId] = aState(window.DASH_DATA.stationOrder[0]);
@@ -415,7 +486,11 @@ function AddTileDialog({ onClose, onAdd }) {
 
   const D = window.DASH_DATA;
   const cfg = TILE_TYPES[type];
-  const station = D.stations[stationId];
+  // Guard: station may be undefined when stationOrder is empty or during a race
+  const station = stationId ? D.stations[stationId] : undefined;
+
+  // H6: no stations at all — render guidance state instead of the stepper
+  const noStations = D.stationOrder.length === 0;
 
   function pickType(t) {
     setType(t);
@@ -440,14 +515,43 @@ function AddTileDialog({ onClose, onAdd }) {
   }
 
   function suggestTitle() {
+    // Defensive: station or metrics may be unavailable during a race
+    if (!station) return cfg.label;
     if (!metrics.length) return `${station.name} · ${cfg.label}`;
     if (type === "alerts") return `${station.name} · Meldungen`;
-    const labels = metrics.map((id) => station.metrics[id].short).join(" · ");
+    const labels = metrics.map((id) => station.metrics[id]?.short ?? id).join(" · ");
     return `${station.name} · ${labels}`;
   }
 
   function commit() {
     onAdd(type, stationId, metrics, title.trim() || suggestTitle());
+  }
+
+  // H6: early-return guidance when there are no stations yet
+  if (noStations) {
+    return (
+      <Modal onClose={onClose} title="Neue Kachel">
+        <div className="dialog">
+          <div className="empty-dash" style={{ padding: "1.5rem 0" }}>
+            <div className="empty-dash-card" style={{ boxShadow: "none", border: "none", background: "transparent" }}>
+              <div className="empty-dash-icon">
+                <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/>
+                </svg>
+              </div>
+              <div className="empty-dash-title">Noch keine Messstellen vorhanden</div>
+              <div className="empty-dash-sub">
+                Lege zuerst in den Einstellungen unter &ldquo;Messstellen&rdquo; eine Messstelle an,
+                bevor du Kacheln hinzufügst.
+              </div>
+              {onGoToSettings && (
+                <button className="btn primary" onClick={onGoToSettings}>Zu den Einstellungen</button>
+              )}
+            </div>
+          </div>
+        </div>
+      </Modal>
+    );
   }
 
   return (
