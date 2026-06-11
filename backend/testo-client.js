@@ -114,8 +114,21 @@ class TestoClient {
           ]);
           continue;
         } else if (url === 'mock://mo') {
+          // Live-shaped MO row: measurement_alarm_configuration is a JSON-encoded string.
+          // This minimal fixture carries one temperature upper-alarm condition so that
+          // the scheduler's threshold-join test has a real limit to look up.
           allRecords = allRecords.concat([
-            { uuid: 'mock-mo-uuid', serial_no: 'MOCK123', type: 'stationary' }
+            {
+              measuring_object_uuid: 'mock-mo-uuid',
+              measurement_alarm_configuration: JSON.stringify({
+                measurementAlarmConditionSet: [{
+                  measurementAlarmConditions: [
+                    { measurementAlarmConditionTypeId: 'Upper limit', alarmSeverityId: 'Alarm', physicalProperty: { physicalValueId: 'Temperature' }, limitValue: 28, limitHysteresis: 0, delay: 600000, physicalUnitId: '°C' }
+                  ]
+                }]
+              }),
+              channel_assignments: null
+            }
           ]);
           continue;
         } else if (url === 'mock://meas') {
@@ -127,7 +140,7 @@ class TestoClient {
           continue;
         } else if (url === 'mock://alarms') {
           allRecords = allRecords.concat([
-            { uuid: `alarm-${Date.now()}`, serial_no: 'MOCK123-S1', alarm_source_uuid: 'mock-sensor-temp', alarm_type: 'measurement alarm', alarm_severity: 'Warning', alarm_status: 'Alarm', alarm_reason: 'High temperature', alarm_condition_type: 'Upper limit', alarm_value: '23.5', physical_property_name: 'Temperature', physical_extension: 'Unknown', alarm_time: new Date(Date.now() - 3600000).toISOString(), last_status_change_time: new Date().toISOString() }
+            { uuid: `alarm-${Date.now()}`, serial_no: 'MOCK123-S1', alarm_source_uuid: 'mock-sensor-temp', alarm_type: 'measurement_alarm', alarm_severity: 'Warning', alarm_status: 'Alarm', alarm_reason: 'High temperature', alarm_condition_type: 'Threshold', alarm_value: 23.5, physical_value: 'Temperature', alarm_time: new Date(Date.now() - 3600000).toISOString(), last_status_change_time: new Date().toISOString() }
           ]);
           continue;
         } else if (url === 'mock://properties') {

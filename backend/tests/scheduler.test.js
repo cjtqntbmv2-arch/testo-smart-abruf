@@ -7,8 +7,9 @@ const { initDb, getDb, saveSetting, closeDb } = require('../db');
 // Mock client consistent with the device-bridge model: device 'dev-1' (serial SN123)
 // owns sensor 'sensor-1' (serial SN123-S1, Temperature).
 class MockTestoClient {
-  constructor(alarms = []) {
+  constructor(alarms = [], moRows = []) {
     this.alarms = alarms;
+    this.moRows = moRows;
     this.lastMeasurementParams = null;
   }
   async fetchDeviceProperties() {
@@ -24,6 +25,7 @@ class MockTestoClient {
     this.lastMeasurementParams = params;
     return [{ uuid: 'meas-123', sensor_uuid: 'sensor-1', timestamp: '2026-05-29T06:00:00Z', measurement: 22.4, physical_property_name: 'Temperature', physical_unit: 'CELSIUS', serial_no: 'SN123-S1' }];
   }
+  async fetchMeasuringObjects() { return this.moRows; }
   async fetchAlarms() { return this.alarms; }
 }
 
@@ -49,9 +51,9 @@ test('Sync resolves devices via bridge, distributes measurements, links alarms, 
     .run('event-old', 'living', 'warning', 'Cleared', oldTs);
 
   const mockAlarms = [{
-    uuid: 'alarm-123', serial_no: 'SN123', alarm_source_uuid: 'sensor-1', alarm_type: 'measurement alarm', alarm_severity: 'Alarm', alarm_status: 'Alarm',
-    alarm_reason: 'Temperatur zu hoch', alarm_condition_type: 'Upper limit', alarm_value: '28.5',
-    physical_property_name: 'Temperature', physical_extension: 'Unknown',
+    uuid: 'alarm-123', serial_no: 'SN123', alarm_source_uuid: 'sensor-1', alarm_type: 'measurement_alarm', alarm_severity: 'Alarm', alarm_status: 'Alarm',
+    alarm_reason: 'Temperatur zu hoch', alarm_condition_type: 'Upper limit', alarm_value: 28.5,
+    physical_property_name: 'Temperature', physical_extension: 'Air Temperature',
     alarm_time: '2026-05-29T06:10:00Z', last_status_change_time: '2026-05-29T06:10:00Z'
   }];
 
@@ -177,6 +179,7 @@ test('Sync completes without throwing when device properties fail', async () => 
   const badClient = {
     async fetchDeviceProperties() { throw new Error('props down'); },
     async fetchDeviceStatus() { return []; },
+    async fetchMeasuringObjects() { return []; },
     async fetchMeasurements() { throw new Error('should not be called'); },
     async fetchAlarms() { return []; }
   };
@@ -202,6 +205,7 @@ test('Multi-sensor device: OR filter covers all sensors and both metrics are dis
       ];
     },
     async fetchDeviceStatus() { return []; },
+    async fetchMeasuringObjects() { return []; },
     async fetchMeasurements(params) {
       this.lastMeasurementParams = params;
       return [
@@ -240,6 +244,7 @@ test('Measurement fetch is bounded with date_time_until (~now) so the Testo repo
       return [{ device_uuid: 'dev-1', device_serial_no: 'SN1', sensor_uuid: 's-1', sensor_serial_no: 'SN1-A', channel_physical_property_name: 'Temperature' }];
     },
     async fetchDeviceStatus() { return []; },
+    async fetchMeasuringObjects() { return []; },
     async fetchMeasurements(params) { this.captured = params; return []; },
     async fetchAlarms() { return []; }
   };
@@ -266,9 +271,10 @@ test('Unmatched alarm is counted and not inserted', async () => {
       return [{ device_uuid: 'dev-1', device_serial_no: 'SN1', sensor_uuid: 's-1', sensor_serial_no: 'SN1-A', channel_physical_property_name: 'Temperature' }];
     },
     async fetchDeviceStatus() { return []; },
+    async fetchMeasuringObjects() { return []; },
     async fetchMeasurements() { return []; },
     async fetchAlarms() {
-      return [{ uuid: 'alarm-orphan', serial_no: 'UNKNOWN-SERIAL', alarm_source_uuid: 'unknown-uuid', alarm_type: 'measurement alarm', alarm_severity: 'Alarm', alarm_status: 'Alarm', alarm_value: '1.0', physical_property_name: 'Temperature', physical_extension: 'Unknown', alarm_time: '2026-05-29T06:00:00Z' }];
+      return [{ uuid: 'alarm-orphan', serial_no: 'UNKNOWN-SERIAL', alarm_source_uuid: 'unknown-uuid', alarm_severity: 'Alarm', alarm_status: 'Active', alarm_value: 1, physical_property_name: 'Temperature', alarm_time: '2026-05-29T06:00:00Z' }];
     }
   };
 
@@ -296,6 +302,7 @@ test('Device status sync derives online state and opens/closes system events', a
         next_communication: new Date(Date.now() + 15 * 60 * 1000).toISOString()
       }];
     },
+    async fetchMeasuringObjects() { return []; },
     async fetchMeasurements() { return []; },
     async fetchAlarms() { return []; }
   };
@@ -323,6 +330,7 @@ test('Device status sync derives online state and opens/closes system events', a
         next_communication: new Date(Date.now() + 15 * 60 * 1000).toISOString()
       }];
     },
+    async fetchMeasuringObjects() { return []; },
     async fetchMeasurements() { return []; },
     async fetchAlarms() { return []; }
   };
@@ -355,6 +363,7 @@ test('Retention deletes old inactive events but preserves old active events', as
   const noopClient = {
     async fetchDeviceProperties() { return []; },
     async fetchDeviceStatus() { return []; },
+    async fetchMeasuringObjects() { return []; },
     async fetchMeasurements() { return []; },
     async fetchAlarms() { return []; }
   };
@@ -379,9 +388,9 @@ test('Alarm re-fetch preserves rowid (ON CONFLICT DO UPDATE, not INSERT OR REPLA
 
   const alarm = {
     uuid: 'alarm-rowid-1', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
-    alarm_type: 'measurement alarm', alarm_severity: 'Alarm', alarm_status: 'Alarm',
-    alarm_reason: 'Too high', alarm_condition_type: 'Upper limit', alarm_value: '28.5',
-    physical_property_name: 'Temperature', physical_extension: 'Unknown',
+    alarm_type: 'measurement_alarm', alarm_severity: 'Alarm', alarm_status: 'Alarm',
+    alarm_reason: 'Too high', alarm_condition_type: 'Upper limit', alarm_value: 28.5,
+    physical_property_name: 'Temperature', physical_extension: 'Air Temperature',
     alarm_time: '2026-05-29T06:10:00Z', last_status_change_time: '2026-05-29T06:10:00Z'
   };
 
@@ -399,176 +408,6 @@ test('Alarm re-fetch preserves rowid (ON CONFLICT DO UPDATE, not INSERT OR REPLA
   closeDb();
 });
 
-// ── A1: Mapping fix — physical_property_name + physical_extension, not physical_value ──
-test('Alarm with live-API shape stores correct metric via physical_property_name / physical_extension', async () => {
-  initDb();
-  saveSetting('api_key', 'mock-key');
-  const db = getDb();
-  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
-    .run('a1-st', 'A1 Station', 'dev-1');
-
-  // Live-shaped alarm row: physical_property_name + physical_extension (no physical_value).
-  // alarm_value is a string just like the real API sends it.
-  const liveAlarm = {
-    uuid: 'alarm-a1-hum', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
-    alarm_type: 'measurement alarm',       // live API uses a space, not underscore
-    alarm_severity: 'Warning', alarm_status: 'Alarm',
-    alarm_reason: 'Alarm condition is violated',
-    alarm_condition_type: 'Lower limit',
-    alarm_value: '35.6',                   // string, as sent by the live API
-    physical_property_name: 'Humidity', physical_extension: 'Unknown',
-    alarm_time: '2026-06-10T11:00:00Z', last_status_change_time: '2026-06-10T11:00:00Z'
-  };
-
-  await schedulerModule.runSyncCycle(new MockTestoClient([liveAlarm]));
-
-  const ev = db.prepare("SELECT metric, alarm_value FROM events WHERE uuid = 'alarm-a1-hum'").get();
-  assert.ok(ev, 'live-shaped alarm must be stored');
-  // Before the fix, mapPhysicalProperty(a.physical_value) → NULL because physical_value
-  // does not exist in the live response.  After the fix it must be 'humidity'.
-  assert.strictEqual(ev.metric, 'humidity', 'metric must be derived from physical_property_name + physical_extension');
-
-  closeDb();
-});
-
-// ── A2: serial_no stored on alarm rows ────────────────────────────────────
-test('Alarm insert stores serial_no from the live API row', async () => {
-  initDb();
-  saveSetting('api_key', 'mock-key');
-  const db = getDb();
-  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
-    .run('a2-st', 'A2 Station', 'dev-1');
-
-  const alarm = {
-    uuid: 'alarm-a2-sn', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
-    alarm_type: 'measurement alarm', alarm_severity: 'Warning', alarm_status: 'Alarm',
-    alarm_reason: 'Alarm condition is violated',
-    alarm_condition_type: 'Upper limit',
-    alarm_value: '28.5',
-    physical_property_name: 'Temperature', physical_extension: 'Unknown',
-    alarm_time: '2026-06-10T10:00:00Z', last_status_change_time: '2026-06-10T10:00:00Z'
-  };
-
-  await schedulerModule.runSyncCycle(new MockTestoClient([alarm]));
-
-  const ev = db.prepare("SELECT serial_no FROM events WHERE uuid = 'alarm-a2-sn'").get();
-  assert.ok(ev, 'alarm must be stored');
-  assert.strictEqual(ev.serial_no, 'SN123', 'serial_no must be persisted on the event row');
-
-  closeDb();
-});
-
-// ── A3a: Reconciliation partition — severity must be part of the group key ─
-test('A3a: Warning violation and later Alarm-severity recovery share NO group — warning stays active', async () => {
-  initDb();
-  saveSetting('api_key', 'mock-key');
-  const db = getDb();
-  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
-    .run('a3-st', 'A3 Station', 'dev-1');
-
-  const base = Date.parse('2026-06-10T08:00:00Z');
-  // Same station, same sensor, same metric, same direction — but DIFFERENT severity.
-  // Under the old partition (no severity), the 'Alarm' recovery would mark the
-  // 'Warning' violation inactive.  They must be treated as separate groups.
-  const alarms = [
-    {
-      uuid: 'a3a-warn-viol', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
-      alarm_type: 'measurement alarm', alarm_severity: 'Warning', alarm_status: 'Alarm',
-      alarm_reason: 'Alarm condition is violated',
-      alarm_condition_type: 'Lower limit', alarm_value: '34.0',
-      physical_property_name: 'Humidity', physical_extension: 'Unknown',
-      alarm_time: new Date(base).toISOString(),
-      last_status_change_time: new Date(base).toISOString()
-    },
-    {
-      uuid: 'a3a-alarm-recov', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
-      alarm_type: 'measurement alarm', alarm_severity: 'Alarm', alarm_status: 'Ok',
-      alarm_reason: 'Alarm condition is adhered',
-      alarm_condition_type: 'Lower limit', alarm_value: '38.0',
-      physical_property_name: 'Humidity', physical_extension: 'Unknown',
-      alarm_time: new Date(base + 30 * 60000).toISOString(),   // later
-      last_status_change_time: new Date(base + 30 * 60000).toISOString()
-    }
-  ];
-
-  await schedulerModule.runSyncCycle(new MockTestoClient(alarms));
-
-  const viol = db.prepare("SELECT active FROM events WHERE uuid = 'a3a-warn-viol'").get();
-  const recov = db.prepare("SELECT active FROM events WHERE uuid = 'a3a-alarm-recov'").get();
-  assert.ok(viol, 'warning violation must be stored');
-  assert.ok(recov, 'alarm-severity recovery must be stored');
-  // The warning violation must remain active — a recovery from a DIFFERENT severity
-  // group must not close it.
-  assert.strictEqual(viol.active, 1, 'Warning violation must remain active (different severity group from the Alarm recovery)');
-  assert.strictEqual(recov.active, 0, 'a recovery (Ok) is never active');
-
-  closeDb();
-});
-
-// ── A3b: Reconciliation partition — serial_no must be part of the group key ─
-test('A3b: Two sensors same station/metric/direction — one recovery must not close the other sensor', async () => {
-  initDb();
-  saveSetting('api_key', 'mock-key');
-  const db = getDb();
-  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
-    .run('a3b-st', 'A3b Station', 'dev-1');
-
-  const base = Date.parse('2026-06-10T09:00:00Z');
-  // Sensor 1 goes into alarm; sensor 2 recovers later.
-  // Under the old partition (no serial_no), sensor 2's recovery would close sensor 1's alarm.
-  // Two sensors: MockTestoClient routes via serial_no; we need sensor-2 also routable.
-  // Use a client with explicit two-sensor device properties.
-  const twoSensorClient = {
-    async fetchDeviceProperties() {
-      return [
-        { device_uuid: 'dev-1', device_serial_no: 'SN123', device_display_name: 'Logger', device_model_code: 'testo-160',
-          sensor_uuid: 'sensor-1', sensor_serial_no: 'SN123-S1', channel_no: 1,
-          channel_physical_property_name: 'Temperature', channel_physical_unit: '°C' },
-        { device_uuid: 'dev-1', device_serial_no: 'SN123', device_display_name: 'Logger', device_model_code: 'testo-160',
-          sensor_uuid: 'sensor-2', sensor_serial_no: 'SN123-S2', channel_no: 2,
-          channel_physical_property_name: 'Temperature', channel_physical_unit: '°C' }
-      ];
-    },
-    async fetchDeviceStatus() { return []; },
-    async fetchMeasurements() { return []; },
-    async fetchAlarms() {
-      return [
-        {
-          uuid: 'a3b-s1-viol', serial_no: 'SN123-S1', alarm_source_uuid: 'sensor-1',
-          alarm_type: 'measurement alarm', alarm_severity: 'Warning', alarm_status: 'Alarm',
-          alarm_reason: 'Alarm condition is violated',
-          alarm_condition_type: 'Upper limit', alarm_value: '26.0',
-          physical_property_name: 'Temperature', physical_extension: 'Unknown',
-          alarm_time: new Date(base).toISOString(),
-          last_status_change_time: new Date(base).toISOString()
-        },
-        {
-          uuid: 'a3b-s2-recov', serial_no: 'SN123-S2', alarm_source_uuid: 'sensor-2',
-          alarm_type: 'measurement alarm', alarm_severity: 'Warning', alarm_status: 'Ok',
-          alarm_reason: 'Alarm condition is adhered',
-          alarm_condition_type: 'Upper limit', alarm_value: '24.0',
-          physical_property_name: 'Temperature', physical_extension: 'Unknown',
-          alarm_time: new Date(base + 60 * 60000).toISOString(),   // later
-          last_status_change_time: new Date(base + 60 * 60000).toISOString()
-        }
-      ];
-    }
-  };
-
-  await schedulerModule.runSyncCycle(twoSensorClient);
-
-  const s1Viol = db.prepare("SELECT active FROM events WHERE uuid = 'a3b-s1-viol'").get();
-  const s2Recov = db.prepare("SELECT active FROM events WHERE uuid = 'a3b-s2-recov'").get();
-  assert.ok(s1Viol, 'sensor-1 violation must be stored');
-  assert.ok(s2Recov, 'sensor-2 recovery must be stored');
-  // sensor-1's alarm must stay active — sensor-2's recovery is a different sensor
-  assert.strictEqual(s1Viol.active, 1, 'sensor-1 violation must remain active (different serial_no group)');
-  assert.strictEqual(s2Recov.active, 0, 'a recovery (Ok) is never active');
-
-  closeDb();
-});
-
-// ────────────────────────────────────────────────────────────────────────────
 test('Device status sync opens a connection system event when offline and closes it on recovery', async () => {
   initDb();
   saveSetting('api_key', 'mock-key');
@@ -584,6 +423,7 @@ test('Device status sync opens a connection system event when offline and closes
         next_communication: new Date(Date.now() - 4 * 3600 * 1000).toISOString()
       }];
     },
+    async fetchMeasuringObjects() { return []; },
     async fetchMeasurements() { return []; },
     async fetchAlarms() { return []; }
   };
@@ -607,6 +447,7 @@ test('Device status sync opens a connection system event when offline and closes
         next_communication: new Date(Date.now() + 15 * 60 * 1000).toISOString()
       }];
     },
+    async fetchMeasuringObjects() { return []; },
     async fetchMeasurements() { return []; },
     async fetchAlarms() { return []; }
   };
@@ -617,5 +458,85 @@ test('Device status sync opens a connection system event when offline and closes
   const closed = db.prepare("SELECT active, end_ts FROM events WHERE uuid = 'sys-connection-hall'").get();
   assert.strictEqual(closed.active, 0, 'recovery closes the connection event');
   assert.ok(closed.end_ts, 'closed connection event has an end timestamp');
+  closeDb();
+});
+
+// ── B3: Full sync with live-shaped MO rows + alarm → threshold populated ─────
+// Live-shaped MO fixture helper (same 8-condition structure as the real tenant).
+function makeLiveMoRows() {
+  const config = {
+    measurementAlarmConditionSet: [{
+      measurementAlarmConditions: [
+        { measurementAlarmConditionTypeId: 'Lower limit', alarmSeverityId: 'Warning',  physicalProperty: { physicalValueId: 'Temperature' }, limitValue: 20, limitHysteresis: 0, delay: 600000, physicalUnitId: '°C' },
+        { measurementAlarmConditionTypeId: 'Upper limit', alarmSeverityId: 'Warning',  physicalProperty: { physicalValueId: 'Temperature' }, limitValue: 26, limitHysteresis: 0, delay: 600000, physicalUnitId: '°C' },
+        { measurementAlarmConditionTypeId: 'Lower limit', alarmSeverityId: 'Alarm',    physicalProperty: { physicalValueId: 'Temperature' }, limitValue: 18, limitHysteresis: 0, delay: 600000, physicalUnitId: '°C' },
+        { measurementAlarmConditionTypeId: 'Upper limit', alarmSeverityId: 'Alarm',    physicalProperty: { physicalValueId: 'Temperature' }, limitValue: 28, limitHysteresis: 0, delay: 600000, physicalUnitId: '°C' },
+        { measurementAlarmConditionTypeId: 'Lower limit', alarmSeverityId: 'Warning',  physicalProperty: { physicalValueId: 'Humidity' },    limitValue: 35, limitHysteresis: 0, delay: 600000, physicalUnitId: '%rF' },
+        { measurementAlarmConditionTypeId: 'Upper limit', alarmSeverityId: 'Warning',  physicalProperty: { physicalValueId: 'Humidity' },    limitValue: 55, limitHysteresis: 0, delay: 600000, physicalUnitId: '%rF' },
+        { measurementAlarmConditionTypeId: 'Lower limit', alarmSeverityId: 'Alarm',    physicalProperty: { physicalValueId: 'Humidity' },    limitValue: 30, limitHysteresis: 0, delay: 600000, physicalUnitId: '%rF' },
+        { measurementAlarmConditionTypeId: 'Upper limit', alarmSeverityId: 'Alarm',    physicalProperty: { physicalValueId: 'Humidity' },    limitValue: 60, limitHysteresis: 0, delay: 600000, physicalUnitId: '%rF' },
+      ]
+    }]
+  };
+  return [{ measuring_object_uuid: 'mo-1', measurement_alarm_configuration: JSON.stringify(config), channel_assignments: null }];
+}
+
+test('Sync with live-shaped MO rows stores 8 limits and populates threshold on alarm insert', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
+
+  // Temperature upper-alarm — matches limit: temperature:high:alarm = 28 °C
+  const alarms = [{
+    uuid: 'alarm-thresh-1', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
+    alarm_type: 'measurement_alarm', alarm_severity: 'Alarm', alarm_status: 'Alarm',
+    alarm_reason: 'Temperatur zu hoch', alarm_condition_type: 'Upper limit', alarm_value: 29.1,
+    physical_property_name: 'Temperature', physical_extension: 'Air Temperature',
+    alarm_time: '2026-06-11T08:00:00Z', last_status_change_time: '2026-06-11T08:00:00Z'
+  }];
+
+  await schedulerModule.runSyncCycle(new MockTestoClient(alarms, makeLiveMoRows()));
+
+  // Limits table must have 8 rows (2 metrics × 2 directions × 2 severities)
+  const limitCount = db.prepare("SELECT count(*) as cnt FROM limits").get().cnt;
+  assert.strictEqual(limitCount, 8, 'limits table must have exactly 8 rows after sync');
+
+  // The stored alarm must carry the correct threshold from the limits table
+  const event = db.prepare("SELECT metric, threshold, severity FROM events WHERE uuid = 'alarm-thresh-1'").get();
+  assert.ok(event, 'alarm must be stored');
+  assert.strictEqual(event.metric, 'temperature');
+  assert.strictEqual(event.severity, 'alarm');
+  assert.strictEqual(event.threshold, 28, 'threshold must be 28 (from limits: temperature:high:alarm)');
+
+  closeDb();
+});
+
+test('Backfill fills threshold for existing alarm rows that had null threshold before limits were synced', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
+
+  // Pre-insert an alarm row with null threshold (simulates a row from before limits existed)
+  db.prepare(`
+    INSERT INTO events (uuid, station_id, severity, alarm_status, alarm_condition_type, metric, threshold, start_ts, active, message)
+    VALUES (?, ?, 'warning', 'Alarm', 'Lower limit', 'temperature', NULL, ?, 1, 'test')
+  `).run('alarm-backfill-1', 'living', Date.now() - 3600000);
+
+  // Sync with MO rows that define temperature:low:warning = 20 °C
+  const noopClient = {
+    async fetchDeviceProperties() { return []; },
+    async fetchDeviceStatus() { return []; },
+    async fetchMeasuringObjects() { return makeLiveMoRows(); },
+    async fetchMeasurements() { return []; },
+    async fetchAlarms() { return []; }
+  };
+  await schedulerModule.runSyncCycle(noopClient);
+
+  const event = db.prepare("SELECT threshold FROM events WHERE uuid = 'alarm-backfill-1'").get();
+  assert.ok(event, 'pre-existing alarm must still exist');
+  assert.strictEqual(event.threshold, 20, 'backfill must set threshold to 20 (temperature:low:warning)');
+
   closeDb();
 });

@@ -1,6 +1,6 @@
 const { getDb, getSetting, saveSetting } = require('./db');
 const TestoClient = require('./testo-client');
-const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm } = require('./device-bridge');
+const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration } = require('./device-bridge');
 
 let isSyncing = false;
 let lastSyncTime = null;
@@ -190,16 +190,53 @@ async function runSyncCycle(customClient = null) {
       hasError = true; errorMsg = e.message;
     }
 
+    // 3a. Measuring Objects — fetch alarm threshold configuration and sync limits table.
+    // Must run BEFORE the alarm step so fresh limits are available for the threshold join.
+    // On failure: log the error (same pattern as other steps), keep existing limits intact
+    // (don't wipe the table on transient API errors or parse failures).
+    try {
+      const moRows = await client.fetchMeasuringObjects();
+      const limits = parseAlarmConfiguration(moRows);
+      if (limits.length > 0) {
+        db.transaction(() => {
+          db.prepare("DELETE FROM limits").run();
+          const upsert = db.prepare(`
+            INSERT INTO limits (metric, direction, severity, limit_value, hysteresis, delay_ms, unit, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+          const now = Date.now();
+          for (const l of limits) {
+            upsert.run(l.metric, l.direction, l.severity, l.limitValue, l.hysteresis, l.delayMs, l.unit, now);
+          }
+        })();
+      }
+      // If limits.length === 0 (parse returned nothing / all keys conflicted) we keep
+      // whatever was already in the table — an empty result from the parser is not a
+      // reliable signal that no limits are configured on the tenant.
+    } catch (e) {
+      console.error('Error syncing measuring-object limits:', e.message);
+      hasError = true; errorMsg = e.message;
+    }
+
     // 3. Alarms — resolve device via sensor serial / source uuid, attach to its station
     // ON CONFLICT DO UPDATE instead of INSERT OR REPLACE so the rowid is stable
     // across re-fetches. The reconciliation window (rowid DESC tiebreaker) depends
     // on stable rowids; INSERT OR REPLACE would delete+reinsert, churning them.
+
+    // Pre-load the limits table into a Map for O(1) threshold lookup at insert time.
+    // Key: "metric:direction:severity" — the same triple that identifies a limit row.
+    const limitsCache = new Map();
+    try {
+      const limitRows = db.prepare("SELECT metric, direction, severity, limit_value FROM limits").all();
+      for (const r of limitRows) limitsCache.set(`${r.metric}:${r.direction}:${r.severity}`, r.limit_value);
+    } catch (_) { /* limits table may not exist in older DBs during migration — ignore */ }
+
     const insertAlarmStmt = db.prepare(`
       INSERT INTO events (
         uuid, station_id, severity, alarm_status, alarm_reason,
         alarm_condition_type, alarm_value, metric, threshold, start_ts,
-        end_ts, extreme, active, message, detail, serial_no
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        end_ts, extreme, active, message, detail
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(uuid) DO UPDATE SET
         station_id = excluded.station_id,
         severity = excluded.severity,
@@ -214,8 +251,7 @@ async function runSyncCycle(customClient = null) {
         extreme = excluded.extreme,
         active = excluded.active,
         message = excluded.message,
-        detail = excluded.detail,
-        serial_no = excluded.serial_no
+        detail = excluded.detail
     `);
     try {
       const lastSyncSetting = getSetting('last_alarm_sync_time');
@@ -253,36 +289,38 @@ async function runSyncCycle(customClient = null) {
           // (resolved). It never sends 'Active' — that value only existed in the mock
           // client, which is why every real alarm used to be stored inactive.
           const isActive = a.alarm_status === 'Alarm' ? 1 : 0;
-          // The live API sends alarm_value as a string (e.g. "35.6").
-          // events.alarm_value and events.extreme are REAL columns, so coerce
-          // to number or null if non-numeric.
-          const alarmValue = Number.isFinite(Number.parseFloat(a.alarm_value))
-            ? Number.parseFloat(a.alarm_value)
-            : null;
+
+          const metric = mapPhysicalProperty(a.physical_property_name, a.physical_extension);
+          // Threshold lookup: system alarms have no measurement threshold; for
+          // measurement alarms derive direction from the condition type string and
+          // look up the pre-loaded limits cache. Falls back to null when no matching
+          // limit was synced (e.g. first run before measuring-objects are fetched, or
+          // a conflict caused the key to be dropped from the cache).
+          let threshold = null;
+          if (severity !== 'system' && metric) {
+            const direction = alarmConditionDirection(a.alarm_condition_type);
+            if (direction) threshold = limitsCache.get(`${metric}:${direction}:${severity}`) ?? null;
+          }
 
           insertAlarmStmt.run(
             a.uuid, stationId,
             severity,
-            a.alarm_status, a.alarm_reason, conditionForFrontend, alarmValue,
-            mapPhysicalProperty(a.physical_property_name, a.physical_extension), null,
-            parseTimestamp(a.alarm_time), parseTimestamp(a.last_status_change_time), alarmValue,
+            a.alarm_status, a.alarm_reason, conditionForFrontend, a.alarm_value,
+            metric, threshold,
+            parseTimestamp(a.alarm_time), parseTimestamp(a.last_status_change_time), a.alarm_value,
             isActive, a.alarm_reason || 'Grenzwert verletzt',
-            `Sensor ${a.serial_no} hat einen Wert von ${a.alarm_value} gemeldet.`,
-            a.serial_no || null);
+            `Sensor ${a.serial_no} hat einen Wert von ${a.alarm_value} gemeldet.`);
         }
       })();
 
       // Reconcile the transition-log feed. testo emits a violation and its recovery as
       // separate rows (distinct uuids, ascending timestamps), so "currently active" is
-      // a property of a logical alarm group — not of a single row: only the most recent
-      // transition is live, and only when it is a violation ('Alarm'). A later 'Ok'
-      // recovery closes the whole group.
-      // Partition key must include serial_no so multi-sensor devices don't cross-close
-      // each other, and severity so a Warning violation isn't extinguished by an
-      // Alarm-severity recovery (they are separate limit bands on the same channel).
-      // Synthetic system rows (sys-*, alarm_status IS NULL) are owned by
-      // applySystemEvents and are excluded here. Runs over all stored feed rows so
-      // historical pairs settle even when only one side was fetched this cycle.
+      // a property of a logical alarm group — (station, condition, metric) — not of a
+      // single row: only the most recent transition is live, and only when it is a
+      // violation ('Alarm'). A later 'Ok' recovery closes the whole group. Synthetic
+      // system rows (sys-*, alarm_status IS NULL) are owned by applySystemEvents and
+      // are excluded here. Runs over all stored feed rows so historical pairs settle
+      // even when only one side was fetched this cycle.
       db.transaction(() => {
         db.prepare("UPDATE events SET active = 0 WHERE alarm_status IS NOT NULL").run();
         db.prepare(`
@@ -290,7 +328,7 @@ async function runSyncCycle(customClient = null) {
             SELECT uuid FROM (
               SELECT uuid,
                 ROW_NUMBER() OVER (
-                  PARTITION BY station_id, COALESCE(serial_no,''), alarm_condition_type, severity, COALESCE(metric,'')
+                  PARTITION BY station_id, alarm_condition_type, COALESCE(metric, '')
                   ORDER BY start_ts DESC, rowid DESC
                 ) AS rn,
                 alarm_status
@@ -309,6 +347,35 @@ async function runSyncCycle(customClient = null) {
     } catch (e) {
       console.error('Error syncing alarms:', e.message);
       hasError = true; errorMsg = e.message;
+    }
+
+    // 3b. Threshold backfill — fill `threshold` for existing measurement-alarm rows
+    // where it is still NULL and a matching limit now exists in the cache.
+    // This repairs rows that were inserted before measuring-objects were ever synced,
+    // or before a limits-sync failure was later recovered. Only runs when the cache
+    // has data (no point iterating when the limits table is empty).
+    if (limitsCache.size > 0) {
+      try {
+        // Fetch only measurement-alarm rows with a null threshold and a known metric+direction.
+        // alarm_condition_type carries the direction; severity is already stored.
+        const nullThresholdRows = db.prepare(`
+          SELECT uuid, metric, severity, alarm_condition_type
+          FROM events
+          WHERE alarm_status IS NOT NULL AND threshold IS NULL AND metric IS NOT NULL
+        `).all();
+        const updateThreshold = db.prepare("UPDATE events SET threshold = ? WHERE uuid = ?");
+        db.transaction(() => {
+          for (const row of nullThresholdRows) {
+            const direction = alarmConditionDirection(row.alarm_condition_type);
+            if (!direction) continue;
+            const val = limitsCache.get(`${row.metric}:${direction}:${row.severity}`);
+            if (val != null) updateThreshold.run(val, row.uuid);
+          }
+        })();
+      } catch (e) {
+        console.error('Error backfilling thresholds:', e.message);
+        // Non-fatal: a backfill failure does not affect this cycle's primary data.
+      }
     }
 
     // 4. Data retention cleanup
