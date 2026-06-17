@@ -103,7 +103,7 @@ Neue, kleine Komponente **`MetricValue`** (lokal in `tiles.jsx`), zuständig fü
   - Wert: `last.toFixed(metric.decimals)` + `metric.unit`; bei `status === 'alarm'` Wert-Farbe `var(--alarm)`.
   - Trend: `▲/▼ |delta| metric.unit (±pct %)`; Zeitraum-Hinweis „1 h".
   - Indikator-Dreieck rechts neben dem Wert:
-    - `warning` → Dreieck in `var(--warn)`,
+    - `warning` → Dreieck in `oklch(0.50 0.13 75)` (dunklere Warn-Variante, wie das Warnsymbol in `EventRow` — am kleinen Inline-Icon besser lesbar als das hellere `var(--warn)`),
     - `alarm` → Dreieck in `var(--alarm)`,
     - `null` → kein Dreieck.
 - Das Dreieck verwendet dasselbe SVG wie die Alarm-Zeile in `EventRow` (`<path d="M7 2l6 10H1z"/>` + Ausrufezeichen), `aria-label`/`title` z. B. „Alarm aktiv" / „Warnung aktiv".
@@ -123,8 +123,8 @@ Neue, kleine Komponente **`MetricValue`** (lokal in `tiles.jsx`), zuständig fü
 - `.chart-values` als flex-wrap-Zeile (ersetzt bzw. erweitert `.chart-legend`).
 - `.cv-item`, `.cv-label`, `.cv-value`, `.cv-unit`, `.cv-trend` (Wiederverwendung der Trend-Optik aus `.kpi-trend` / `.trend.up` / `.trend.down`).
 - `.cv-value.is-alarm { color: var(--alarm); }`.
-- `.cv-flag` für das Dreieck; Farbe per `currentColor`, gesetzt über Modifier `is-warning` (`var(--warn)`) / `is-alarm` (`var(--alarm)`).
-- Keine neuen Farb-Tokens — `var(--alarm)` und `var(--warn)` existieren bereits.
+- `.cv-flag` für das Dreieck; Farbe per `currentColor`, gesetzt über Modifier `is-warning` (`oklch(0.50 0.13 75)`) / `is-alarm` (`var(--alarm)`).
+- Kein neues CSS-Variablen-Token: `var(--alarm)` für Alarm; für Warnung die dunklere Inline-Variante `oklch(0.50 0.13 75)`, die im Stylesheet bereits mehrfach als Warnsymbol-Farbe (z. B. `EventRow`) verwendet wird — bewusst dunkler als das hellere Flächen-/Rahmen-Token `var(--warn)`.
 
 ## Edge Cases
 
