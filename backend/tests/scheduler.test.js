@@ -710,3 +710,77 @@ test('A3b: Two sensors same station/metric/direction — one recovery must not c
 
   closeDb();
 });
+
+// ── A4: Alarm-fetch window must overlap so late-arriving transitions aren't lost ─
+// Repro of the Büro phantom-alarm bug: a violation is stored in an earlier cycle and
+// the watermark advances to wall-clock "now". The matching recovery's server-side
+// availability (processed_at) lags, so its alarm_time ends up BEFORE the watermark by
+// the time it is queryable. A window that starts exactly at the watermark filters that
+// recovery out forever, leaving the violation active=1 (a phantom alarm at a healthy
+// value). The fetch window must start a buffer BEFORE the watermark; ON CONFLICT(uuid)
+// makes the re-fetch idempotent.
+class WindowAwareAlarmClient extends MockTestoClient {
+  constructor(allAlarms, moRows = []) {
+    super([], moRows);
+    this.allAlarms = allAlarms;
+    this.alarmRequests = [];
+  }
+  // Simulate the server-side date filter on alarm_time.
+  async fetchAlarms(params) {
+    this.alarmRequests.push(params);
+    const from = params && params.date_time_from ? new Date(params.date_time_from).getTime() : -Infinity;
+    const until = params && params.date_time_until ? new Date(params.date_time_until).getTime() : Infinity;
+    return this.allAlarms.filter(a => {
+      const t = new Date(a.alarm_time).getTime();
+      return t >= from && t <= until;
+    });
+  }
+}
+
+test('A4: late recovery whose alarm_time precedes the watermark is re-fetched via window overlap and clears the violation', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
+    .run('late-st', 'Late Station', 'dev-1');
+
+  const now = Date.now();
+  const tViol = now - 90 * 60000;   // violation 90 min ago (stored in an earlier cycle)
+  const tRecov = now - 70 * 60000;  // recovery 70 min ago — but only queryable now
+  const watermark = now - 60 * 60000; // we already advanced PAST the recovery's alarm_time
+  saveSetting('last_alarm_sync_time', String(watermark));
+
+  // Violation already in the DB and active, exactly as a prior cycle would have left it.
+  db.prepare(`INSERT INTO events (uuid, station_id, severity, alarm_status, alarm_condition_type,
+                                  alarm_value, metric, serial_no, start_ts, active, message)
+              VALUES (?, ?, 'alarm', 'Alarm', 'Lower limit', 17.0, 'temperature', 'SN123', ?, 1, 'viol')`)
+    .run('a4-viol', 'late-st', tViol);
+
+  // The recovery is available at the API but its alarm_time sits before the watermark.
+  const recovery = {
+    uuid: 'a4-recov', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
+    alarm_type: 'measurement alarm', alarm_severity: 'Alarm', alarm_status: 'Ok',
+    alarm_reason: 'Alarm condition is adhered',
+    alarm_condition_type: 'Lower limit', alarm_value: '20.5',
+    physical_property_name: 'Temperature', physical_extension: 'Unknown',
+    alarm_time: new Date(tRecov).toISOString(),
+    last_status_change_time: new Date(tRecov).toISOString()
+  };
+
+  const client = new WindowAwareAlarmClient([recovery]);
+  await schedulerModule.runSyncCycle(client);
+
+  // Mechanism: the window must start before the watermark (overlap), not exactly at it.
+  const req = client.alarmRequests[0];
+  assert.ok(req && req.date_time_from, 'an alarm request must have been made');
+  assert.ok(new Date(req.date_time_from).getTime() < watermark,
+    'fetch window must start before the watermark so late-arriving transitions are re-scanned');
+
+  // Behaviour: the late recovery is ingested and the phantom violation is cleared.
+  const recov = db.prepare("SELECT active FROM events WHERE uuid = 'a4-recov'").get();
+  assert.ok(recov, 'late recovery must be re-fetched and stored');
+  const viol = db.prepare("SELECT active FROM events WHERE uuid = 'a4-viol'").get();
+  assert.strictEqual(viol.active, 0, 'violation must clear once its (late) recovery is ingested');
+
+  closeDb();
+});

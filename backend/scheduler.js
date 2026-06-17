@@ -16,6 +16,14 @@ const parseTimestamp = (str) => {
 
 const SYSTEM_EVENT_TYPES = ['connection', 'battery'];
 
+// Alarm-fetch window overlap (see runSyncCycle step 3): each alarm fetch pulls its lower
+// bound back by this buffer so transitions whose server-side availability (processed_at)
+// lags their alarm_time — or that a device backfills after being offline — are re-scanned
+// instead of being skipped once the watermark has advanced past them. ON CONFLICT(uuid) on
+// the insert makes the redundant re-fetch idempotent. Without this overlap a late recovery
+// is filtered out forever, leaving its violation permanently active (the phantom-alarm bug).
+const ALARM_WINDOW_OVERLAP_MS = 26 * 3600 * 1000;
+
 // Reconcile a station's open system events against its current status snapshot.
 // One stable synthetic row per (station, type) — opened on first detection (start_ts
 // preserved across repeats), reopened if it had cleared, and closed (active=0,end_ts)
@@ -257,15 +265,20 @@ async function runSyncCycle(customClient = null) {
     try {
       const lastSyncSetting = getSetting('last_alarm_sync_time');
       const parsedLastSync = lastSyncSetting ? parseInt(lastSyncSetting, 10) : NaN;
-      const lastSync = !isNaN(parsedLastSync) && parsedLastSync > 0
-        ? new Date(parsedLastSync)
-        : new Date(Date.now() - 7 * 24 * 3600 * 1000);
+      const watermarkMs = !isNaN(parsedLastSync) && parsedLastSync > 0
+        ? parsedLastSync
+        : Date.now() - 7 * 24 * 3600 * 1000;
 
       // Bound with an explicit until for the same reason as measurements: an
       // open-ended alarm report is capped at a small default page. Reuse this
-      // instant for the watermark so the next window starts exactly where this
-      // one ended, with no gap.
+      // instant for the watermark so catch-up after downtime resumes exactly here.
       const alarmUntil = Date.now();
+      // Overlap the lower bound back from the watermark (see ALARM_WINDOW_OVERLAP_MS)
+      // so a transition that only became queryable after the previous cycle's `until`
+      // — processed_at lag, or an offline-backfilled row — is still re-scanned rather
+      // than skipped forever. Long-downtime catch-up still uses the older watermark via
+      // min(); ON CONFLICT(uuid) dedupes the redundant rows.
+      const lastSync = new Date(Math.min(watermarkMs, alarmUntil - ALARM_WINDOW_OVERLAP_MS));
       const alarms = await client.fetchAlarms({
         date_time_from: lastSync.toISOString(),
         date_time_until: new Date(alarmUntil).toISOString()
