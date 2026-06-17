@@ -198,27 +198,74 @@ function KpiBody({ tile }) {
   );
 }
 
+function AlertFlag({ status }) {
+  const label = status === "alarm" ? "Alarm aktiv" : "Warnung aktiv";
+  return (
+    <span className={`cv-flag is-${status}`} role="img" aria-label={label} title={label}>
+      <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
+        <path d="M7 2l6 10H1z"/><path d="M7 6v3M7 10.5v.5" strokeLinecap="round"/>
+      </svg>
+    </span>
+  );
+}
+
+function MetricValue({ metric, status, trend, hidePct, hideTrend }) {
+  const last = trend.last;
+  const valStr = (last == null || Number.isNaN(last)) ? "—" : last.toFixed(metric.decimals);
+  const up = trend.delta > 0;
+  return (
+    <div className="cv-item">
+      <span className="cv-label">
+        <span className="legend-dot" style={{ background: metric.color }} />
+        {metric.short}
+      </span>
+      <span className="cv-value-row">
+        <span className={`cv-value ${status === "alarm" ? "is-alarm" : ""}`}>
+          {valStr}<span className="cv-unit">{metric.unit}</span>
+        </span>
+        {status && <AlertFlag status={status} />}
+      </span>
+      {!hideTrend && trend.hasTrend && (
+        <span className={`cv-trend trend ${up ? "up" : "down"}`}>
+          {up ? "▲" : "▼"} {Math.abs(trend.delta).toFixed(metric.decimals)} {metric.unit}
+          {!hidePct && (
+            <span className="trend-pct">({trend.pct >= 0 ? "+" : ""}{trend.pct.toFixed(1)} %)</span>
+          )}
+          <span className="cv-range">1 h</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ChartBody({ tile }) {
+  // Hooks must run before any early return (Rules of Hooks) — same order as AlertsBody.
+  const ref = tRef(null);
+  const size = useSize(ref);
   if (!tile.metrics.length) return <Empty />;
   const station = tileStation(tile);
   if (!station) return <EmptyDeleted />;
+  // Responsive staircase. A 3x3 chart tile = 3*72 + 2*14 = 244px tall, minus tile head
+  // (~36) + body padding (~18) => ~190px for .chart-wrap, and ~240-290px wide. So the % is
+  // dropped on a narrow tile (always true at the 3-col minimum), while the whole trend line
+  // is only dropped on a genuinely tiny tile below the 3x3 minimum (defensive).
+  const hidePct = size.w > 0 && size.w < 360;
+  const hideTrend = (size.h > 0 && size.h < 120) || (size.w > 0 && size.w < 220);
+  const D = window.DASH_DATA;
+  const ts = station.timestamps || D.timestamps;
   return (
-    <div className="chart-wrap">
-      <div className="chart-legend">
+    <div className="chart-wrap" ref={ref}>
+      <div className="chart-values">
         {tile.metrics.map((id) => {
           const M = station.metrics[id];
-          const last = M.series[M.series.length - 1];
-          return (
-            <span className="legend-item" key={id}>
-              <span className="legend-dot" style={{ background: M.color }} />
-              <span className="legend-name">{M.label}</span>
-              <span className="legend-val">{Number.isNaN(last) || last == null ? "—" : last.toFixed(M.decimals)}<span className="legend-unit">{M.unit}</span></span>
-            </span>
-          );
+          if (!M) return null;
+          const status = D.metricAlertStatus(station.events, id);
+          const trend = D.metricTrend(M.series, ts, 3600000);
+          return <MetricValue key={id} metric={M} status={status} trend={trend} hidePct={hidePct} hideTrend={hideTrend} />;
         })}
       </div>
       <div className="chart-area">
-        <LineChart metricIds={tile.metrics} stationId={station.id} timestamps={window.DASH_DATA.timestamps} />
+        <LineChart metricIds={tile.metrics} stationId={station.id} timestamps={ts} />
       </div>
     </div>
   );
