@@ -360,11 +360,12 @@ In `Smart Meter Dashboard/tiles.jsx`, replace the entire existing `ChartBody` fu
 
 ```jsx
 function ChartBody({ tile }) {
+  // Hooks must run before any early return (Rules of Hooks) — same order as AlertsBody.
+  const ref = tRef(null);
+  const size = useSize(ref);
   if (!tile.metrics.length) return <Empty />;
   const station = tileStation(tile);
   if (!station) return <EmptyDeleted />;
-  const ref = tRef(null);
-  const size = useSize(ref);
   // Responsive staircase. A 3x3 chart tile = 3*72 + 2*14 = 244px tall, minus tile head
   // (~36) + body padding (~18) => ~190px for .chart-wrap, and ~240-290px wide. So the % is
   // dropped on a narrow tile (always true at the 3-col minimum), while the whole trend line
