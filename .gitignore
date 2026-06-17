@@ -2,6 +2,9 @@
 
 node_modules/
 klima.db
+klima.db-shm
+klima.db-wal
+klima.db-journal
 klima__.db
 klima.backup-*.db
 .env
