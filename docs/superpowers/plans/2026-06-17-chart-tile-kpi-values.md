@@ -199,7 +199,7 @@ Create `Smart Meter Dashboard/metrics-logic.js`:
     if (refIdx === -1) return { delta: NaN, pct: NaN, hasTrend: false, ref: NaN, last };
     const ref = series[refIdx];
     const delta = last - ref;
-    const pct = (delta / (ref || 1)) * 100;
+    const pct = (delta / (Math.abs(ref) || 1)) * 100;
     return { delta, pct, hasTrend: true, ref, last };
   }
 
@@ -215,7 +215,7 @@ Create `Smart Meter Dashboard/metrics-logic.js`:
 - [ ] **Step 5: Tests ausführen — müssen bestehen**
 
 Run: `npm test`
-Expected: all backend tests PASS and all 12 metrics-logic tests PASS.
+Expected: all backend tests PASS and all metrics-logic tests PASS (15 after the review-added cases: negative-ref pct, single-element series, null gap).
 
 - [ ] **Step 6: Commit**
 

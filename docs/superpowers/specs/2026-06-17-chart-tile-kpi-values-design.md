@@ -74,7 +74,7 @@ function metricAlertStatus(events, metricId) {
 
 - `last` = letzter gültiger (numerischer, nicht NaN) Wert der Reihe.
 - `ref` = Wert am Sample, dessen Zeitstempel `last_ts − windowMs` am nächsten liegt; gibt es kein Sample ≥ `windowMs` zurück, Rückfall auf den **ältesten** gültigen Wert.
-- `delta = last − ref`, `pct = delta / (ref || 1) * 100`.
+- `delta = last − ref`, `pct = delta / (Math.abs(ref) || 1) * 100` (Betragsbasis, damit das Vorzeichen von `pct` dem von `delta` folgt — wichtig bei sub-null Temperatur/Taupunkt; `ref === 0` fällt auf Nenner 1 zurück).
 - `hasTrend = false`, wenn `last` oder `ref` fehlt (→ Anzeige „—", kein Pfeil), analog zur heutigen Absicherung in `KpiBody`.
 - `windowMs` ist parametrisiert; `ChartBody` ruft mit `3600000` (1 h) auf. Die Kennzahl-Kachel bleibt bei ihrer eigenen 24-h-Rechnung und wird **nicht** umgestellt.
 
