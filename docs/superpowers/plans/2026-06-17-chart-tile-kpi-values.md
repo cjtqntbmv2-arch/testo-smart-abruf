@@ -116,6 +116,14 @@ test('metricTrend: ref 0 uses ||1 to avoid divide-by-zero', () => {
   assert.strictEqual(r.delta, 5);
   assert.strictEqual(r.pct, 500);
 });
+
+test('metricTrend: mismatched timestamps length -> earliest-value fallback', () => {
+  // timestamps.length !== series.length => time window unusable; ref = earliest finite value.
+  const r = metricTrend([10, 14, 17], [1, 2], 3600000);
+  assert.strictEqual(r.hasTrend, true);
+  assert.strictEqual(r.ref, 10);
+  assert.strictEqual(r.delta, 7);
+});
 ```
 
 - [ ] **Step 2: Test-Script in `package.json` ergänzen**
@@ -207,7 +215,7 @@ Create `Smart Meter Dashboard/metrics-logic.js`:
 - [ ] **Step 5: Tests ausführen — müssen bestehen**
 
 Run: `npm test`
-Expected: all backend tests PASS and all 11 metrics-logic tests PASS.
+Expected: all backend tests PASS and all 12 metrics-logic tests PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -357,8 +365,12 @@ function ChartBody({ tile }) {
   if (!station) return <EmptyDeleted />;
   const ref = tRef(null);
   const size = useSize(ref);
-  const hidePct = size.h > 0 && size.h < 170;
-  const hideTrend = size.h > 0 && (size.h < 130 || size.w < 300);
+  // Responsive staircase. A 3x3 chart tile = 3*72 + 2*14 = 244px tall, minus tile head
+  // (~36) + body padding (~18) => ~190px for .chart-wrap, and ~240-290px wide. So the % is
+  // dropped on a narrow tile (always true at the 3-col minimum), while the whole trend line
+  // is only dropped on a genuinely tiny tile below the 3x3 minimum (defensive).
+  const hidePct = size.w > 0 && size.w < 360;
+  const hideTrend = (size.h > 0 && size.h < 120) || (size.w > 0 && size.w < 220);
   const D = window.DASH_DATA;
   const ts = station.timestamps || D.timestamps;
   return (
@@ -373,7 +385,7 @@ function ChartBody({ tile }) {
         })}
       </div>
       <div className="chart-area">
-        <LineChart metricIds={tile.metrics} stationId={station.id} timestamps={D.timestamps} />
+        <LineChart metricIds={tile.metrics} stationId={station.id} timestamps={ts} />
       </div>
     </div>
   );
@@ -393,7 +405,7 @@ In `Smart Meter Dashboard/Klima Dashboard.html`, after the existing `.legend-uni
   .cv-value.is-alarm { color: var(--alarm); }
   .cv-unit { font-family: var(--mono); font-size: 11px; color: var(--text-faint); margin-left: 2px; font-weight: 400; }
   .cv-flag { display: inline-flex; align-items: center; }
-  .cv-flag.is-warning { color: var(--warn); }
+  .cv-flag.is-warning { color: oklch(0.50 0.13 75); }
   .cv-flag.is-alarm { color: var(--alarm); }
   .cv-trend { font-size: 11px; gap: 4px; }
   .cv-range { font-size: 10px; color: var(--text-faint); margin-left: 4px; }
@@ -407,7 +419,7 @@ App on `http://localhost:3000`. Hard-reload (cache-buster still 0.3.0 here, so u
 - value row above the chart shows each value + unit + a `1 h` trend (▲/▼ + %);
 - a metric with an active warning shows a yellow triangle; an active alarm shows a red value + red triangle;
 - the multi-line chart below is unchanged;
-- shrinking the tile drops the % first, then the whole trend line; values + flags remain;
+- making the tile narrow drops the % first; only a tiny tile (below 3x3) drops the whole trend line; values + flags always remain;
 - the „Kennzahl" tile is visually unchanged (regression check).
 
 - [ ] **Step 6: Commit**
@@ -440,10 +452,11 @@ Run:
 ```bash
 cd "/Users/dniehof/Programming/Programme/testo-smart-abruf" && \
   rg -n "0\.3\.0" VERSION README.md package.json "Smart Meter Dashboard/Klima Dashboard.html"; \
+  grep -c "?v=0.4.0" "Smart Meter Dashboard/Klima Dashboard.html"; \
   git tag --list v0.4.0
 ```
 
-Expected: no `0.3.0` matches remain in those files; `v0.4.0` tag does not yet exist (empty output).
+Expected: no `0.3.0` matches remain in those files; the `grep -c` prints exactly **6** (all six versioned script tags incl. `metrics-logic.js`); `v0.4.0` tag does not yet exist (empty output).
 
 - [ ] **Step 3: Tests erneut ausführen (Sicherheitsnetz)**
 
@@ -481,6 +494,6 @@ Re-run the Task 3 / Step 5 checklist once more on the released build and confirm
 
 ## Self-Review (durchgeführt beim Schreiben)
 
-- **Spec-Abdeckung:** Wertezeile + 1-h-Trend → Task 1/3; Grenzwert-Indikator aus Feed → Task 1 (`metricAlertStatus`) + Task 3 (`AlertFlag`/`MetricValue`); Diagramm unverändert → Task 3 behält `LineChart`; responsive Reduktion → Task 3 (`hidePct`/`hideTrend`); keine Backend-Änderung → keine Backend-Datei in den Tasks; Versionierung → Task 4. Kein offener Spec-Punkt.
+- **Spec-Abdeckung:** Wertezeile + 1-h-Trend → Task 1/3; Grenzwert-Indikator aus Feed → Task 1 (`metricAlertStatus`) + Task 3 (`AlertFlag`/`MetricValue`); Diagramm → Task 3 behält `LineChart` (jetzt mit messstellengenauer Zeitachse `ts`); responsive Reduktion → Task 3 (`hidePct` an der Breite, `hideTrend` nur unterhalb 3×3, Arithmetik im Code-Kommentar); keine Backend-Änderung → keine Backend-Datei in den Tasks; Versionierung → Task 4 (6-Tag-Zähl-Check). Kein offener Spec-Punkt.
 - **Platzhalter-Scan:** keine TBD/TODO; jeder Code-Schritt enthält vollständigen Code.
 - **Typ-/Namens-Konsistenz:** `metricAlertStatus(events, metricId)` und `metricTrend(series, timestamps, windowMs) → { delta, pct, hasTrend, ref, last }` identisch in Modul (Task 1), Test (Task 1), `DASH_DATA`-Passthrough (Task 2) und Aufruf in `ChartBody` (Task 3). Props `hidePct`/`hideTrend`, Status `'alarm'|'warning'|null`, CSS-Klassen `cv-*`/`is-alarm`/`is-warning` durchgängig gleich benannt.

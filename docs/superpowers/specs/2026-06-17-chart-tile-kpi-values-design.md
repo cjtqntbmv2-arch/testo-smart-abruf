@@ -36,16 +36,19 @@ Die „Linien-Diagramm"-Kachel erhält eine **angereicherte Wertezeile** über d
 
 ## Betroffene Dateien
 
-- `Smart Meter Dashboard/data.js` — zwei reine Hilfsfunktionen ergänzen (`metricAlertStatus`, `metricTrend`) und über `window.DASH_DATA` exponieren.
-- `Smart Meter Dashboard/tiles.jsx` — `ChartBody` umbauen (Wertezeile mit Trend + Indikator); kleine, wiederverwendbare Wert-Komponente extrahieren.
-- `Smart Meter Dashboard/Klima Dashboard.html` — CSS für die angereicherte Wertezeile + Indikator; `?v=`-Cache-Buster auf neue Version.
-- `VERSION`, `README.md` (Badge), `package.json` — Versions-Bump.
+- `Smart Meter Dashboard/metrics-logic.js` (neu) — reine, framework-freie Hilfsfunktionen `metricAlertStatus`, `metricTrend`; Dual-Export (Browser-Globals + CommonJS), damit isoliert mit `node --test` prüfbar.
+- `Smart Meter Dashboard/tests/metrics-logic.test.js` (neu) — Node-Unit-Tests der reinen Logik.
+- `Smart Meter Dashboard/data.js` — `metricAlertStatus`/`metricTrend` über `window.DASH_DATA` durchreichen; pro Station eigene `timestamps` am Stationsobjekt ablegen (messstellengenauer Trend).
+- `Smart Meter Dashboard/tiles.jsx` — `ChartBody` umbauen (Wertezeile mit Trend + Indikator); Komponenten `MetricValue` + `AlertFlag`; `LineChart` erhält die messstellengenaue Zeitachse.
+- `Smart Meter Dashboard/Klima Dashboard.html` — neuer `<script>` (vor `data.js`); CSS für Wertezeile + Indikator; `?v=`-Cache-Buster auf neue Version.
+- `package.json` — Test-Script führt zusätzlich die Frontend-Logik-Tests aus; Versions-Bump.
+- `VERSION`, `README.md` (Badge) — Versions-Bump.
 
 ## Design
 
-### 1. Datenschicht (`data.js`)
+### 1. Datenschicht (`metrics-logic.js`, eingebunden über `data.js`)
 
-Zwei **reine Funktionen** (keine Seiteneffekte, keine DOM-Abhängigkeit), damit die Logik isoliert prüfbar ist und zwischen Komponenten geteilt werden kann.
+Zwei **reine Funktionen** (keine Seiteneffekte, keine DOM-Abhängigkeit) in einem eigenen Modul `metrics-logic.js`, damit die Logik isoliert mit `node --test` prüfbar ist und zwischen Komponenten geteilt werden kann. Das Modul setzt im Browser Globals und exportiert in Node per `module.exports`; `data.js` reicht die Funktionen über `window.DASH_DATA` durch.
 
 **`metricAlertStatus(events, metricId) → 'alarm' | 'warning' | null`**
 
@@ -140,20 +143,24 @@ MINOR-Bump **0.3.0 → 0.4.0** (neues, abwärtskompatibles Feature). Synchron in
 - `VERSION`
 - `README.md` Badge (`version-0.4.0`)
 - `package.json` (`"version": "0.4.0"`)
-- `Smart Meter Dashboard/Klima Dashboard.html` — `?v=0.4.0` in allen 5 Script-Tags (`data.js`, `charts.jsx`, `tiles.jsx`, `settings.jsx`, `app.jsx`)
+- `Smart Meter Dashboard/Klima Dashboard.html` — `?v=0.4.0` in allen **6** Script-Tags (`metrics-logic.js`, `data.js`, `charts.jsx`, `tiles.jsx`, `settings.jsx`, `app.jsx`)
 - annotierter Tag `v0.4.0` + Push (`git push --follow-tags`) gemäß Versionsregel.
 
 Vor dem Tag: Konsistenz-Check, dass keine Stelle die alte Version trägt und kein `v0.4.0` existiert.
 
 ## Verifikation / Tests
 
-- **Reine Logik** (`metricAlertStatus`, `metricTrend`): isoliert prüfbar. Da es keinen Frontend-Testharness gibt (Babel-im-Browser, kein Build), wird die Logik so geschrieben, dass sie ohne DOM lauffähig ist; im Plan wird entschieden, ob sie über `node --test` (analog `backend/tests/`) als reine Funktionen getestet wird.
+- **Reine Logik** (`metricAlertStatus`, `metricTrend`): in `metrics-logic.js` ausgelagert und über `node --test` (analog `backend/tests/`) als reine Funktionen getestet; im Browser setzt dasselbe Modul nur Globals. `npm test` führt Backend- und Frontend-Logik-Tests aus.
 - **Visuell, live** über Chrome in der laufenden App (Port 3000): eine „Linien-Diagramm"-Kachel mit mehreren Messwerten anlegen und prüfen:
   - Wertezeile zeigt Wert + Einheit + 1-h-Trend,
   - aktives Warning → gelbes Dreieck, aktiver Alarm → rote Zahl + rotes Dreieck (es sind aktuell aktive Meldungen vorhanden),
   - Umbruch/Reduktion bei kleiner Kachel,
   - Diagramm unverändert mit einer Linie je Messwert,
   - „Kennzahl"-Kachel unverändert (Regressionsblick).
+
+## Bekannte Einschränkung (für diese Version akzeptiert)
+
+Der Indikator feuert nur für Events mit zugeordneter Messgröße (`e.metric` ∈ `temperature | humidity | pressure | dewpoint | abshumid`). Ein **Mess-Alarm auf einem Kanal, den `mapPhysicalProperty` nicht klassifiziert** (Rückgabe `null` — z. B. CO₂ auf der EMC-Station, derselbe Kanal hinter dem benignen `measurementsUnmatched: 1`), erhöht den Alarm-Zähler im Kopf, löst aber **kein** Dreieck an einer Zahl aus. Das ist dieselbe metric-gefilterte Lücke, die die „Meldungen"-Kachel heute schon hat (`allowed.has(e.metric)`), und damit konsistent. System-Meldungen (Akku/Verbindung) sind ein separater Fall ohne Messwert-Bezug. Falls künftig nicht-zuordenbare Mess-Alarme sichtbar gemacht werden sollen, ist das eine eigene Erweiterung (z. B. ein Sammel-Hinweis an der Kachel).
 
 ## Offene Punkte
 
