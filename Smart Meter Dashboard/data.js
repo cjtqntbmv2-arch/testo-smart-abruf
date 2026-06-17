@@ -257,6 +257,7 @@
           mo_uuid: s.mo_uuid,
           device_uuid: s.device_uuid,
           metrics,
+          timestamps: stationTimestamps,
           events: []
         };
 
@@ -381,6 +382,10 @@
       // fallback to static META
       return (META[metric] && META[metric].unit) || '';
     },
+
+    // Pure metric helpers (defined in metrics-logic.js, attached to window).
+    metricAlertStatus(events, metricId) { return metricAlertStatus(events, metricId); },
+    metricTrend(series, timestamps, windowMs) { return metricTrend(series, timestamps, windowMs); },
 
     // Extra helpers to allow external calls from components (Zuweisungsmanager / Settings)
     async forceApiRefresh() {
