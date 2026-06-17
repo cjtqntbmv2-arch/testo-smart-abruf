@@ -272,13 +272,14 @@ function ChartBody({ tile }) {
 }
 
 function GaugeBody({ tile }) {
+  // Hooks must run before any early return (Rules of Hooks) — same order as ChartBody/AlertsBody.
+  const ref = tRef(null);
+  const size = useSize(ref);
   const id = tile.metrics[0];
   if (!id) return <Empty />;
   const station = tileStation(tile);
   if (!station) return <EmptyDeleted />;
   const M = station.metrics[id];
-  const ref = tRef(null);
-  const size = useSize(ref);
   return (
     <div className="gauge-wrap" ref={ref}>
       <div className="gauge-label">{M.label}</div>

@@ -184,7 +184,10 @@ function LineChart({ metricIds, stationId, timestamps, showGrid = true, showAxes
             <g className="hover">
               <line x1={scaled[0].xs[hover]} x2={scaled[0].xs[hover]} y1={padT} y2={padT + plotH} />
               {scaled.map((s) => (
-                <circle key={s.m.id} cx={s.xs[hover]} cy={s.ys[hover]} r="3.5" fill={s.m.color} stroke="#fff" strokeWidth="1.5" />
+                // Skip metrics whose series has a gap (NaN) at the hovered index — otherwise NaN reaches the SVG cy.
+                Number.isFinite(s.ys[hover]) ? (
+                  <circle key={s.m.id} cx={s.xs[hover]} cy={s.ys[hover]} r="3.5" fill={s.m.color} stroke="#fff" strokeWidth="1.5" />
+                ) : null
               ))}
             </g>
           )}
