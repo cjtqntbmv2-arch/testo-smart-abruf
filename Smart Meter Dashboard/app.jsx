@@ -343,14 +343,7 @@ function Header({ editMode, onToggleEdit, onAdd, onReset, tileCount, stationPick
           </div>
         </div>
       </div>
-      {!inSettings && (
-        <div className="top-summary" title="System-Überblick">
-          <SummaryDot severity="alarm"   count={totals.alarm} />
-          <SummaryDot severity="warning" count={totals.warning} />
-          <SummaryDot severity="system"  count={totals.system} />
-          <span className="top-summary-label">über alle Messstellen</span>
-        </div>
-      )}
+      {!inSettings && <SystemSummaryTrigger totals={totals} />}
       <div className="top-actions">
         {!inSettings && <>
           <span className="tile-count">{tileCount} Kacheln</span>
