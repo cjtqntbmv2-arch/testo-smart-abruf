@@ -386,6 +386,8 @@
     // Pure metric helpers (defined in metrics-logic.js, attached to window).
     metricAlertStatus(events, metricId) { return metricAlertStatus(events, metricId); },
     metricTrend(series, timestamps, windowMs) { return metricTrend(series, timestamps, windowMs); },
+    // Active events across all stations, grouped by device (summary-logic.js).
+    activeEventGroups() { return groupActiveEventsByStation(STATIONS, STATION_ORDER); },
 
     // Extra helpers to allow external calls from components (Zuweisungsmanager / Settings)
     async forceApiRefresh() {
