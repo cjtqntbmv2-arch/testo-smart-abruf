@@ -43,7 +43,9 @@ Gerät / Messwert besteht und seit wie lange*.
 - **Konsistenz-Fakt:** `/api/totals` zählt `SUM(... active = 1 ...) FROM events` über *alle*
   Stationen; `/api/stations/:id/events` liefert dieselbe `events`-Tabelle pro Station. Die Summe
   der aktiven Pro-Station-Events entspricht also den Header-Zählern — Pille und Panel bleiben
-  zwangsläufig konsistent.
+  zwangsläufig konsistent. Garantiert durch `events.station_id` FK `ON DELETE CASCADE` +
+  `foreign_keys = ON` (db.js) — keine verwaisten Events; einziger theoretischer Rest wäre ein
+  Event mit `station_id = NULL`, das der Scheduler nicht erzeugt.
 - **Muster für Popover:** `StationSelector` (`app.jsx`) zeigt die etablierte Mechanik:
   `wrap`-Ref + Trigger-Button + `pop`-Container, schließt per Esc und Klick-außerhalb, mit
   rotierendem Chevron.

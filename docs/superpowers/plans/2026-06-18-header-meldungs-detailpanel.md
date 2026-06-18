@@ -28,6 +28,8 @@
 
 **Cache-Hinweis für manuelle Tests:** Der Express-Dev-Server revalidiert statische Assets per mtime — ein normaler Browser-Reload zieht Datei-Änderungen, auch ohne `?v=`-Bump. Bei scheinbar veraltetem Verhalten hart neuladen (Cmd+Shift+R). Der `?v=`-Bump (Task 6) ist der Release-Cache-Bust.
 
+**Review-Notizen (grill, 2026-06-18):** Unabhängiger Agent hat den Plan gegen den Code geprüft — keine kritischen Befunde. Eingearbeitet: **(#1)** Popover linksbündig (`left: 0`) statt zentriert → kein Viewport-Clipping bei umbrechender Topbar; **(#2)** robuster React-Key gegen null/Duplikat-UUID im stationsübergreifenden Feed; **(#5)** `role="dialog"` entfernt (nicht-modales Popover, konsistent mit `StationSelector`). Konsistenz Zähler↔Panel **(#3)** am Code bestätigt: `events.station_id` FK `ON DELETE CASCADE` + `foreign_keys = ON` ⇒ keine verwaisten Events. app.jsx-Extraktion (~840 Z.) bewusst **vertagt** (eigener Folge-Task).
+
 ---
 
 ## Task 1: Pure grouping helper `summary-logic.js` + Node tests
@@ -327,7 +329,7 @@ function SystemSummaryPanel() {
   const D = window.DASH_DATA;
   const groups = D.activeEventGroups();
   return (
-    <div className="top-summary-pop" role="dialog" aria-label="Aktive Meldungen">
+    <div className="top-summary-pop">
       <div className="station-pop-head">Aktive Meldungen · alle Messstellen</div>
       {groups.length === 0 ? (
         <div className="alerts-empty">
@@ -346,7 +348,7 @@ function SystemSummaryPanel() {
               <span className="tsp-group-loc">{station.location}</span>
               <span className="tsp-count">{events.length}</span>
             </div>
-            {events.map((e) => <EventRow event={e} key={e.id} station={station} />)}
+            {events.map((e) => <EventRow event={e} key={e.id ?? `${e.startTs}-${e.severity}-${e.metric || 'sys'}`} station={station} />)}
           </div>
         ))
       )}
@@ -466,7 +468,7 @@ Insert immediately **after** it:
   .top-summary[aria-expanded="true"] .chev { transform: rotate(180deg); }
 
   .top-summary-pop {
-    position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+    position: absolute; top: calc(100% + 6px); left: 0;
     background: var(--surface);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius);
@@ -516,7 +518,7 @@ git commit -m "feat(dashboard): style header detail panel (trigger, popover, gro
 
 - [ ] **Step 1: Full manual verification (release gate)**
 
-Run `npm test` → all green. Then with `npm start` running, walk the spec §8 checklist: open panel; groups per device with correct metric + „seit wann"; Esc / click-outside close; empty state; live update after a 5 s poll (trigger or wait for an alarm to resolve → group disappears); no new console warnings. Do not proceed until all pass.
+Run `npm test` → all green. Then with `npm start` running, walk the spec §8 checklist: open panel; groups per device with correct metric + „seit wann"; Esc / click-outside close; empty state; live update after a 5 s poll (trigger or wait for an alarm to resolve → group disappears); no new console warnings; and the pill counts (alarm/warning) equal the summed group `events.length` across all panel groups (they must match). Do not proceed until all pass.
 
 - [ ] **Step 2: Bump the version number everywhere**
 
