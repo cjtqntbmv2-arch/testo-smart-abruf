@@ -42,7 +42,12 @@ const PAGE_SIZE = 20;
 
 function SystemSummaryPanel() {
   const D = window.DASH_DATA;
-  const overview = D.stationOverview();
+  // Defensive: this panel renders OUTSIDE the per-tile error boundary, so any throw
+  // here whites out the whole app. During a version-skew reload (new summary-panel.jsx
+  // paired with a momentarily-stale data.js that predates stationOverview) the accessor
+  // may be missing — degrade to the empty state instead of crashing; the next poll
+  // re-render recovers once the data layer is consistent.
+  const overview = (D && typeof D.stationOverview === "function") ? D.stationOverview() : [];
   return (
     <div className="top-summary-pop">
       <div className="station-pop-head">Meldungen · alle Messstellen</div>
