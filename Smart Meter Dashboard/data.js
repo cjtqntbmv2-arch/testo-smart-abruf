@@ -4,6 +4,7 @@
 (function () {
   const POINTS = 144;
   const STEP_MS = 10 * 60 * 1000;
+  const POLL_EVENT_LIMIT = 50; // bound the 5s poll's per-station history fetch
 
   // Dew point & absolute humidity formulas
   function dewPoint(T, RH) {
@@ -65,6 +66,26 @@
     if (c.includes('upper') || c.includes('high') || c.includes('max') || c.includes('ober') || c.includes('hoch')) return 'high';
     if (c.includes('lower') || c.includes('low')  || c.includes('min') || c.includes('unter') || c.includes('niedrig')) return 'low';
     return 'high';
+  }
+
+  // Map one backend events-row to the frontend event shape. Single source of truth
+  // for both the 5s poll and on-demand history fetches.
+  function mapBackendEvent(e) {
+    return {
+      id: e.uuid,
+      severity: e.severity,
+      system: e.severity === 'system' ? (e.alarm_condition_type || 'maintenance') : null,
+      message: e.message || e.alarm_reason || 'Grenzwert verletzt',
+      detail: e.detail || `Sensorwert: ${e.alarm_value}`,
+      metric: e.metric ? e.metric.toLowerCase() : null,
+      condition: alarmDirection(e.alarm_condition_type),
+      threshold: e.threshold,
+      startTs: e.start_ts,
+      endTs: e.end_ts,
+      extreme: e.extreme || e.alarm_value,
+      active: !!e.active,
+      _rowid: e._rowid, // compound-cursor tiebreak (route always returns rowid AS _rowid)
+    };
   }
 
   // Main API Polling function
@@ -223,23 +244,10 @@
         // Fetch backend events (alarms & system messages)
         let backendEvents = [];
         try {
-          const resEvents = await fetch(`/api/stations/${s.id}/events`);
+          const resEvents = await fetch(`/api/stations/${s.id}/events?limit=${POLL_EVENT_LIMIT}`);
           if (resEvents.ok) {
             const rawEvents = await resEvents.json();
-            backendEvents = rawEvents.map(e => ({
-              id: e.uuid,
-              severity: e.severity,
-              system: e.severity === 'system' ? (e.alarm_condition_type || 'maintenance') : null,
-              message: e.message || e.alarm_reason || 'Grenzwert verletzt',
-              detail: e.detail || `Sensorwert: ${e.alarm_value}`,
-              metric: e.metric ? e.metric.toLowerCase() : null,
-              condition: alarmDirection(e.alarm_condition_type),
-              threshold: e.threshold,
-              startTs: e.start_ts,
-              endTs: e.end_ts,
-              extreme: e.extreme || e.alarm_value,
-              active: !!e.active
-            }));
+            backendEvents = rawEvents.map(mapBackendEvent);
           }
         } catch (e) {
           console.error(`Error fetching events for ${s.id}:`, e);
@@ -387,8 +395,21 @@
     metricAlertState(events, metricId) { return metricAlertState(events, metricId); },
     metricAlertStatus(events, metricId) { return metricAlertStatus(events, metricId); },
     metricTrend(series, timestamps, windowMs) { return metricTrend(series, timestamps, windowMs); },
-    // Active events across all stations, grouped by device (summary-logic.js).
-    activeEventGroups() { return groupActiveEventsByStation(STATIONS, STATION_ORDER); },
+    // All stations (incl. quiet), sorted, with their active events (summary-logic.js).
+    stationOverview() { return buildStationOverview(STATIONS, STATION_ORDER); },
+
+    // Lazy, paginated resolved-event history for one station. Rejects on failure —
+    // callers (StationHistoryGroup) catch and render an inline error.
+    async fetchStationHistory(stationId, opts) {
+      const limit = (opts && opts.limit) || 20;
+      let url = `/api/stations/${stationId}/events?active=0&limit=${limit}`;
+      if (opts && opts.beforeTs != null) url += `&before_ts=${opts.beforeTs}`;
+      if (opts && opts.beforeRowid != null) url += `&before_rowid=${opts.beforeRowid}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Historie konnte nicht geladen werden');
+      const rows = await res.json();
+      return rows.map(mapBackendEvent);
+    },
 
     // Extra helpers to allow external calls from components (Zuweisungsmanager / Settings)
     async forceApiRefresh() {
