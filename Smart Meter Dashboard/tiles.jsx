@@ -17,6 +17,7 @@ const TILE_TYPES = {
     defaultSize: { w: 3, h: 3 },
     minSize: { w: 2, h: 2 },
     maxMetrics: 1,
+    supportsLimitFlags: true,
   },
   chart: {
     id: "chart",
@@ -173,6 +174,11 @@ function KpiBody({ tile }) {
   const M = station.metrics[tile.metrics[0]];
   if (!M) return <Empty />;
   const s = window.DASH_DATA.stats(M.series);
+  const D = window.DASH_DATA;
+  const state = tileLimitFlagsOn(tile)
+    ? D.metricAlertState(station.events, tile.metrics[0])
+    : { severity: null, direction: null };
+  const numClass = state.severity === "alarm" ? "is-alarm" : state.severity === "warning" ? "is-warning" : "";
   const trend = s.last - s.first;
   const trendPct = (trend / (s.first || 1)) * 100;
   const trendUp = trend > 0;
@@ -183,8 +189,9 @@ function KpiBody({ tile }) {
         <span className="kpi-dot" style={{ background: M.color }} />
       </div>
       <div className="kpi-value">
-        <span className="num">{Number.isNaN(s.last) || s.last == null ? "—" : s.last.toFixed(M.decimals)}</span>
+        <span className={`num ${numClass}`}>{Number.isNaN(s.last) || s.last == null ? "—" : s.last.toFixed(M.decimals)}</span>
         <span className="unit">{M.unit}</span>
+        <LimitFlag severity={state.severity} direction={state.direction} />
       </div>
       <div className="kpi-trend">
         {(Number.isNaN(s.last) || Number.isNaN(s.first)) ? (
