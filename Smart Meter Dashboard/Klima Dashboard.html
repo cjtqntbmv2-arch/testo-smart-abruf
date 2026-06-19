@@ -33,6 +33,7 @@
     --warn: oklch(0.74 0.13 75);
     --warn-soft: oklch(0.95 0.05 80);
     --warn-tint: oklch(0.97 0.025 80);
+    --warn-strong: oklch(0.50 0.13 75);
     --sys: oklch(0.55 0.02 200);
     --sys-soft: oklch(0.93 0.01 200);
     --sys-tint: oklch(0.97 0.005 200);
@@ -251,7 +252,7 @@
     font-size: 13px;
     font-weight: 500;
   }
-  .offline-banner svg { color: oklch(0.50 0.13 75); }
+  .offline-banner svg { color: var(--warn-strong); }
 
   /* ---------- KPI body ---------- */
   .kpi { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
@@ -294,9 +295,13 @@
   .cv-value-row { display: inline-flex; align-items: center; gap: 5px; }
   .cv-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--text); line-height: 1.15; }
   .cv-value.is-alarm { color: var(--alarm); }
+  .cv-value.is-warning { color: var(--warn-strong); }
   .cv-unit { font-family: var(--mono); font-size: 11px; color: var(--text-faint); margin-left: 2px; font-weight: 400; }
-  .cv-flag { display: inline-flex; align-items: center; }
-  .cv-flag.is-warning { color: oklch(0.50 0.13 75); }
+  .cv-flag { display: inline-flex; align-items: center; justify-content: center; position: relative; width: 17px; height: 15px; }
+  .lf-dir { position: absolute; right: 0; pointer-events: none; }
+  .lf-dir-high { top: 0; }
+  .lf-dir-low { bottom: 0; }
+  .cv-flag.is-warning { color: var(--warn-strong); }
   .cv-flag.is-alarm { color: var(--alarm); }
   .cv-trend { font-size: 11px; gap: 4px; }
   .cv-range { font-size: 10px; color: var(--text-faint); margin-left: 4px; }
@@ -581,7 +586,7 @@
     border-radius: 6px;
   }
   .evrow.sev-alarm   .ev-icon { color: var(--alarm); background: var(--alarm-soft); }
-  .evrow.sev-warning .ev-icon { color: oklch(0.50 0.13 75); background: var(--warn-soft); }
+  .evrow.sev-warning .ev-icon { color: var(--warn-strong); background: var(--warn-soft); }
   .evrow.sev-system  .ev-icon { color: var(--sys); background: var(--sys-soft); }
 
   .ev-main { min-width: 0; flex: 1 1 auto; }
@@ -639,7 +644,7 @@
     font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
     color: var(--text-faint); letter-spacing: 0.05em;
   }
-  .thr-head .warn  { color: oklch(0.50 0.13 75); }
+  .thr-head .warn  { color: var(--warn-strong); }
   .thr-head .alarm { color: var(--alarm); }
   .thr-row + .thr-row { border-top: 1px solid var(--border); }
   .thr-name { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; font-size: 13px; }
