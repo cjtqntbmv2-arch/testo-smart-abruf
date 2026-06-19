@@ -4,20 +4,27 @@
 (function () {
   function isNum(v) { return typeof v === 'number' && !Number.isNaN(v); }
 
-  // Worst active alert severity for one metric, derived from the station event feed.
-  // events: array of { active, severity, metric }; metricId: frontend metric id (lowercased).
-  // Returns 'alarm' | 'warning' | null. Alarm outranks warning; 'system' events are ignored.
-  function metricAlertStatus(events, metricId) {
-    if (!Array.isArray(events) || !metricId) return null;
-    let warning = false;
+  // Worst active alert for one metric, plus the direction of the breached limit.
+  // events: array of { active, severity, metric, condition }; condition is 'high'|'low' (alarmDirection()).
+  // Returns { severity: 'alarm'|'warning'|null, direction: 'high'|'low'|null }. Alarm outranks warning;
+  // 'system' events are ignored (no metric value).
+  function metricAlertState(events, metricId) {
+    if (!Array.isArray(events) || !metricId) return { severity: null, direction: null };
+    let warnDir = null;
     for (const e of events) {
       if (!e || !e.active) continue;
       if (e.severity === 'system') continue;
       if (e.metric !== metricId) continue;
-      if (e.severity === 'alarm') return 'alarm';
-      if (e.severity === 'warning') warning = true;
+      const dir = e.condition === 'low' ? 'low' : 'high';
+      if (e.severity === 'alarm') return { severity: 'alarm', direction: dir };
+      if (e.severity === 'warning' && warnDir === null) warnDir = dir;
     }
-    return warning ? 'warning' : null;
+    return warnDir ? { severity: 'warning', direction: warnDir } : { severity: null, direction: null };
+  }
+
+  // Backward-compatible severity-only accessor (delegates to metricAlertState).
+  function metricAlertStatus(events, metricId) {
+    return metricAlertState(events, metricId).severity;
   }
 
   // Trend of a numeric series over a trailing time window (default 1 h).
@@ -60,9 +67,10 @@
     return { delta, pct, hasTrend: true, ref, last };
   }
 
-  const api = { metricAlertStatus, metricTrend };
+  const api = { metricAlertState, metricAlertStatus, metricTrend };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') {
+    window.metricAlertState = metricAlertState;
     window.metricAlertStatus = metricAlertStatus;
     window.metricTrend = metricTrend;
   }
