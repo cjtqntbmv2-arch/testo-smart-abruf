@@ -224,7 +224,7 @@ function LimitFlag({ severity, direction }) {
     : [<path key="spike" d="M6 1l3 4H3z" />, <rect key="line" x="2" y="6.2" width="8" height="1.6" />];
   return (
     <span className={`cv-flag is-${severity}`} role="img" aria-label={label} title={label}>
-      <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
+      <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round">
         <path d="M7 2l6 10H1z"/><path d="M7 6v3M7 10.5v.5" strokeLinecap="round"/>
       </svg>
       <svg className={`lf-dir lf-dir-${low ? "low" : "high"}`} width="9" height="9" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
