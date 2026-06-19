@@ -17,6 +17,7 @@ const TILE_TYPES = {
     defaultSize: { w: 3, h: 3 },
     minSize: { w: 2, h: 2 },
     maxMetrics: 1,
+    supportsLimitFlags: true,
   },
   chart: {
     id: "chart",
@@ -25,6 +26,7 @@ const TILE_TYPES = {
     defaultSize: { w: 6, h: 4 },
     minSize: { w: 3, h: 3 },
     maxMetrics: 4,
+    supportsLimitFlags: true,
   },
   gauge: {
     id: "gauge",
@@ -41,6 +43,7 @@ const TILE_TYPES = {
     defaultSize: { w: 4, h: 3 },
     minSize: { w: 3, h: 2 },
     maxMetrics: 4,
+    supportsLimitFlags: true,
   },
   alerts: {
     id: "alerts",
@@ -52,6 +55,9 @@ const TILE_TYPES = {
     hasSettings: true,
   },
 };
+
+// Whether a tile shows the limit-status treatment. Default on; undefined => on.
+function tileLimitFlagsOn(tile) { return tile.limitFlags !== false; }
 
 // ---------- Layout math ----------
 function rectsOverlap(a, b) {
@@ -169,6 +175,11 @@ function KpiBody({ tile }) {
   const M = station.metrics[tile.metrics[0]];
   if (!M) return <Empty />;
   const s = window.DASH_DATA.stats(M.series);
+  const D = window.DASH_DATA;
+  const state = tileLimitFlagsOn(tile)
+    ? D.metricAlertState(station.events, tile.metrics[0])
+    : { severity: null, direction: null };
+  const numClass = state.severity === "alarm" ? "is-alarm" : state.severity === "warning" ? "is-warning" : "";
   const trend = s.last - s.first;
   const trendPct = (trend / (s.first || 1)) * 100;
   const trendUp = trend > 0;
@@ -179,8 +190,9 @@ function KpiBody({ tile }) {
         <span className="kpi-dot" style={{ background: M.color }} />
       </div>
       <div className="kpi-value">
-        <span className="num">{Number.isNaN(s.last) || s.last == null ? "—" : s.last.toFixed(M.decimals)}</span>
+        <span className={`num ${numClass}`}>{Number.isNaN(s.last) || s.last == null ? "—" : s.last.toFixed(M.decimals)}</span>
         <span className="unit">{M.unit}</span>
+        <LimitFlag severity={state.severity} direction={state.direction} />
       </div>
       <div className="kpi-trend">
         {(Number.isNaN(s.last) || Number.isNaN(s.first)) ? (
@@ -198,21 +210,36 @@ function KpiBody({ tile }) {
   );
 }
 
-function AlertFlag({ status }) {
-  const label = status === "alarm" ? "Alarm aktiv" : "Warnung aktiv";
+function LimitFlag({ severity, direction }) {
+  if (!severity) return null;
+  const sevLabel = severity === "alarm" ? "Alarm aktiv" : "Warnung aktiv";
+  const low = direction === "low";
+  const label = `${sevLabel} · ${low ? "unterer" : "oberer"} Grenzwert`;
+  // Direction glyph "limit-line + spike": short threshold line with the value-spike
+  // above it (upper limit exceeded) or below it (lower limit undershot). Built as an
+  // element array (no JSX fragment) to match the codebase's plain style. Inherits the
+  // flag colour via fill="currentColor".
+  const dirPaths = low
+    ? [<rect key="line" x="2" y="4.2" width="8" height="1.6" />, <path key="spike" d="M6 11l-3-4h6z" />]
+    : [<path key="spike" d="M6 1l3 4H3z" />, <rect key="line" x="2" y="6.2" width="8" height="1.6" />];
   return (
-    <span className={`cv-flag is-${status}`} role="img" aria-label={label} title={label}>
+    <span className={`cv-flag is-${severity}`} role="img" aria-label={label} title={label}>
       <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
         <path d="M7 2l6 10H1z"/><path d="M7 6v3M7 10.5v.5" strokeLinecap="round"/>
+      </svg>
+      <svg className={`lf-dir lf-dir-${low ? "low" : "high"}`} width="9" height="9" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+        {dirPaths}
       </svg>
     </span>
   );
 }
 
-function MetricValue({ metric, status, trend, hidePct, hideTrend }) {
+function MetricValue({ metric, state, trend, hidePct, hideTrend }) {
   const last = trend.last;
   const valStr = (last == null || Number.isNaN(last)) ? "—" : last.toFixed(metric.decimals);
   const up = trend.delta > 0;
+  const sev = state.severity;
+  const valClass = sev === "alarm" ? "is-alarm" : sev === "warning" ? "is-warning" : "";
   return (
     <div className="cv-item">
       <span className="cv-label">
@@ -220,10 +247,10 @@ function MetricValue({ metric, status, trend, hidePct, hideTrend }) {
         {metric.short}
       </span>
       <span className="cv-value-row">
-        <span className={`cv-value ${status === "alarm" ? "is-alarm" : ""}`}>
+        <span className={`cv-value ${valClass}`}>
           {valStr}<span className="cv-unit">{metric.unit}</span>
         </span>
-        {status && <AlertFlag status={status} />}
+        <LimitFlag severity={sev} direction={state.direction} />
       </span>
       {!hideTrend && trend.hasTrend && (
         <span className={`cv-trend trend ${up ? "up" : "down"}`}>
@@ -259,9 +286,11 @@ function ChartBody({ tile }) {
         {tile.metrics.map((id) => {
           const M = station.metrics[id];
           if (!M) return null;
-          const status = D.metricAlertStatus(station.events, id);
+          const state = tileLimitFlagsOn(tile)
+            ? D.metricAlertState(station.events, id)
+            : { severity: null, direction: null };
           const trend = D.metricTrend(M.series, ts, 3600000);
-          return <MetricValue key={id} metric={M} status={status} trend={trend} hidePct={hidePct} hideTrend={hideTrend} />;
+          return <MetricValue key={id} metric={M} state={state} trend={trend} hidePct={hidePct} hideTrend={hideTrend} />;
         })}
       </div>
       <div className="chart-area">
@@ -292,6 +321,8 @@ function StatsBody({ tile }) {
   if (!tile.metrics.length) return <Empty />;
   const station = tileStation(tile);
   if (!station) return <EmptyDeleted />;
+  const D = window.DASH_DATA;
+  const showFlags = tileLimitFlagsOn(tile);
   return (
     <div className="stats">
       <div className="stats-grid">
@@ -300,12 +331,15 @@ function StatsBody({ tile }) {
         </div>
         {tile.metrics.map((id) => {
           const M = station.metrics[id];
-          const s = window.DASH_DATA.stats(M.series);
+          if (!M) return null;
+          const s = D.stats(M.series);
           const fmt = (v) => (v == null || Number.isNaN(v)) ? "—" : v.toFixed(M.decimals);
+          const state = showFlags ? D.metricAlertState(station.events, id) : { severity: null, direction: null };
+          const curClass = state.severity === "alarm" ? "is-alarm" : state.severity === "warning" ? "is-warning" : "";
           return (
             <div className="stats-row" key={id}>
               <span className="srow-name"><span className="legend-dot" style={{ background: M.color }} />{M.short}</span>
-              <span className="srow-v current">{fmt(s.last)}<span className="srow-u">{M.unit}</span></span>
+              <span className={`srow-v current ${curClass}`}>{fmt(s.last)}<span className="srow-u">{M.unit}</span><LimitFlag severity={state.severity} direction={state.direction} /></span>
               <span className="srow-v">{fmt(s.min)}</span>
               <span className="srow-v">{fmt(s.max)}</span>
               <span className="srow-v">{fmt(s.avg)}</span>

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { metricAlertStatus, metricTrend } = require('../metrics-logic.js');
+const { metricAlertState, metricAlertStatus, metricTrend } = require('../metrics-logic.js');
 
 test('metricAlertStatus: active alarm outranks warning', () => {
   const events = [
@@ -107,4 +107,46 @@ test('metricTrend: null gap in series is skipped', () => {
   assert.strictEqual(r.hasTrend, true);
   assert.strictEqual(r.ref, 10);
   assert.strictEqual(r.last, 14);
+});
+
+test('metricAlertState: high alarm -> severity alarm, direction high', () => {
+  const events = [{ active: true, severity: 'alarm', metric: 'temperature', condition: 'high' }];
+  assert.deepStrictEqual(metricAlertState(events, 'temperature'), { severity: 'alarm', direction: 'high' });
+});
+
+test('metricAlertState: low warning -> severity warning, direction low', () => {
+  const events = [{ active: true, severity: 'warning', metric: 'humidity', condition: 'low' }];
+  assert.deepStrictEqual(metricAlertState(events, 'humidity'), { severity: 'warning', direction: 'low' });
+});
+
+test('metricAlertState: alarm outranks warning and keeps the alarm direction', () => {
+  const events = [
+    { active: true, severity: 'warning', metric: 'temperature', condition: 'high' },
+    { active: true, severity: 'alarm', metric: 'temperature', condition: 'low' },
+  ];
+  assert.deepStrictEqual(metricAlertState(events, 'temperature'), { severity: 'alarm', direction: 'low' });
+});
+
+test('metricAlertState: first active warning wins its direction', () => {
+  const events = [
+    { active: true, severity: 'warning', metric: 'temperature', condition: 'high' },
+    { active: true, severity: 'warning', metric: 'temperature', condition: 'low' },
+  ];
+  assert.deepStrictEqual(metricAlertState(events, 'temperature'), { severity: 'warning', direction: 'high' });
+});
+
+test('metricAlertState: missing condition defaults to high', () => {
+  const events = [{ active: true, severity: 'warning', metric: 'pressure' }];
+  assert.deepStrictEqual(metricAlertState(events, 'pressure'), { severity: 'warning', direction: 'high' });
+});
+
+test('metricAlertState: inactive / system / other-metric -> {null,null}', () => {
+  assert.deepStrictEqual(metricAlertState([{ active: false, severity: 'alarm', metric: 'temperature', condition: 'high' }], 'temperature'), { severity: null, direction: null });
+  assert.deepStrictEqual(metricAlertState([{ active: true, severity: 'system', metric: 'temperature' }], 'temperature'), { severity: null, direction: null });
+  assert.deepStrictEqual(metricAlertState([{ active: true, severity: 'alarm', metric: 'pressure', condition: 'high' }], 'temperature'), { severity: null, direction: null });
+});
+
+test('metricAlertState: non-array / missing id -> {null,null}', () => {
+  assert.deepStrictEqual(metricAlertState(null, 'temperature'), { severity: null, direction: null });
+  assert.deepStrictEqual(metricAlertState([{ active: true, severity: 'alarm', metric: 'temperature', condition: 'high' }], null), { severity: null, direction: null });
 });

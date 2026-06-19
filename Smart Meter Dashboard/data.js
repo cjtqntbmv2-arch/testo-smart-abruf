@@ -384,6 +384,7 @@
     },
 
     // Pure metric helpers (defined in metrics-logic.js, attached to window).
+    metricAlertState(events, metricId) { return metricAlertState(events, metricId); },
     metricAlertStatus(events, metricId) { return metricAlertStatus(events, metricId); },
     metricTrend(series, timestamps, windowMs) { return metricTrend(series, timestamps, windowMs); },
     // Active events across all stations, grouped by device (summary-logic.js).

@@ -165,12 +165,14 @@ function App() {
   }, [drag, resize, layout, cellW]);
 
   // ---- Tile ops ----
-  function addTile(type, stationId, metrics, title) {
+  function addTile(type, stationId, metrics, title, limitFlags) {
     const cfg = TILE_TYPES[type];
     const { w, h } = cfg.defaultSize;
     const slot = findFreeSlot(layout, w, h);
     const id = "t" + Math.random().toString(36).slice(2, 8);
-    setLayout((L) => [...L, { id, type, stationId, title, metrics, x: slot.x, y: slot.y, w, h }]);
+    const tile = { id, type, stationId, title, metrics, x: slot.x, y: slot.y, w, h };
+    if (cfg.supportsLimitFlags && limitFlags === false) tile.limitFlags = false;
+    setLayout((L) => [...L, tile]);
     setAddOpen(false);
   }
   function removeTile(id) {
@@ -321,6 +323,7 @@ function AddTileDialog({ onClose, onAdd, onGoToSettings }) {
   const [stationId, setStationId] = aState(window.DASH_DATA.stationOrder[0]);
   const [metrics, setMetrics] = aState([]);
   const [title, setTitle] = aState("");
+  const [limitFlags, setLimitFlags] = aState(true);
 
   const D = window.DASH_DATA;
   const cfg = TILE_TYPES[type];
@@ -334,6 +337,7 @@ function AddTileDialog({ onClose, onAdd, onGoToSettings }) {
     setType(t);
     setMetrics([]);
     setTitle("");
+    setLimitFlags(true);
     setStep(2);
   }
   function pickStation(sid) {
@@ -362,7 +366,7 @@ function AddTileDialog({ onClose, onAdd, onGoToSettings }) {
   }
 
   function commit() {
-    onAdd(type, stationId, metrics, title.trim() || suggestTitle());
+    onAdd(type, stationId, metrics, title.trim() || suggestTitle(), limitFlags);
   }
 
   // H6: early-return guidance when there are no stations yet
@@ -471,6 +475,12 @@ function AddTileDialog({ onClose, onAdd, onGoToSettings }) {
               <span>Bezeichnung der Kachel</span>
               <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={suggestTitle()} autoFocus />
             </label>
+            {cfg.supportsLimitFlags && (
+              <label className="dialog-check">
+                <input type="checkbox" checked={limitFlags} onChange={(e) => setLimitFlags(e.target.checked)} />
+                <span>Grenzwert-Status an den Messwerten anzeigen</span>
+              </label>
+            )}
             <div className="preview-pane">
               <div className="pp-label">Vorschau</div>
               <div className="pp-tile">
@@ -485,7 +495,7 @@ function AddTileDialog({ onClose, onAdd, onGoToSettings }) {
                   </div>
                 </div>
                 <div className="tile-body">
-                  {React.createElement(TILE_BODIES[type], { tile: { type, stationId, metrics, title: title || suggestTitle() } })}
+                  {React.createElement(TILE_BODIES[type], { tile: { type, stationId, metrics, title: title || suggestTitle(), limitFlags } })}
                 </div>
               </div>
             </div>
@@ -514,6 +524,7 @@ function EditTileDialog({ tile, onClose, onSave }) {
   const [stationId, setStationId] = aState(initialStationId);
   const [metrics, setMetrics] = aState(tile.metrics);
   const [title, setTitle] = aState(tile.title);
+  const [limitFlags, setLimitFlags] = aState(tile.limitFlags !== false);
 
   const station = D.stations[stationId];
 
@@ -599,12 +610,18 @@ function EditTileDialog({ tile, onClose, onSave }) {
                 );
               })}
             </div>
+            {cfg.supportsLimitFlags && (
+              <label className="dialog-check">
+                <input type="checkbox" checked={limitFlags} onChange={(e) => setLimitFlags(e.target.checked)} />
+                <span>Grenzwert-Status an den Messwerten anzeigen</span>
+              </label>
+            )}
           </>
         )}
         <div className="dialog-foot">
           <button className="btn ghost" onClick={onClose}>Abbrechen</button>
           <button className="btn primary" disabled={!metrics.length}
-                  onClick={() => onSave({ stationId, metrics, title: title.trim() || cfg.label })}>
+                  onClick={() => onSave({ stationId, metrics, title: title.trim() || cfg.label, ...(cfg.supportsLimitFlags ? { limitFlags } : {}) })}>
             Speichern
           </button>
         </div>
