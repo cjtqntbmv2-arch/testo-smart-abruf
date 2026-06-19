@@ -337,6 +337,48 @@ test('GET /api/limits returns stored limit rows with correct camelCase fields', 
   assert.strictEqual(humLimit.unit, '%rF');
 });
 
+test('POST /api/sync startet einen Sync und respektiert den laufenden-Sync-Guard', async () => {
+  saveSetting('api_key', 'mock-api-key');
+  saveSetting('api_region', 'eu');
+
+  // Vorbedingung: sicherstellen, dass kein Sync mehr läuft.
+  for (let i = 0; i < 100; i++) {
+    const s = await (await fetch('http://localhost:3001/api/system/status')).json();
+    if (!s.scheduler.isSyncing) break;
+    await new Promise(r => setTimeout(r, 20));
+  }
+
+  // Zwei gleichzeitige Aufrufe: höchstens einer darf den Sync starten, ein
+  // zweiter muss am isSyncing-Guard scheitern. Statt nur die Objektform zu
+  // prüfen, verifizieren wir den Vertrag JEDES Zweigs:
+  //   started === true  -> 202
+  //   started === false -> 200 + reason 'already-running'
+  const [r1, r2] = await Promise.all([
+    fetch('http://localhost:3001/api/sync', { method: 'POST' }),
+    fetch('http://localhost:3001/api/sync', { method: 'POST' }),
+  ]);
+  const [b1, b2] = await Promise.all([r1.json(), r2.json()]);
+
+  for (const [res, body] of [[r1, b1], [r2, b2]]) {
+    assert.strictEqual(typeof body.started, 'boolean');
+    if (body.started === true) {
+      assert.strictEqual(res.status, 202);
+    } else {
+      assert.strictEqual(body.started, false);
+      assert.strictEqual(body.reason, 'already-running');
+      assert.strictEqual(res.status, 200);
+    }
+  }
+
+  // Vor Testende auf Ruhezustand warten, damit after()/closeDb() nicht gegen
+  // einen noch laufenden fire-and-forget-Sync läuft.
+  for (let i = 0; i < 100; i++) {
+    const s = await (await fetch('http://localhost:3001/api/system/status')).json();
+    if (!s.scheduler.isSyncing) break;
+    await new Promise(r => setTimeout(r, 20));
+  }
+});
+
 after(() => {
   server.close();
   stopScheduler();

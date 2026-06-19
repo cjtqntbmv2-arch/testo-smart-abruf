@@ -1,11 +1,11 @@
 {
   "name": "testo-smart-abruf",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Local server and dashboard for testo Smart Connect API data sync",
   "main": "backend/server.js",
   "scripts": {
     "start": "node backend/server.js",
-    "test": "NODE_ENV=test node --test backend/tests/*.test.js && NODE_ENV=test node --test \"Smart Meter Dashboard/tests/metrics-logic.test.js\" \"Smart Meter Dashboard/tests/summary-logic.test.js\""
+    "test": "NODE_ENV=test node --test backend/tests/*.test.js && NODE_ENV=test node --test \"Smart Meter Dashboard/tests/metrics-logic.test.js\" \"Smart Meter Dashboard/tests/summary-logic.test.js\" \"Smart Meter Dashboard/tests/status-logic.test.js\""
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

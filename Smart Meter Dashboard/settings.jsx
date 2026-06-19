@@ -53,6 +53,14 @@ function SettingsPage({ onClose }) {
   const [systemStatus, setSystemStatus] = sState(null);
   const [, forceTick] = sState(0);
 
+  // Lädt die Systemdiagnose neu; im Mount-Effekt und als onRefresh für die Übersicht genutzt.
+  const loadStatus = () => {
+    fetch('/api/system/status')
+      .then(res => res.json())
+      .then(data => setSystemStatus(data))
+      .catch(err => console.error('Failed to load system diagnostics:', err));
+  };
+
   // Hydration gate: tracks whether the initial GET /api/settings has completed AND the resulting
   // state update has been absorbed. We need TWO counters, not a simple boolean:
   //   skipCount.current = number of [settings] effect runs still to skip before POSTing.
@@ -112,15 +120,6 @@ function SettingsPage({ onClose }) {
         // No setSettings called on failure, so no extra effect run to absorb. skipCount stays
         // at 1, which was already consumed by the initial-mount run. User edits save normally.
       });
-
-    const loadStatus = () => {
-      fetch('/api/system/status')
-        .then(res => res.json())
-        .then(data => {
-          setSystemStatus(data);
-        })
-        .catch(err => console.error('Failed to load system diagnostics:', err));
-    };
 
     loadStatus();
     const intervalId = setInterval(loadStatus, 10000);
@@ -211,7 +210,7 @@ function SettingsPage({ onClose }) {
 
   const ctx = { settings, update };
   let body = null;
-  if (section === "overview")      body = <OverviewSection settings={settings} systemStatus={systemStatus} />;
+  if (section === "overview")      body = <OverviewSection settings={settings} systemStatus={systemStatus} onNavigate={setSection} onRefresh={loadStatus} />;
   if (section === "api")           body = <ApiSection settings={settings} update={update} systemStatus={systemStatus} apiKeyConfigured={apiKeyConfigured} />;
   if (section === "database")      body = <DatabaseSection settings={settings} update={update} systemStatus={systemStatus} />;
   if (section === "stations")  body = <StationsSection />;
@@ -253,7 +252,8 @@ function SettingsPage({ onClose }) {
 }
 
 // ---------- Sections ----------
-function OverviewSection({ settings, systemStatus }) {
+function OverviewSection({ settings, systemStatus, onNavigate, onRefresh }) {
+  const [resyncing, setResyncing] = sState(false);
   const D = window.DASH_DATA;
   const stationsOnline = D.stationOrder.filter((id) => D.stations[id].online).length;
   const stationsTotal  = D.stationOrder.length;
@@ -271,20 +271,80 @@ function OverviewSection({ settings, systemStatus }) {
 
   const { database, scheduler, storage, api } = systemStatus;
 
-  // Format API status
-  const apiStatus = api.status;
-  const apiValue = api.apiKeyConfigured ? "Schlüssel Aktiv" : "Nicht Konfiguriert";
-  const apiSub = `Region: ${api.region.toUpperCase()} · Letzter Sync: ${scheduler.lastSyncStatus === 'success' ? 'Erfolgreich' : scheduler.lastSyncStatus === 'skipped' ? 'Übersprungen' : scheduler.lastSyncStatus === 'error' ? 'Fehler' : 'Nie'}`;
+  // Resync-Button → POST /api/sync, danach Diagnose neu laden.
+  const handleResync = () => {
+    setResyncing(true);
+    fetch('/api/sync', { method: 'POST' })
+      .then(res => res.json())
+      .then(() => { if (onRefresh) onRefresh(); })
+      .catch(err => console.error('Resync failed:', err))
+      .finally(() => setResyncing(false));
+  };
 
-  // Format Database status
+  // --- Testo Connect API ---
+  const apiStatus = api.status;
+  const apiSub = `Region: ${api.region.toUpperCase()} · Letzter Sync: ${scheduler.lastSyncStatus === 'success' ? 'Erfolgreich' : scheduler.lastSyncStatus === 'skipped' ? 'Übersprungen' : scheduler.lastSyncStatus === 'error' ? 'Fehler' : 'Nie'}`;
+  let apiValue = api.apiKeyConfigured ? "Schlüssel Aktiv" : "Nicht Konfiguriert";
+  let apiCause = null, apiCauseRaw = null, apiActions = null;
+  if (apiStatus === 'err') {
+    apiValue = 'Sync fehlgeschlagen';
+    const ex = window.explainSyncError(scheduler.lastSyncError);
+    apiCause = ex.plain;
+    apiCauseRaw = ex.showRaw ? scheduler.lastSyncError : null;
+    apiActions = [
+      { label: resyncing ? 'Sync gestartet…' : 'Erneut synchronisieren', onClick: handleResync, primary: true, disabled: resyncing },
+      { label: 'API-Schlüssel prüfen →', onClick: () => onNavigate('api') },
+    ];
+  } else if (apiStatus === 'warn') {
+    apiValue = 'Kein API-Schlüssel';
+    apiCause = 'Kein API-Schlüssel hinterlegt.';
+    apiActions = [{ label: 'API-Schlüssel hinterlegen →', onClick: () => onNavigate('api'), primary: true }];
+  }
+
+  // --- Lokale Datenbank (immer ok) ---
   const dbStatus = database.status;
-  const dbValue = database.engine; // "SQLite 3"
+  const dbValue = database.engine;
   const dbSub = `${database.rowCount.toLocaleString("de-DE")} Datensätze · Größe: ${formatBytes(database.sizeBytes)}`;
 
-  // Format Scheduler status
+  // --- Hintergrund-Scheduler ---
   const schedulerStatus = scheduler.isActive ? "ok" : "warn";
-  const schedulerValue = scheduler.isActive ? `Intervall: ${Math.round(scheduler.pollIntervalSec / 60)} Min.` : "Deaktiviert";
+  let schedulerValue = scheduler.isActive ? `Intervall: ${Math.round(scheduler.pollIntervalSec / 60)} Min.` : "Deaktiviert";
   const schedulerSub = `Zustand: ${scheduler.isSyncing ? "Synchronisiert..." : "Wartend"} · Letzter Sync: ${scheduler.lastSyncTime ? D.formatRelative(scheduler.lastSyncTime) : 'Nie'}`;
+  let schedulerCause = null, schedulerActions = null;
+  if (!scheduler.isActive) {
+    schedulerValue = 'Synchronisation aus';
+    schedulerCause = 'Automatische Synchronisation ist ausgeschaltet.';
+    schedulerActions = [{ label: 'Synchronisation einrichten →', onClick: () => onNavigate('api'), primary: true }];
+  }
+
+  // --- Messstellen ---
+  const offlineIds = D.stationOrder.filter((id) => !D.stations[id].online);
+  const stationsStatus = offlineIds.length === 0 ? "ok" : "warn";
+  let stationsValue = `${stationsOnline}/${stationsTotal} online`;
+  let stationsCause = null, stationsActions = null;
+  if (offlineIds.length > 0) {
+    stationsValue = `${offlineIds.length} offline`;
+    const names = offlineIds.map((id) => `„${D.stations[id].name}"`).join(', ');
+    stationsCause = offlineIds.length === 1 ? `${names} meldet sich nicht.` : `${names} melden sich nicht.`;
+    stationsActions = [{ label: 'Messstellen öffnen →', onClick: () => onNavigate('stations'), primary: true }];
+  }
+
+  // --- Speicherbelegung ---
+  // Grill-Fix: storage.status kann 'unknown' sein (z. B. :memory:-DB oder statfs-Fehler).
+  // Dann sind usedGb/totalGb null → kein "null / null GB", kein NaN-Balken, kein rotes Badge.
+  let storageValue = `${storage.usedGb} / ${storage.totalGb} GB`;
+  let storageSub = `${Math.round((storage.usedGb / storage.totalGb) * 100)} % belegt · Pfad: ../klima.db`;
+  let storageProgress = storage.usedGb / storage.totalGb;
+  let storageCause = null, storageActions = null;
+  if (storage.status === 'unknown' || storage.usedGb == null) {
+    storageValue = 'Nicht verfügbar';
+    storageSub = 'Speicherinfo nicht verfügbar · Pfad: ../klima.db';
+    storageProgress = null;
+  } else if (storage.status === 'warn') {
+    storageValue = 'Speicher fast voll';
+    storageCause = 'Weniger als 1 GB frei.';
+    storageActions = [{ label: 'Aufbewahrung anpassen →', onClick: () => onNavigate('database'), primary: true }];
+  }
 
   return (
     <>
@@ -296,6 +356,9 @@ function OverviewSection({ settings, systemStatus }) {
           value={apiValue}
           sub={apiSub}
           icon="plug"
+          cause={apiCause}
+          causeRaw={apiCauseRaw}
+          actions={apiActions}
         />
         <HealthCard
           status={dbStatus}
@@ -310,21 +373,27 @@ function OverviewSection({ settings, systemStatus }) {
           value={schedulerValue}
           sub={schedulerSub}
           icon="bolt"
+          cause={schedulerCause}
+          actions={schedulerActions}
         />
         <HealthCard
-          status={stationsOnline === stationsTotal ? "ok" : "warn"}
+          status={stationsStatus}
           label="Messstellen"
-          value={`${stationsOnline}/${stationsTotal} online`}
+          value={stationsValue}
           sub={D.stationOrder.map((id) => D.stations[id].name).join(" · ")}
           icon="node"
+          cause={stationsCause}
+          actions={stationsActions}
         />
         <HealthCard
           status={storage.status}
           label="Speicherbelegung (Drive)"
-          value={`${storage.usedGb} / ${storage.totalGb} GB`}
-          sub={`${Math.round((storage.usedGb / storage.totalGb) * 100)} % belegt · Pfad: ../klima.db`}
+          value={storageValue}
+          sub={storageSub}
           icon="disk"
-          progress={storage.usedGb / storage.totalGb}
+          progress={storageProgress}
+          cause={storageCause}
+          actions={storageActions}
         />
         <HealthCard
           status="ok"
@@ -892,12 +961,14 @@ function StatusBadge({ status, label }) {
   );
 }
 
-function HealthCard({ status, label, value, sub, icon, progress }) {
+function HealthCard({ status, label, value, sub, icon, progress, cause, causeRaw, actions }) {
   return (
     <div className={`health-card st-${status}`}>
       <div className="hc-top">
         <span className="hc-icon"><NavIcon id={icon} /></span>
-        <StatusBadge status={status} label={status === "ok" ? "OK" : status === "warn" ? "Achtung" : "Fehler"} />
+        {(status === "ok" || status === "warn" || status === "err") && (
+          <StatusBadge status={status} label={status === "ok" ? "OK" : status === "warn" ? "Achtung" : "Fehler"} />
+        )}
       </div>
       <div className="hc-value">{value}</div>
       <div className="hc-label">{label}</div>
@@ -905,6 +976,20 @@ function HealthCard({ status, label, value, sub, icon, progress }) {
         <div className="hc-progress"><span style={{ width: `${Math.min(100, progress * 100)}%` }} /></div>
       )}
       <div className="hc-sub">{sub}</div>
+      {cause && (
+        <div className="hc-cause">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>{cause}</span>
+        </div>
+      )}
+      {causeRaw && <div className="hc-cause-raw">{causeRaw}</div>}
+      {actions && actions.length > 0 && (
+        <div className="hc-actions">
+          {actions.map((a, i) => (
+            <button key={i} className={`btn ${a.primary ? "primary" : ""}`} disabled={a.disabled} onClick={a.onClick}>{a.label}</button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
