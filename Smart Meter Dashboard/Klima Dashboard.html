@@ -716,7 +716,14 @@
   }
   .tsp-group { padding: 4px 2px 6px; }
   .tsp-group + .tsp-group { border-top: 1px solid var(--border); margin-top: 2px; padding-top: 8px; }
-  .tsp-group-head { display: flex; align-items: center; gap: 8px; padding: 2px 8px 6px; }
+  button.tsp-group-head {
+    width: 100%; appearance: none; background: none; border: none; font: inherit;
+    text-align: left; cursor: pointer; border-radius: var(--radius-sm);
+    display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+  }
+  button.tsp-group-head:hover { background: var(--surface-2); }
+  button.tsp-group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tsp-group.open .tsp-group-head .chev { transform: rotate(180deg); }
   .tsp-group-title { font-size: 12.5px; font-weight: 600; color: var(--text); }
   .tsp-group-loc {
     font-family: var(--mono); font-size: 10.5px; color: var(--text-muted);
@@ -726,6 +733,36 @@
     margin-left: auto; flex-shrink: 0;
     font-family: var(--mono); font-size: 10.5px; font-weight: 600; color: var(--text-muted);
     background: var(--bg-2); border-radius: 999px; padding: 1px 7px;
+  }
+  .tsp-quiet-hint {
+    margin-left: auto; flex-shrink: 0;
+    font-family: var(--mono); font-size: 10px; color: var(--text-faint);
+  }
+  .tsp-group-body { padding: 0 2px 2px; }
+  .tsp-history-divider {
+    display: flex; align-items: center; gap: 8px; margin: 8px 6px 4px;
+    font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint);
+  }
+  .tsp-history-divider::before, .tsp-history-divider::after {
+    content: ""; flex: 1; height: 1px; background: var(--border);
+  }
+  .tsp-history { opacity: 0.82; }
+  .tsp-loadmore {
+    width: 100%; appearance: none; cursor: pointer; font: inherit; font-size: 12px;
+    margin: 4px 2px 2px; padding: 7px;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    background: none; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm);
+    color: var(--text-muted);
+  }
+  .tsp-loadmore:hover { background: var(--surface-2); color: var(--text); }
+  .tsp-loading, .tsp-empty-hist {
+    padding: 8px; text-align: center; font-size: 12px; color: var(--text-faint);
+  }
+  .tsp-error {
+    width: 100%; appearance: none; cursor: pointer; font: inherit; font-size: 12px;
+    margin: 4px 2px 2px; padding: 8px; text-align: center;
+    background: var(--alarm-tint); border: 1px solid var(--alarm); border-radius: var(--radius-sm);
+    color: var(--alarm);
   }
 
   /* ---------- Tile station badge in head ---------- */
