@@ -43,6 +43,7 @@ const TILE_TYPES = {
     defaultSize: { w: 4, h: 3 },
     minSize: { w: 3, h: 2 },
     maxMetrics: 4,
+    supportsLimitFlags: true,
   },
   alerts: {
     id: "alerts",
@@ -320,6 +321,8 @@ function StatsBody({ tile }) {
   if (!tile.metrics.length) return <Empty />;
   const station = tileStation(tile);
   if (!station) return <EmptyDeleted />;
+  const D = window.DASH_DATA;
+  const showFlags = tileLimitFlagsOn(tile);
   return (
     <div className="stats">
       <div className="stats-grid">
@@ -328,12 +331,15 @@ function StatsBody({ tile }) {
         </div>
         {tile.metrics.map((id) => {
           const M = station.metrics[id];
-          const s = window.DASH_DATA.stats(M.series);
+          if (!M) return null;
+          const s = D.stats(M.series);
           const fmt = (v) => (v == null || Number.isNaN(v)) ? "—" : v.toFixed(M.decimals);
+          const state = showFlags ? D.metricAlertState(station.events, id) : { severity: null, direction: null };
+          const curClass = state.severity === "alarm" ? "is-alarm" : state.severity === "warning" ? "is-warning" : "";
           return (
             <div className="stats-row" key={id}>
               <span className="srow-name"><span className="legend-dot" style={{ background: M.color }} />{M.short}</span>
-              <span className="srow-v current">{fmt(s.last)}<span className="srow-u">{M.unit}</span></span>
+              <span className={`srow-v current ${curClass}`}>{fmt(s.last)}<span className="srow-u">{M.unit}</span><LimitFlag severity={state.severity} direction={state.direction} /></span>
               <span className="srow-v">{fmt(s.min)}</span>
               <span className="srow-v">{fmt(s.max)}</span>
               <span className="srow-v">{fmt(s.avg)}</span>
