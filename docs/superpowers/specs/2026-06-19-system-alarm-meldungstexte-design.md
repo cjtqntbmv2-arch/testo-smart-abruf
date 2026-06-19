@@ -32,9 +32,6 @@ abgesichert, damit auch sie nie „Wert von null" zeigen.
 
 ## Nicht-Ziele (YAGNI)
 
-- **Keine** rückwirkende Migration alter DB-Zeilen. System-Alarme werden bei jedem Sync-Zyklus
-  neu aus dem Feed geschrieben; bestehende falsche Texte verschwinden beim nächsten Lauf von
-  selbst. Ein Migrationsskript ist nicht vorgesehen.
 - **Keine** Frontend-Änderung. Alle Renderer lesen `e.message` / `e.detail`
   ([Smart Meter Dashboard/tiles.jsx](../../../Smart%20Meter%20Dashboard/tiles.jsx),
   Zeilen 471/488/506/509) — ein korrigierter Backend-Datensatz deckt Tile-Liste und
@@ -128,6 +125,34 @@ greift der generische Fallback „… hat einen Grenzwert verletzt." statt „We
 
 Vollständiger Lauf: `npm test` grün.
 
+## Migration bestehender Zeilen
+
+Der Forward-Fix wirkt nur auf neu eingelesene Alarme. Über die `ON CONFLICT(uuid) DO UPDATE`-
+Klausel ([backend/scheduler.js:248-263](../../../backend/scheduler.js), die `message`/`detail`
+einschließt) werden zwar **erneut gelesene** Alarme aktualisiert — aber ein bereits aktiver
+Alarm, dessen Zeitstempel außerhalb des Alarm-Fensters (`watermark − 26h … now`) liegt, wird
+nie wieder gefetcht und behielte den alten Text dauerhaft (z. B. ein dauerhaft offline-Gerät).
+
+Deshalb ein **einmaliges, idempotentes** Migrationsskript
+`scripts/migrate-system-alarm-text.js`, analog zu
+[scripts/migrate-system-alarm-relabel.js](../../../scripts/migrate-system-alarm-relabel.js)
+(Dry-Run als Default, `--apply`, `--db <pfad>`, selbst-validierend):
+
+- **System-Feed-Zeilen** (`severity = 'system'` AND `alarm_status IS NOT NULL`): `message`/`detail`
+  via `systemAlarmText(alarm_condition_type)` neu setzen. Für System-Zeilen steht in
+  `alarm_condition_type` bereits der normalisierte Subtyp (`connection`/`battery`/`maintenance`),
+  daher direkt verwendbar — **dieselbe Helper-Funktion** wie im Forward-Fix (DRY).
+- **Messwert-Zeilen** mit dem Bug-Text (`severity != 'system'` AND
+  `detail LIKE '%hat einen Wert von null gemeldet.%'`): `detail` →
+  `Sensor <serial_no> hat einen Grenzwert verletzt.` (bzw. `Grenzwert verletzt.` ohne serial_no).
+  `message` bleibt unverändert (Roh-`alarm_reason`).
+- **Synthetische `sys-*`-Zeilen** (`alarm_status IS NULL`, von `applySystemEvents`) bleiben
+  unangetastet — sie tragen bereits korrekten Text.
+
+Idempotenz: ein zweiter Lauf findet keine Kandidaten mehr. Post-Check nach `--apply`: keine
+System-Feed-Zeile weicht von `systemAlarmText(condition)` ab, keine Zeile enthält noch
+„hat einen Wert von null".
+
 ## Versionierung
 
 Bugfix → **PATCH**: `0.9.0 → 0.9.1`. In Sync zu halten:
@@ -136,8 +161,8 @@ Bugfix → **PATCH**: `0.9.0 → 0.9.1`. In Sync zu halten:
 - README-Badge (`...badge/version-0.9.1-blue...`)
 - `?v=`-Cache-Buster in `Smart Meter Dashboard/Klima Dashboard.html` (alle `?v=0.9.0` → `?v=0.9.1`)
 
-Anschließend annotiertes Tag `v0.9.1`, `git push --follow-tags` (Versions-Sync-Autorisierung
-greift).
+Kein Git-Remote konfiguriert → der Tag- und Push-Schritt der Versionierungs-Regel **entfällt**;
+es bleibt beim lokalen `chore`-Commit mit konsistenter Version an allen drei Stellen.
 
 ## Akzeptanzkriterien
 
@@ -147,4 +172,7 @@ greift).
 2. `systemAlarmText` ist rein, exportiert und für alle Subtypen + Fallback getestet.
 3. Messwert-Alarme mit nicht-numerischem Wert zeigen keinen „null"-Text mehr.
 4. `npm test` ist grün; Icon, Aktiv-Status und Reconcile-Verhalten unverändert.
-5. Version konsistent auf 0.9.1 (VERSION, Badge, Cache-Buster), Tag `v0.9.1` gepusht.
+5. `scripts/migrate-system-alarm-text.js` korrigiert bestehende System-Feed- und „Wert von
+   null"-Messwert-Zeilen in-place (Dry-Run-Default, idempotent, selbst-validierend); der
+   aktive Alarm aus dem Screenshot zeigt danach „Verbindung verloren".
+6. Version konsistent auf 0.9.1 (VERSION, Badge, Cache-Buster). Kein Remote → kein Tag/Push.

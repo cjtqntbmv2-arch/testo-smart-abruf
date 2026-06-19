@@ -159,8 +159,44 @@ test('Measurement alarm with a non-numeric value gets a generic detail, never "W
   const ev = db.prepare("SELECT severity, message, detail FROM events WHERE uuid = ?").get('alarm-meas-nonum');
   assert.ok(ev, 'the measurement alarm must be stored');
   assert.notStrictEqual(ev.severity, 'system');
+  assert.strictEqual(ev.detail, 'Sensor SN123 hat einen Grenzwert verletzt.');
   assert.ok(!/null/.test(ev.detail), 'detail darf kein wörtliches "null" enthalten');
-  assert.match(ev.detail, /Grenzwert verletzt\.$/);
+
+  closeDb();
+});
+```
+
+(c) Neuen Test ans Dateiende anhängen (System-Alarm ohne connection/battery-Bezug ⟹
+`maintenance`-Fallback — bisher ungetesteter Feed-Pfad):
+
+```js
+test('Sync ingests a non-connection/non-battery system alarm with the maintenance fallback text', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  saveSetting('api_region', 'eu');
+
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
+    .run('emc', 'EMC', 'dev-1');
+
+  // alarm_type enthält "system" → System-Alarm; condition nennt weder Verbindung noch
+  // Batterie → classifyAlarm.subtypeOf() liefert 'maintenance'.
+  const alarm = [{
+    uuid: 'alarm-maint-1', serial_no: 'SN123', alarm_source_uuid: 'dev-1',
+    alarm_type: 'device system alarm', alarm_severity: 'Warning', alarm_status: 'Alarm',
+    alarm_reason: 'Alarm condition is violated', alarm_condition_type: 'Sensor maintenance required',
+    alarm_value: null, physical_value: null,
+    alarm_time: '2026-05-29T06:10:00Z', last_status_change_time: '2026-05-29T06:10:00Z'
+  }];
+
+  await schedulerModule.runSyncCycle(new MockTestoClient(alarm));
+
+  const ev = db.prepare("SELECT severity, alarm_condition_type, message, detail FROM events WHERE uuid = ?").get('alarm-maint-1');
+  assert.ok(ev, 'the maintenance system alarm must be stored');
+  assert.strictEqual(ev.severity, 'system');
+  assert.strictEqual(ev.alarm_condition_type, 'maintenance');
+  assert.strictEqual(ev.message, 'Gerätehinweis');
+  assert.strictEqual(ev.detail, 'Das Gerät meldet einen Geräte- oder Wartungshinweis.');
 
   closeDb();
 });
@@ -221,7 +257,147 @@ git commit -m "fix(alarms): System-Alarme mit verständlichem Text, Messwert-Gua
 
 ---
 
-### Task 3: Versionsbump 0.9.0 → 0.9.1
+### Task 3: Einmal-Migration bestehender Zeilen
+
+**Files:**
+- Create: `scripts/migrate-system-alarm-text.js`
+
+**Interfaces:**
+- Consumes: `systemAlarmText` aus `../backend/device-bridge` (Task 1); `better-sqlite3`.
+- Produces: ausführbares CLI-Skript (Dry-Run-Default, `--apply`, `--db <pfad>`), das
+  bestehende System-Feed- und „Wert von null"-Messwert-Zeilen in-place korrigiert.
+
+Hinweis: Wie die vier bestehenden `scripts/migrate-*.js` ist dies ein einmaliges,
+selbst-validierendes Operations-Skript **ohne Unit-Test** (Repo-Konvention) — die Sicherheit
+liefern Dry-Run-Default + Post-Check nach `--apply`.
+
+- [ ] **Step 1: Skript anlegen**
+
+`scripts/migrate-system-alarm-text.js` mit exakt diesem Inhalt:
+
+```js
+#!/usr/bin/env node
+// One-off, idempotent data migration.
+//
+// Background: feed-based testo system alarms (connection/battery/device) and measurement
+// alarms with a null value were stored with the measurement template, producing the English
+// headline "Alarm condition is violated" and the misleading detail
+// "Sensor X hat einen Wert von null gemeldet." The forward fix (systemAlarmText in
+// device-bridge.js, wired into scheduler.js) only affects newly fetched alarms; the upsert
+// refreshes re-seen alarms, but a long-active alarm whose timestamp sits outside the
+// alarm-fetch window is never re-fetched and would keep the old text forever.
+//
+// This script repairs already-stored rows in place:
+//   - System feed rows (severity 'system', alarm_status IS NOT NULL): message/detail are
+//     re-derived from systemAlarmText(alarm_condition_type) — for system rows that column
+//     already holds the normalized subtype 'connection'/'battery'/'maintenance'.
+//   - Measurement rows still carrying "... hat einen Wert von null gemeldet.": detail is
+//     rewritten to "Sensor <serial_no> hat einen Grenzwert verletzt." (message unchanged).
+// Synthetic sys-* rows (alarm_status IS NULL) already carry correct text and are skipped.
+//
+// Usage:
+//   node scripts/migrate-system-alarm-text.js [--apply] [--db <path>]
+// Default is a dry run (no writes). Pass --apply to write changes.
+
+const path = require('path');
+const Database = require('better-sqlite3');
+const { systemAlarmText } = require('../backend/device-bridge');
+
+const apply = process.argv.includes('--apply');
+const dbArgIdx = process.argv.indexOf('--db');
+const dbPath = dbArgIdx !== -1 ? process.argv[dbArgIdx + 1] : path.join(__dirname, '..', 'klima.db');
+
+const db = new Database(dbPath);
+
+// System feed rows whose stored message/detail differ from the canonical subtype text.
+const sysRows = db
+  .prepare(`SELECT uuid, alarm_condition_type, message, detail
+            FROM events
+            WHERE severity = 'system' AND alarm_status IS NOT NULL`)
+  .all()
+  .map((r) => ({ ...r, want: systemAlarmText(r.alarm_condition_type) }))
+  .filter((r) => r.message !== r.want.message || r.detail !== r.want.detail);
+
+// Measurement rows still carrying the "Wert von null" detail.
+const measRows = db
+  .prepare(`SELECT uuid, serial_no
+            FROM events
+            WHERE severity != 'system' AND detail LIKE '%hat einen Wert von null gemeldet.%'`)
+  .all()
+  .map((r) => ({ ...r, want: r.serial_no
+      ? `Sensor ${r.serial_no} hat einen Grenzwert verletzt.`
+      : 'Grenzwert verletzt.' }));
+
+if (sysRows.length === 0 && measRows.length === 0) {
+  console.log(`No stale alarm texts in ${dbPath}; nothing to migrate (already clean).`);
+  db.close();
+  process.exit(0);
+}
+
+console.log(`System feed rows to relabel: ${sysRows.length}`);
+console.log(`Measurement "Wert von null" rows to fix: ${measRows.length}`);
+
+if (apply) {
+  const updSys = db.prepare(`UPDATE events SET message = ?, detail = ? WHERE uuid = ?`);
+  const updMeas = db.prepare(`UPDATE events SET detail = ? WHERE uuid = ?`);
+  const tx = db.transaction(() => {
+    for (const r of sysRows) updSys.run(r.want.message, r.want.detail, r.uuid);
+    for (const r of measRows) updMeas.run(r.want, r.uuid);
+  });
+  tx();
+
+  // Post-condition: no system feed row deviates from its canonical text; no row keeps "null".
+  const sysLeft = db
+    .prepare(`SELECT uuid, alarm_condition_type, message, detail
+              FROM events WHERE severity = 'system' AND alarm_status IS NOT NULL`)
+    .all()
+    .filter((r) => {
+      const w = systemAlarmText(r.alarm_condition_type);
+      return r.message !== w.message || r.detail !== w.detail;
+    });
+  const measLeft = db
+    .prepare(`SELECT COUNT(*) AS n FROM events WHERE detail LIKE '%hat einen Wert von null gemeldet.%'`)
+    .get().n;
+  if (sysLeft.length !== 0 || measLeft !== 0) {
+    console.error(`\nPost-check FAILED: ${sysLeft.length} system rows off-text, ${measLeft} rows still "null".`);
+    db.close();
+    process.exit(1);
+  }
+}
+
+console.log(`\n${apply ? 'Migrated' : '[dry run] Would migrate'} ${sysRows.length + measRows.length} row(s) in ${dbPath}`);
+if (!apply) console.log('Re-run with --apply to write changes.');
+
+db.close();
+```
+
+- [ ] **Step 2: Dry-Run (keine Writes)**
+
+Run: `node scripts/migrate-system-alarm-text.js`
+Expected: Bericht „System feed rows to relabel: N" / „Measurement … rows to fix: M" und
+„[dry run] Would migrate …"; **keine** Änderung an der DB. Ausgabe prüfen, bevor `--apply`.
+(Liegt die DB nicht unter `./klima.db`, Pfad via `--db <pfad>` angeben.)
+
+- [ ] **Step 3: Migration anwenden**
+
+Run: `node scripts/migrate-system-alarm-text.js --apply`
+Expected: „Migrated N row(s) …", Exit-Code 0 (Post-Check bestanden).
+
+- [ ] **Step 4: Idempotenz verifizieren**
+
+Run: `node scripts/migrate-system-alarm-text.js`
+Expected: „No stale alarm texts … nothing to migrate (already clean)."
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add scripts/migrate-system-alarm-text.js
+git commit -m "fix(alarms): Einmal-Migration korrigiert bestehende System-/null-Alarmtexte"
+```
+
+---
+
+### Task 4: Versionsbump 0.9.0 → 0.9.1
 
 **Files:**
 - Modify: `VERSION`
@@ -269,5 +445,6 @@ git commit -m "chore: bump version to 0.9.1"
 
 ## Hinweise zur Verifikation (nach allen Tasks)
 
-- `npm test` grün (92+ Tests).
-- Optional Browser-Check (Preview): ein Feed-Verbindungs-Alarm erscheint mit Überschrift „Verbindung verloren" und Detail „Gerät hat sich nicht im erwarteten Intervall gemeldet."; das durchgestrichene WLAN-Icon und der Aktiv-Status bleiben unverändert. Alte DB-Zeilen werden erst beim nächsten Sync-Zyklus überschrieben (kein Migrationsskript — bewusst).
+- `npm test` grün (92+ Tests, inkl. der drei neuen/erweiterten Scheduler-Tests und des `systemAlarmText`-Tests).
+- Migration gelaufen: Dry-Run geprüft, `--apply` mit Post-Check bestanden, zweiter Lauf meldet „already clean" (idempotent). Der aktive Alarm aus dem Screenshot zeigt danach „Verbindung verloren".
+- Optional Browser-Check (Preview): ein Feed-Verbindungs-Alarm erscheint mit Überschrift „Verbindung verloren" und Detail „Gerät hat sich nicht im erwarteten Intervall gemeldet."; das durchgestrichene WLAN-Icon und der Aktiv-Status bleiben unverändert.
