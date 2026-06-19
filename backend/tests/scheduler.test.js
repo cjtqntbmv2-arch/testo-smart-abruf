@@ -120,11 +120,15 @@ test('Sync ingests a testo connection-timeout system alarm as an active system e
 
   await schedulerModule.runSyncCycle(new MockTestoClient(systemAlarm));
 
-  const ev = db.prepare("SELECT severity, alarm_condition_type, active FROM events WHERE uuid = ?").get('alarm-conn-1');
+  const ev = db.prepare("SELECT severity, alarm_condition_type, active, message, detail FROM events WHERE uuid = ?").get('alarm-conn-1');
   assert.ok(ev, 'the connection-timeout alarm must be stored');
   assert.strictEqual(ev.severity, 'system');
   assert.strictEqual(ev.alarm_condition_type, 'connection');
   assert.strictEqual(ev.active, 1);
+  // Verständlicher deutscher Text statt API-Rohtext / "Wert von null".
+  assert.strictEqual(ev.message, 'Verbindung verloren');
+  assert.strictEqual(ev.detail, 'Gerät hat sich nicht im erwarteten Intervall gemeldet.');
+  assert.ok(!/null/.test(ev.detail), 'detail darf kein wörtliches "null" enthalten');
 
   closeDb();
 });
@@ -781,6 +785,69 @@ test('A4: late recovery whose alarm_time precedes the watermark is re-fetched vi
   assert.ok(recov, 'late recovery must be re-fetched and stored');
   const viol = db.prepare("SELECT active FROM events WHERE uuid = 'a4-viol'").get();
   assert.strictEqual(viol.active, 0, 'violation must clear once its (late) recovery is ingested');
+
+  closeDb();
+});
+
+test('Measurement alarm with a non-numeric value gets a generic detail, never "Wert von null"', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  saveSetting('api_region', 'eu');
+
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
+    .run('emc', 'EMC', 'dev-1');
+
+  // alarm_value is null (or a non-numeric string) → alarmValue coerces to null.
+  // The old code emitted "Sensor SN123 hat einen Wert von null gemeldet." — guard must prevent that.
+  const alarm = [{
+    uuid: 'alarm-null-1', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
+    alarm_type: 'measurement alarm', alarm_severity: 'Warning', alarm_status: 'Alarm',
+    alarm_reason: 'Alarm condition is violated',
+    alarm_condition_type: 'Upper limit',
+    alarm_value: null, physical_value: null,
+    physical_property_name: 'Temperature', physical_extension: 'Unknown',
+    alarm_time: '2026-05-29T06:10:00Z', last_status_change_time: '2026-05-29T06:10:00Z'
+  }];
+
+  await schedulerModule.runSyncCycle(new MockTestoClient(alarm));
+
+  const ev = db.prepare("SELECT severity, detail FROM events WHERE uuid = ?").get('alarm-null-1');
+  assert.ok(ev, 'the measurement alarm must be stored');
+  assert.strictEqual(ev.severity, 'warning');
+  assert.strictEqual(ev.detail, 'Sensor SN123 hat einen Grenzwert verletzt.');
+  assert.ok(!/null/.test(ev.detail), 'detail darf kein wörtliches "null" enthalten');
+
+  closeDb();
+});
+
+test('Sync ingests a non-connection/non-battery system alarm with the maintenance fallback text', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  saveSetting('api_region', 'eu');
+
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
+    .run('emc', 'EMC', 'dev-1');
+
+  // alarm_type enthält "system" → System-Alarm; condition nennt weder Verbindung noch
+  // Batterie → classifyAlarm.subtypeOf() liefert 'maintenance'.
+  const alarm = [{
+    uuid: 'alarm-maint-1', serial_no: 'SN123', alarm_source_uuid: 'dev-1',
+    alarm_type: 'device system alarm', alarm_severity: 'Warning', alarm_status: 'Alarm',
+    alarm_reason: 'Alarm condition is violated', alarm_condition_type: 'Sensor maintenance required',
+    alarm_value: null, physical_value: null,
+    alarm_time: '2026-05-29T06:10:00Z', last_status_change_time: '2026-05-29T06:10:00Z'
+  }];
+
+  await schedulerModule.runSyncCycle(new MockTestoClient(alarm));
+
+  const ev = db.prepare("SELECT severity, alarm_condition_type, message, detail FROM events WHERE uuid = ?").get('alarm-maint-1');
+  assert.ok(ev, 'the maintenance system alarm must be stored');
+  assert.strictEqual(ev.severity, 'system');
+  assert.strictEqual(ev.alarm_condition_type, 'maintenance');
+  assert.strictEqual(ev.message, 'Gerätehinweis');
+  assert.strictEqual(ev.detail, 'Das Gerät meldet einen Geräte- oder Wartungshinweis.');
 
   closeDb();
 });

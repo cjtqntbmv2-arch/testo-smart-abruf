@@ -1,6 +1,6 @@
 const { getDb, getSetting, saveSetting } = require('./db');
 const TestoClient = require('./testo-client');
-const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration } = require('./device-bridge');
+const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText } = require('./device-bridge');
 
 let isSyncing = false;
 let lastSyncTime = null;
@@ -322,14 +322,24 @@ async function runSyncCycle(customClient = null) {
             if (direction) threshold = limitsCache.get(`${metric}:${direction}:${severity}`) ?? null;
           }
 
+          let message, detail;
+          if (severity === 'system') {
+            ({ message, detail } = systemAlarmText(systemType));
+          } else {
+            message = a.alarm_reason || 'Grenzwert verletzt';
+            detail = alarmValue != null
+              ? `Sensor ${a.serial_no} hat einen Wert von ${alarmValue} gemeldet.`
+              : `Sensor ${a.serial_no} hat einen Grenzwert verletzt.`;
+          }
+
           insertAlarmStmt.run(
             a.uuid, stationId,
             severity,
             a.alarm_status, a.alarm_reason, conditionForFrontend, alarmValue,
             metric, threshold,
             parseTimestamp(a.alarm_time), parseTimestamp(a.last_status_change_time), alarmValue,
-            isActive, a.alarm_reason || 'Grenzwert verletzt',
-            `Sensor ${a.serial_no} hat einen Wert von ${a.alarm_value} gemeldet.`,
+            isActive, message,
+            detail,
             a.serial_no || null);
         }
       })();
