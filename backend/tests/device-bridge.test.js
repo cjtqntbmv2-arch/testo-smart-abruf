@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration } = require('../device-bridge');
+const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText } = require('../device-bridge');
 
 test('mapPhysicalProperty maps testo property names to dashboard metrics', () => {
   assert.strictEqual(mapPhysicalProperty('Temperature'), 'temperature');
@@ -233,4 +233,17 @@ test('parseAlarmConfiguration skips conditions with unknown physicalValueId', ()
   const result = parseAlarmConfiguration([row]);
   // 8 conditions -> 1 with CO2 (null metric) is skipped -> 7
   assert.strictEqual(result.length, 7);
+});
+
+test('systemAlarmText returns German headline + detail per system subtype, with a maintenance fallback', () => {
+  assert.deepStrictEqual(systemAlarmText('connection'),
+    { message: 'Verbindung verloren', detail: 'Gerät hat sich nicht im erwarteten Intervall gemeldet.' });
+  assert.deepStrictEqual(systemAlarmText('battery'),
+    { message: 'Batterie schwach', detail: 'Batteriestand des Geräts ist niedrig.' });
+  assert.deepStrictEqual(systemAlarmText('maintenance'),
+    { message: 'Gerätehinweis', detail: 'Das Gerät meldet einen Geräte- oder Wartungshinweis.' });
+  // Unbekannte / fehlende Subtypen fallen sicher auf den maintenance-Text zurück (nie "undefined").
+  assert.deepStrictEqual(systemAlarmText('unbekannt'), systemAlarmText('maintenance'));
+  assert.deepStrictEqual(systemAlarmText(null), systemAlarmText('maintenance'));
+  assert.deepStrictEqual(systemAlarmText(undefined), systemAlarmText('maintenance'));
 });

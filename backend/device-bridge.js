@@ -105,6 +105,23 @@ function classifyAlarm(alarm) {
   return { severity, systemType: null };
 }
 
+// Map a system-alarm subtype (from classifyAlarm) to the German headline + detail the
+// dashboard shows. System alarms carry no measured value, so the measurement template
+// ("… hat einen Wert von X gemeldet.") must never be applied to them. Wording mirrors the
+// synthetic rows in deriveSystemConditions so feed-based and self-derived system messages
+// read identically. Unknown/missing subtypes fall back to the neutral maintenance text.
+function systemAlarmText(systemType) {
+  switch (systemType) {
+    case 'connection':
+      return { message: 'Verbindung verloren', detail: 'Gerät hat sich nicht im erwarteten Intervall gemeldet.' };
+    case 'battery':
+      return { message: 'Batterie schwach', detail: 'Batteriestand des Geräts ist niedrig.' };
+    case 'maintenance':
+    default:
+      return { message: 'Gerätehinweis', detail: 'Das Gerät meldet einen Geräte- oder Wartungshinweis.' };
+  }
+}
+
 // Build lookup maps from Device Properties rows (one row per channel).
 function buildDeviceBridge(properties) {
   const sensorToDevice = new Map();
@@ -249,4 +266,4 @@ function parseAlarmConfiguration(moRows) {
   return results;
 }
 
-module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration };
+module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText };
