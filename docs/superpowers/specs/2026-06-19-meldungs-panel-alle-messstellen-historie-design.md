@@ -2,7 +2,7 @@
 
 - **Datum:** 2026-06-19
 - **Status:** Entwurf (zur Umsetzung freigegeben)
-- **Zielversion:** 0.7.0 (MINOR — neues, abwärtskompatibles Feature)
+- **Zielversion:** 0.8.0 (MINOR — neues, abwärtskompatibles Feature)
 - **Baut auf:** [2026-06-18-header-meldungs-detailpanel-design.md](2026-06-18-header-meldungs-detailpanel-design.md) (v0.5.0)
 
 ## 1. Problem & Ziel
@@ -254,11 +254,11 @@ CSS im `<style>`-Block von `Klima Dashboard.html`, Farben/Radien aus bestehenden
 | `Smart Meter Dashboard/tests/summary-logic.test.js` | mod | an `buildStationOverview` anpassen + erweitern (§7) |
 | `Smart Meter Dashboard/data.js` | mod | `mapBackendEvent`-Extraktion; Poll `?limit=50`; `stationOverview()`; `fetchStationHistory()`; `activeEventGroups()` entfernen |
 | `Smart Meter Dashboard/summary-panel.jsx` | mod | `SystemSummaryPanel`-Umbau + `StationHistoryGroup` + Titel |
-| `Smart Meter Dashboard/Klima Dashboard.html` | mod | neue CSS-Klassen; **alle** `?v=` → `0.7.0` |
-| `package.json` | mod | Version `0.7.0` (Test-Liste unverändert — Dateien existieren bereits) |
-| `package-lock.json` | mod | Version `0.7.0` |
-| `VERSION` | mod | `0.7.0` |
-| `README.md` | mod | Badge `0.7.0` |
+| `Smart Meter Dashboard/Klima Dashboard.html` | mod | neue CSS-Klassen; **alle** `?v=` → `0.8.0` |
+| `package.json` | mod | Version `0.8.0` (Test-Liste unverändert — Dateien existieren bereits) |
+| `package-lock.json` | mod | Version `0.8.0` |
+| `VERSION` | mod | `0.8.0` |
+| `README.md` | mod | Badge `0.8.0` |
 
 **Keine neuen Skript-Tags** — alle Module existieren; nur `?v=`-Bump.
 
@@ -324,11 +324,11 @@ An `buildStationOverview` angepasst + erweitert:
 
 ## 9. Versionierung
 
-MINOR-Bump **0.6.0 → 0.7.0**:
-1. `package.json`, `package-lock.json`, `VERSION`, README-Badge auf `0.7.0`.
-2. In `Klima Dashboard.html` **alle** `?v=0.6.0` → `?v=0.7.0`.
-3. Commit der Feature-Arbeit + `chore: bump version to 0.7.0`.
-4. Annotierter Tag `v0.7.0`, `git push --follow-tags` (lokal-only Repo: Tag genügt, Push entfällt,
+MINOR-Bump **0.7.0 → 0.8.0**:
+1. `package.json`, `package-lock.json`, `VERSION`, README-Badge auf `0.8.0`.
+2. In `Klima Dashboard.html` **alle** `?v=0.7.0` → `?v=0.8.0`.
+3. Commit der Feature-Arbeit + `chore: bump version to 0.8.0`.
+4. Annotierter Tag `v0.8.0`, `git push --follow-tags` (lokal-only Repo: Tag genügt, Push entfällt,
    falls kein Remote konfiguriert ist).
 
 ## 10. Offene Punkte

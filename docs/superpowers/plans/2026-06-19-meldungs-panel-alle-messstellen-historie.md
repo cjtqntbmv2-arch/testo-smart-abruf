@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Zielversion:** 0.7.0 (MINOR; Bump erst in Task 5). Versionsorte synchron: `package.json`, `package-lock.json`, `VERSION`, README-Badge, **alle** `?v=` in `Klima Dashboard.html`.
+- **Zielversion:** 0.8.0 (MINOR; Bump erst in Task 5). Versionsorte synchron: `package.json`, `package-lock.json`, `VERSION`, README-Badge, **alle** `?v=` in `Klima Dashboard.html`.
 - **Lokal-only Repo:** kein Remote → kein Push. Direkt auf `master` committen (Projektkonvention).
 - **Babel-in-Browser:** jede `.jsx`-Datei braucht **eindeutige** React-Hook-Aliase; bare `useState`/etc. kollidieren global → weiße Seite. `summary-panel.jsx` nutzt `ss*`.
 - **Rules of Hooks:** in Komponenten **alle** Hooks zuoberst, vor jedem frühen Return.
@@ -432,7 +432,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `Smart Meter Dashboard/summary-panel.jsx` (`SystemSummaryPanel` umbauen; `StationHistoryGroup` neu)
-- Modify: `Smart Meter Dashboard/Klima Dashboard.html` (CSS nach Zeile 718 einfügen; `.tsp-group-head`-Regel auf Zeile 708 ersetzen)
+- Modify: `Smart Meter Dashboard/Klima Dashboard.html` (CSS nach der `.tsp-count`-Regel ~Zeile 729 einfügen; `.tsp-group-head`-Regel ~Zeile 719 ersetzen — per Inhalt matchen, Zeilen können durch parallele Merges driften)
 
 **Interfaces:**
 - Consumes: `D.stationOverview()`, `D.fetchStationHistory(...)` (Task 3); `EventRow` (global, `tiles.jsx`); `ss*`-Hook-Aliase (bereits in der Datei).
@@ -558,7 +558,7 @@ function StationHistoryGroup({ station, activeEvents, activeCount }) {
 }
 ```
 
-- [ ] **Step 2: CSS — `.tsp-group-head`-Regel ersetzen.** In `Klima Dashboard.html` Zeile 708 (`.tsp-group-head { display: flex; … }`) ersetzen durch:
+- [ ] **Step 2: CSS — `.tsp-group-head`-Regel ersetzen.** In `Klima Dashboard.html` die bestehende Regel `.tsp-group-head { display: flex; align-items: center; gap: 8px; padding: 2px 8px 6px; }` (~Zeile 719) ersetzen durch:
 
 ```css
   button.tsp-group-head {
@@ -571,7 +571,7 @@ function StationHistoryGroup({ station, activeEvents, activeCount }) {
   .tsp-group.open .tsp-group-head .chev { transform: rotate(180deg); }
 ```
 
-- [ ] **Step 3: CSS — neue Klassen einfügen.** Direkt **nach** der `.tsp-count { … }`-Regel (endet Zeile 718) einfügen:
+- [ ] **Step 3: CSS — neue Klassen einfügen.** Direkt **nach** der `.tsp-count { … }`-Regel (endet ~Zeile 729) einfügen:
 
 ```css
   .tsp-quiet-hint {
@@ -629,7 +629,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Versionsbump 0.6.0 → 0.7.0 + Gesamt-Verifikation
+### Task 5: Versionsbump 0.7.0 → 0.8.0 + Gesamt-Verifikation
 
 **Files:**
 - Modify: `package.json`, `package-lock.json` (via `npm version`), `VERSION`, `README.md`, `Smart Meter Dashboard/Klima Dashboard.html` (`?v=`)
@@ -644,23 +644,23 @@ Expected: alle Tests grün (Backend + Frontend).
 - [ ] **Step 2: Version in manifest + lockfile bumpen**
 
 Run: `npm version minor --no-git-tag-version`
-Expected: Ausgabe `v0.7.0`; `package.json` und `package-lock.json` tragen `0.7.0`.
+Expected: Ausgabe `v0.8.0`; `package.json` und `package-lock.json` tragen `0.8.0`.
 
 - [ ] **Step 3: VERSION, README-Badge und `?v=` mitziehen**
 
 ```bash
-printf '0.7.0\n' > VERSION
-sed -i '' 's/version-0\.6\.0-blue/version-0.7.0-blue/' README.md
-sed -i '' 's/?v=0\.6\.0/?v=0.7.0/g' "Smart Meter Dashboard/Klima Dashboard.html"
+printf '0.8.0\n' > VERSION
+sed -i '' 's/version-0\.7\.0-blue/version-0.8.0-blue/' README.md
+sed -i '' 's/?v=0\.7\.0/?v=0.8.0/g' "Smart Meter Dashboard/Klima Dashboard.html"
 ```
 
-- [ ] **Step 4: Konsistenz prüfen (alle Orte = 0.7.0, keine 0.6.0-Reste)**
+- [ ] **Step 4: Konsistenz prüfen (alle Orte = 0.8.0, keine 0.7.0-Reste)**
 
 Run:
 ```bash
-grep -RIn "0\.6\.0" package.json VERSION README.md "Smart Meter Dashboard/Klima Dashboard.html"; echo "exit:$?"
+grep -RIn "0\.7\.0" package.json VERSION README.md "Smart Meter Dashboard/Klima Dashboard.html"; echo "exit:$?"
 ```
-Expected: keine Treffer (grep `exit:1`). Gegenprobe: `node -e "console.log(require('./package.json').version)"` → `0.7.0`; `grep -c "?v=0.7.0" "Smart Meter Dashboard/Klima Dashboard.html"` → Anzahl > 0.
+Expected: keine Treffer (grep `exit:1`). Gegenprobe: `node -e "console.log(require('./package.json').version)"` → `0.8.0`; `grep -c "?v=0.8.0" "Smart Meter Dashboard/Klima Dashboard.html"` → Anzahl > 0.
 
 - [ ] **Step 5: Browser-Schnellcheck nach Bump** (Stale-Asset-Falle vermeiden)
 
@@ -670,10 +670,10 @@ Expected: keine Treffer (grep `exit:1`). Gegenprobe: `node -e "console.log(requi
 
 ```bash
 git add package.json package-lock.json VERSION README.md "Smart Meter Dashboard/Klima Dashboard.html"
-git commit -m "chore: bump version to 0.7.0
+git commit -m "chore: bump version to 0.8.0
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
-git tag -a v0.7.0 -m "v0.7.0"
+git tag -a v0.8.0 -m "v0.8.0"
 ```
 
 ---
