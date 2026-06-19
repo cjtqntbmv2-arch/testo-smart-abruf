@@ -357,6 +357,16 @@ app.get('/api/system/status', (req, res) => {
   });
 });
 
+// POST /api/sync — stößt sofort einen Sync-Zyklus an (Resync-Button der Systemübersicht).
+// No-op, wenn bereits ein Sync läuft — runSyncCycle() ist zusätzlich selbst idempotent.
+app.post('/api/sync', (req, res) => {
+  if (getSchedulerStatus().isSyncing) {
+    return res.json({ started: false, reason: 'already-running' });
+  }
+  runSyncCycle().catch(console.error);
+  res.status(202).json({ started: true });
+});
+
 // Test-only route: lets the test suite prove the 4-arg error middleware works.
 // Guarded by NODE_ENV so it is unreachable in production.
 if (process.env.NODE_ENV === 'test') {

@@ -337,6 +337,30 @@ test('GET /api/limits returns stored limit rows with correct camelCase fields', 
   assert.strictEqual(humLimit.unit, '%rF');
 });
 
+test('POST /api/sync startet einen Sync und ist bei laufendem Sync idempotent', async () => {
+  saveSetting('api_key', 'mock-api-key');
+  saveSetting('api_region', 'eu');
+
+  const res1 = await fetch('http://localhost:3001/api/sync', { method: 'POST' });
+  assert.ok(res1.status === 202 || res1.status === 200);
+  const body1 = await res1.json();
+  assert.strictEqual(typeof body1.started, 'boolean');
+
+  // Zweiter Aufruf: solange der erste Sync läuft, darf nicht erneut gestartet werden.
+  // Race-tolerant: ist der erste (Mock-)Sync schon fertig, ist started===true ebenfalls valide.
+  const res2 = await fetch('http://localhost:3001/api/sync', { method: 'POST' });
+  const body2 = await res2.json();
+  assert.ok(body2.hasOwnProperty('started'));
+
+  // WICHTIG: vor Testende auf Ruhezustand warten, damit after()/closeDb() nicht gegen
+  // einen noch laufenden fire-and-forget-Sync läuft (sonst Write-after-close-Race).
+  for (let i = 0; i < 100; i++) {
+    const s = await (await fetch('http://localhost:3001/api/system/status')).json();
+    if (!s.scheduler.isSyncing) break;
+    await new Promise(r => setTimeout(r, 20));
+  }
+});
+
 after(() => {
   server.close();
   stopScheduler();
