@@ -97,22 +97,31 @@ bleibt ein **bares Array** (konsistent mit allen anderen Endpoints; kein `hasMor
 | Param | Typ | Wirkung |
 |---|---|---|
 | `limit` | int > 0 | max. Zeilen. Fehlt/ungültig → kein Limit (heutiges Verhalten, abwärtskompatibel). |
-| `before` | int (ms) | nur Events mit `start_ts < before` (Cursor). Fehlt/ungültig → ignoriert. |
 | `active` | `'0'`/`'1'` | `'0'` → nur aufgelöste (`active = 0`), `'1'` → nur aktive (`active = 1`). Sonst → beide. |
+| `before_ts` | int (ms) | Compound-Cursor-Anker. Fehlt/ungültig → ignoriert. |
+| `before_rowid` | int | Compound-Cursor-Tiebreak. Nur zusammen mit `before_ts` wirksam. |
 
-- **Sortierung unverändert** `ORDER BY active DESC, start_ts DESC`. Bei `active=0` ist der
-  `active DESC`-Teil gegenstandslos → faktisch reines `start_ts DESC` → saubere Pagination.
-- **Parameter-Robustheit:** `limit`/`before` via `Number.parseInt`; nur übernehmen, wenn endlich
-  und (für `limit`) > 0. `active` nur `'0'`/`'1'` erkennen, sonst ignorieren. Ungültige Werte
+- **Compound-Cursor (robust gegen Zeitstempel-Gleichstand):** `start_ts` ist ms-Epoch aus
+  sekunden-aufgelösten testo-Strings; mehrere Transitionen einer Station können denselben
+  `start_ts` tragen. Ein striktes `start_ts < before` würde an Seitengrenzen einen Gleichstands-
+  Eintrag **auslassen**. Daher Cursor `(start_ts < before_ts) OR (start_ts = before_ts AND
+  rowid < before_rowid)`. Ist nur `before_ts` gesetzt → `start_ts < before_ts`.
+- **Sortierung** `ORDER BY active DESC, start_ts DESC, rowid DESC` (Total-Order; spiegelt das
+  bereits genutzte `scheduler.js:356`-Muster und die bewusst stabilen `rowid`s). Antwort enthält
+  `rowid AS _rowid` für den Cursor.
+- **Parameter-Robustheit:** `limit`/`before_ts`/`before_rowid` via `Number.parseInt`; nur
+  übernehmen, wenn endlich (und für `limit` > 0). `active` nur `'0'`/`'1'`. Ungültige Werte
   ändern das Ergebnis nicht (kein 4xx nötig).
-- **SQL** parametrisiert, WHERE-Klauseln bedingt zusammengesetzt:
-  `WHERE station_id = ? [AND active = ?] [AND start_ts < ?] ORDER BY active DESC, start_ts DESC [LIMIT ?]`.
+- **SQL** parametrisiert: `SELECT *, rowid AS _rowid FROM events WHERE station_id = ?
+  [AND active = ?] [AND (start_ts < ? OR (start_ts = ? AND rowid < ?))] ORDER BY active DESC,
+  start_ts DESC, rowid DESC [LIMIT ?]`.
 
 **Zwei Aufrufmuster:**
 - **Poll** (Entlastung): `?limit=50` → nur die 50 neuesten Zeilen je Station. Aktive Events immer
   dabei (active-first-Sortierung; max. aktive Events pro Station ≈ 10 = 5 Messwerte × 2 Schwere-
   grade ≪ 50). Korrektheits-Garantie für `metricAlertStatus`/Zähler bleibt damit erhalten.
-- **Panel-Historie:** `?active=0&limit=<X>&before=<ältester geladener start_ts>`.
+- **Panel-Historie:** `?active=0&limit=<X>[&before_ts=<startTs>&before_rowid=<_rowid>]` (Cursor =
+  letzter geladener Eintrag).
 
 **`hasMore`** wird client-seitig abgeleitet: gelieferte Zeilen `=== limit` ⇒ es gibt
 vermutlich mehr (eine evtl. überzählige Leer-Abfrage am exakten Ende ist akzeptabel).
@@ -120,13 +129,13 @@ vermutlich mehr (eine evtl. überzählige Leer-Abfrage am exakten Ende ist akzep
 ### 4.3 Datenschicht (`data.js`)
 
 - **Mapper extrahieren:** die heutige Inline-Abbildung (Zeilen ~229–242) wird zu einer
-  modul-lokalen `mapBackendEvent(row)`-Funktion. **Single source of truth** für Poll **und**
-  Historie-Fetch (verhindert Feld-Drift).
+  modul-lokalen `mapBackendEvent(row)`-Funktion, die zusätzlich `_rowid: e._rowid` mitträgt.
+  **Single source of truth** für Poll **und** Historie-Fetch (verhindert Feld-Drift).
 - **Poll begrenzen:** in `refresh()` Fetch-URL `…/events` → `…/events?limit=${POLL_EVENT_LIMIT}`
   mit `const POLL_EVENT_LIMIT = 50;`.
 - **Neuer Accessor** `stationOverview()` → `buildStationOverview(STATIONS, STATION_ORDER)` (§4.4).
-- **Neue Methode** `async fetchStationHistory(stationId, { before, limit })`:
-  - Baut `…/events?active=0&limit=${limit}` und hängt `&before=${before}` an, wenn gesetzt.
+- **Neue Methode** `async fetchStationHistory(stationId, { beforeTs, beforeRowid, limit })`:
+  - Baut `…/events?active=0&limit=${limit}` und hängt `&before_ts`/`&before_rowid` an, wenn gesetzt.
   - `fetch` → bei `!res.ok` **wirft** sie (`throw new Error(...)`); mappt sonst jede Zeile via
     `mapBackendEvent` und gibt das Array zurück.
   - Sie fängt Fehler **bewusst nicht** selbst — der aufrufende Komponenten-State fängt und
@@ -173,26 +182,32 @@ Neue Konstante in dieser Datei: `const PAGE_SIZE = 20;` (Panel-Seitengröße X).
   - **State:** `expanded` (Init: `activeCount > 0`), `history` (`[]`), `loading` (`false`),
     `loaded` (`false`), `done` (`false`), `error` (`null`).
   - **Laden** via gemeinsame `loadPage()`:
-    `cursor = history.length ? history[history.length-1].startTs : undefined`; ruft
-    `D.fetchStationHistory(station.id, { before: cursor, limit: PAGE_SIZE })`; bei Erfolg
-    anhängen (**Dedupe per Event-`id`** gegen `start_ts`-Gleichstände), `loaded=true`,
-    `done = (zurück.length < PAGE_SIZE)`; bei Wurf `error=<text>`, `loading=false`.
-  - **Auto-Erstladen:** `ssEff` keyed auf `expanded` → wenn `expanded && !loaded && !loading`
-    → `loadPage()`. (Aktive Stationen laden ihre erste Historie-Seite also beim Öffnen.)
+    `cursor = letzter geladener Eintrag → { beforeTs: last.startTs, beforeRowid: last._rowid }`
+    (leer bei der ersten Seite); ruft `D.fetchStationHistory(station.id, { ...cursor, limit:
+    PAGE_SIZE })`; bei Erfolg anhängen (zusätzliche **Dedupe per Event-`id`** als Sicherheitsnetz),
+    `loaded=true`, `done = (zurück.length < PAGE_SIZE)`; bei Wurf `error=<text>`, `loading=false`.
+    Re-Entry-Schutz via `inflight`-Ref.
+  - **Historie ist opt-in — KEIN Auto-Load-Effekt.** Das bloße Öffnen des Panels löst **null**
+    Historie-Requests aus. Stattdessen klick-getrieben über `toggle()`:
+    - **Ruhige Station** (`activeCount === 0`): wird nur zum Historie-Lesen aufgeklappt → das
+      Aufklappen lädt die erste Seite sofort (`if (next && activeCount === 0 && !loaded) loadPage()`).
+    - **Aktive Station** (auto-aufgeklappt für den Aktiv-Blick): zeigt die aktiven Zeilen +
+      Button „Historie laden…"; die Historie wartet auf den expliziten Klick.
   - **Kopfzeile** (klickbar, toggelt `expanded`): Online-Punkt (`station-dot on/off`),
     Stationsname, `station-code`, Standort/online-Status; rechts der `activeCount`-Badge (nur
     wenn > 0) bzw. dezenter Hinweis „keine aktiven", dann Chevron (hoch wenn `expanded`, sonst
     runter). `aria-expanded`, klickbar/fokussierbar.
   - **Körper, wenn `expanded`:**
     1. `activeEvents` → je `EventRow event={e} station={station}` (aus dem Speicher, live).
-    2. Wenn Historie geladen/ladbar: `── Historie ──`-Trenner (`.tsp-history-divider`).
+    2. Bei `activeCount > 0` ein `── Historie ──`-Trenner (`.tsp-history-divider`), der die
+       aktiven Zeilen vom Historie-Bereich/-Button trennt.
     3. Historie-Zeilen `history` → je `EventRow event={e} station={station}` (gedimmter
        Wrapper, EventRow selbst unverändert).
     4. Footer: `loading` → Ladezeile; sonst `error` → Fehlerzeile mit „erneut versuchen"
-       (Retry ruft `loadPage()`); sonst `!loaded` → „Historie laden…" (löst Erstladen aus —
-       relevant nur falls Auto-Effekt mal nicht griff / als sichtbarer Anker); sonst
-       `!done` → „weitere Einträge laden…" (`loadPage()`); sonst wenn `loaded && history.length
-       === 0` → „Keine Meldungen vorhanden.".
+       (Retry ruft `loadPage()`); sonst `!loaded` → Button „Historie laden…" (der opt-in-Anker
+       der aktiven Stationen, `loadPage()`); sonst `loaded && !done && history.length > 0` →
+       „weitere Einträge laden…" (`loadPage()`); sonst `loaded && history.length === 0` →
+       „Keine Meldungen vorhanden.".
 
 `SystemSummaryTrigger` bleibt unverändert (rendert weiter `SystemSummaryPanel`, wenn offen).
 
@@ -253,9 +268,10 @@ CSS im `<style>`-Block von `Klima Dashboard.html`, Farben/Radien aus bestehenden
   active-first-Sortierung wären aktive trotzdem zuerst; 50 hat komfortablen Puffer.
 - **AlertsBody-Kachel** sieht durch `?limit=50` künftig nur noch die ~50 neuesten Events
   (bewusste, sichtbare Verhaltensänderung; tiefe Historie lebt im Panel).
-- **`before`-Cursor auf `start_ts`-Gleichstand** (zwei Transitionen in derselben ms): `< before`
-  könnte einen Gleichstands-Eintrag auslassen → **Client-Dedupe per `id`** beim Anhängen fängt
-  das ab; vernachlässigbares Restrisiko bei ms-Auflösung.
+- **`start_ts`-Gleichstand an Seitengrenzen** (mehrere Transitionen einer Station mit identischem
+  `start_ts`, da testo-Zeitstempel sekunden-aufgelöst sind): durch den **Compound-Cursor
+  `(start_ts, rowid)`** (§4.2) ausgeschlossen — keine Auslassung, kein Duplikat. Client-Dedupe
+  per `id` bleibt als zweites Sicherheitsnetz.
 - **`id` in `stationOrder` ohne Objekt in `stations`** → in `buildStationOverview` übersprungen.
 - **`station.events` undefined** → als leer behandelt; Station erscheint als ruhig.
 - **Offline-Station** → grauer Punkt, trotzdem gelistet und aufklappbar (Historie kann
@@ -271,12 +287,14 @@ CSS im `<style>`-Block von `Klima Dashboard.html`, Farben/Radien aus bestehenden
 ### 7.1 Backend (`backend/tests/server.test.js`, Glob-erkannt, `node --test`)
 - `?limit=N` → höchstens N Zeilen, neueste zuerst.
 - `?active=0` → nur aufgelöste; `?active=1` → nur aktive; ohne → beide.
-- `?before=<ts>` → nur Events mit `start_ts < ts`; Cursor-Paginierung über zwei Seiten liefert
-  disjunkte, lückenlose Mengen (per `id`).
-- Sortierung `active DESC, start_ts DESC` bleibt erhalten.
-- Ungültige Parameter (`limit=abc`, `before=xyz`, `active=2`) werden ignoriert (Ergebnis wie
+- Antwort enthält `_rowid` (Integer) je Zeile.
+- **Compound-Cursor mit `start_ts`-Gleichstand:** zwei aufgelöste Events mit identischem
+  `start_ts` (verschiedene `rowid`); ein `limit=1`-Walk über `before_ts`+`before_rowid` liefert
+  **beide** in lückenloser, disjunkter Reihenfolge — der Gleichstand wird **nicht** übersprungen.
+- Sortierung `active DESC, start_ts DESC, rowid DESC` bleibt erhalten.
+- Ungültige Parameter (`limit=abc`, `before_ts=xyz`, `active=2`) werden ignoriert (Ergebnis wie
   ohne Parameter).
-- Station ohne Events → `[]`; `before` jenseits aller Daten → `[]`.
+- Station ohne Events → `[]`; `before_ts` jenseits aller Daten → `[]`.
 
 ### 7.2 Frontend pure (`Smart Meter Dashboard/tests/summary-logic.test.js`, `node --test`)
 An `buildStationOverview` angepasst + erweitert:
@@ -318,3 +336,9 @@ MINOR-Bump **0.6.0 → 0.7.0**:
 Keine — alle Designfragen sind aufgelöst: Panel-Modell (aktive auf / ruhige zu, alle Stationen),
 Lade-Strategie (paginierter Endpoint, on-demand), Poll-Entlastung (`limit=50`), Seitengröße
 (`PAGE_SIZE = 20`), Quellentrennung (aktiv = Speicher / Historie = Endpoint), Scope wie §2.
+
+**Grill-Revisionen (2026-06-19):** (1) Pagination per **Compound-Cursor `(start_ts, rowid)`**
+statt striktem `< start_ts` — robust gegen Zeitstempel-Gleichstand (§4.2, §6). (2) Historie ist
+**opt-in**: kein Auto-Load: Panel-Öffnen feuert null Requests; aktive Stationen zeigen „Historie
+laden…", ruhige laden beim Aufklapp-Klick (§4.5). (3) Verifiziert: aufgelöste Events tragen
+`end_ts` (`scheduler.js:330`/`:60`) → keine NaN-Dauer in der Historie.

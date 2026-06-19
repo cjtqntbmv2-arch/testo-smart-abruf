@@ -30,56 +30,71 @@
 - Test: `backend/tests/server.test.js` (neuer Test ans Ende, vor `after(...)`)
 
 **Interfaces:**
-- Produces: `GET /api/stations/:id/events` akzeptiert optionale Query-Parameter `limit` (int > 0), `before` (int ms; nur `start_ts < before`), `active` (`'0'` = aufgelöst, `'1'` = aktiv). Ungültige/fehlende Werte werden ignoriert. Sortierung unverändert `active DESC, start_ts DESC`. Antwort: bares Array von DB-Zeilen (Spalten u.a. `uuid, station_id, severity, alarm_condition_type, alarm_value, metric, threshold, start_ts, end_ts, extreme, active, message, detail`).
+- Produces: `GET /api/stations/:id/events` akzeptiert optionale Query-Parameter `limit` (int > 0), `active` (`'0'` = aufgelöst, `'1'` = aktiv) und einen **Compound-Cursor** `before_ts` (int ms) + `before_rowid` (int). Cursor-Semantik: `(start_ts < before_ts) OR (start_ts = before_ts AND rowid < before_rowid)` — robust gegen gleiche `start_ts` (Zeitstempel-Gleichstand). Ist nur `before_ts` gesetzt → `start_ts < before_ts`. Ungültige/fehlende Werte werden ignoriert. Sortierung `active DESC, start_ts DESC, rowid DESC` (Total-Order; spiegelt scheduler.js:356). Antwort: bares Array von DB-Zeilen **inkl. `_rowid`** (Spalten u.a. `uuid, station_id, severity, alarm_condition_type, alarm_value, metric, threshold, start_ts, end_ts, extreme, active, message, detail, _rowid`).
 
 - [ ] **Step 1: Failing-Test schreiben** — ans Ende von `backend/tests/server.test.js`, **vor** dem `after(() => {…})`-Block einfügen:
 
 ```js
-test('GET /api/stations/:id/events supports limit, before and active filters', async () => {
+test('GET /api/stations/:id/events supports limit, active and compound (start_ts,rowid) cursor', async () => {
   const db = getDb();
   db.prepare("INSERT OR IGNORE INTO stations (id, name) VALUES ('evpag', 'Pagination Test')").run();
   db.prepare("DELETE FROM events WHERE station_id = 'evpag'").run();
-  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-act','evpag','alarm',400,NULL,1)").run();
+  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-act','evpag','alarm',400,420,1)").run();
   db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-r3','evpag','warning',300,350,0)").run();
-  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-r2','evpag','warning',200,250,0)").run();
+  // two resolved events that SHARE start_ts=200 (realistic tie); e-r2a inserted first => lower rowid
+  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-r2a','evpag','warning',200,250,0)").run();
+  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-r2b','evpag','alarm',200,250,0)").run();
   db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-r1','evpag','warning',100,150,0)").run();
 
   const base = 'http://localhost:3001/api/stations/evpag/events';
   const ids = (arr) => arr.map((e) => e.uuid);
 
-  // no params => all 4, active first then start_ts desc
-  assert.deepStrictEqual(ids(await (await fetch(base)).json()), ['e-act', 'e-r3', 'e-r2', 'e-r1']);
-  // active=0 => only resolved, newest first
-  assert.deepStrictEqual(ids(await (await fetch(base + '?active=0')).json()), ['e-r3', 'e-r2', 'e-r1']);
+  // no params => all 5; active first, then start_ts desc, then rowid desc (e-r2b before e-r2a)
+  assert.deepStrictEqual(ids(await (await fetch(base)).json()), ['e-act', 'e-r3', 'e-r2b', 'e-r2a', 'e-r1']);
   // active=1 => only active
   assert.deepStrictEqual(ids(await (await fetch(base + '?active=1')).json()), ['e-act']);
-  // limit=2 => first two of default ordering
-  assert.deepStrictEqual(ids(await (await fetch(base + '?limit=2')).json()), ['e-act', 'e-r3']);
-  // paginate resolved: page 1 then before-cursor page 2
-  const p1 = await (await fetch(base + '?active=0&limit=2')).json();
-  assert.deepStrictEqual(ids(p1), ['e-r3', 'e-r2']);
-  const cursor = p1[p1.length - 1].start_ts; // 200
-  assert.deepStrictEqual(ids(await (await fetch(base + `?active=0&limit=2&before=${cursor}`)).json()), ['e-r1']);
+  // active=0 => only resolved, newest first; rowid breaks the start_ts=200 tie
+  assert.deepStrictEqual(ids(await (await fetch(base + '?active=0')).json()), ['e-r3', 'e-r2b', 'e-r2a', 'e-r1']);
+  // rowid is exposed in the payload for the cursor
+  const first = (await (await fetch(base + '?active=0&limit=1')).json())[0];
+  assert.strictEqual(first.uuid, 'e-r3');
+  assert.ok(Number.isInteger(first._rowid));
+
+  // walk the compound cursor at limit=1 — MUST NOT skip the start_ts=200 tie
+  const collected = [];
+  let cursor = null;
+  for (let i = 0; i < 10; i++) {
+    let url = base + '?active=0&limit=1';
+    if (cursor) url += `&before_ts=${cursor.start_ts}&before_rowid=${cursor._rowid}`;
+    const page = await (await fetch(url)).json();
+    if (page.length === 0) break;
+    collected.push(page[0].uuid);
+    cursor = { start_ts: page[0].start_ts, _rowid: page[0]._rowid };
+  }
+  assert.deepStrictEqual(collected, ['e-r3', 'e-r2b', 'e-r2a', 'e-r1']); // both start_ts=200 rows present
+
   // invalid params ignored => same as no params
-  assert.deepStrictEqual(ids(await (await fetch(base + '?limit=abc&before=xyz&active=2')).json()), ['e-act', 'e-r3', 'e-r2', 'e-r1']);
-  // before beyond all data => empty
-  assert.deepStrictEqual(await (await fetch(base + '?active=0&before=100')).json(), []);
+  assert.deepStrictEqual(ids(await (await fetch(base + '?limit=abc&before_ts=xyz&active=2')).json()), ['e-act', 'e-r3', 'e-r2b', 'e-r2a', 'e-r1']);
+  // before_ts beyond all data => empty
+  assert.deepStrictEqual(await (await fetch(base + '?active=0&before_ts=100')).json(), []);
 });
 ```
 
 - [ ] **Step 2: Test laufen lassen, Fehlschlag prüfen**
 
-Run: `npm test 2>&1 | grep -A3 "limit, before and active"`
-Expected: FAIL (heutige Route ignoriert die Query-Parameter → falsche Reihenfolge/Anzahl).
+Run: `npm test 2>&1 | grep -A3 "limit, active and compound"`
+Expected: FAIL (heutige Route ignoriert die Query-Parameter und liefert kein `_rowid` → falsche Reihenfolge/Anzahl, Cursor-Walk überspringt den Tie).
 
 - [ ] **Step 3: Route ersetzen** — `backend/server.js:185-193` komplett ersetzen durch:
 
 ```js
 // GET /api/stations/:id/events
 // Optional query params:
-//   limit  — max rows (positive int); omitted/invalid => no limit (backward compatible)
-//   before — only events with start_ts < before (int ms); omitted/invalid => ignored
-//   active — '0' (resolved only) | '1' (active only); anything else => both
+//   limit       — max rows (positive int); omitted/invalid => no limit (backward compatible)
+//   active      — '0' (resolved only) | '1' (active only); anything else => both
+//   before_ts   — compound cursor anchor (int ms); omitted/invalid => ignored
+//   before_rowid— compound cursor tiebreak (int); only used together with before_ts
+// Cursor (robust against equal start_ts): (start_ts < before_ts) OR (start_ts = before_ts AND rowid < before_rowid).
 app.get('/api/stations/:id/events', (req, res) => {
   const clauses = ['station_id = ?'];
   const params = [req.params.id];
@@ -89,13 +104,19 @@ app.get('/api/stations/:id/events', (req, res) => {
     params.push(Number(req.query.active));
   }
 
-  const before = Number.parseInt(req.query.before, 10);
-  if (Number.isFinite(before)) {
-    clauses.push('start_ts < ?');
-    params.push(before);
+  const beforeTs = Number.parseInt(req.query.before_ts, 10);
+  if (Number.isFinite(beforeTs)) {
+    const beforeRowid = Number.parseInt(req.query.before_rowid, 10);
+    if (Number.isFinite(beforeRowid)) {
+      clauses.push('(start_ts < ? OR (start_ts = ? AND rowid < ?))');
+      params.push(beforeTs, beforeTs, beforeRowid);
+    } else {
+      clauses.push('start_ts < ?');
+      params.push(beforeTs);
+    }
   }
 
-  let sql = `SELECT * FROM events WHERE ${clauses.join(' AND ')} ORDER BY active DESC, start_ts DESC`;
+  let sql = `SELECT *, rowid AS _rowid FROM events WHERE ${clauses.join(' AND ')} ORDER BY active DESC, start_ts DESC, rowid DESC`;
 
   const limit = Number.parseInt(req.query.limit, 10);
   if (Number.isFinite(limit) && limit > 0) {
@@ -323,7 +344,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `buildStationOverview` (global, aus Task 2); `GET …/events?limit/&before/&active` (Task 1).
-- Produces: `D.stationOverview() → Array<{station, activeEvents, activeCount}>`; `D.fetchStationHistory(stationId, { before?, limit? }) → Promise<Event[]>` (aufgelöste Events, gemappt; **wirft** bei `!res.ok`/Netzfehler). Modul-lokale `mapBackendEvent(row) → Event`. `D.activeEventGroups()` entfällt.
+- Produces: `D.stationOverview() → Array<{station, activeEvents, activeCount}>`; `D.fetchStationHistory(stationId, { beforeTs?, beforeRowid?, limit? }) → Promise<Event[]>` (aufgelöste Events, gemappt, jedes mit `_rowid`; **wirft** bei `!res.ok`/Netzfehler). Modul-lokale `mapBackendEvent(row) → Event` (trägt `_rowid` durch). `D.activeEventGroups()` entfällt.
 
 > Hinweis: `data.js` ist Browser-Glue (IIFE mit `fetch`/`setInterval`) und wird von keinem Node-Test importiert. Verifikation = `node --check` (Syntax) + `npm test` bleibt grün; das Laufzeitverhalten wird in Task 4 im Browser geprüft.
 
@@ -352,6 +373,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
       endTs: e.end_ts,
       extreme: e.extreme || e.alarm_value,
       active: !!e.active,
+      _rowid: e._rowid, // compound-cursor tiebreak (route always returns rowid AS _rowid)
     };
   }
 ```
@@ -379,9 +401,10 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
     // Lazy, paginated resolved-event history for one station. Rejects on failure —
     // callers (StationHistoryGroup) catch and render an inline error.
     async fetchStationHistory(stationId, opts) {
-      const limit = (opts && opts.limit) || 50;
+      const limit = (opts && opts.limit) || 20;
       let url = `/api/stations/${stationId}/events?active=0&limit=${limit}`;
-      if (opts && opts.before != null) url += `&before=${opts.before}`;
+      if (opts && opts.beforeTs != null) url += `&before_ts=${opts.beforeTs}`;
+      if (opts && opts.beforeRowid != null) url += `&before_rowid=${opts.beforeRowid}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('Historie konnte nicht geladen werden');
       const rows = await res.json();
@@ -461,8 +484,9 @@ function StationHistoryGroup({ station, activeEvents, activeCount }) {
     setLoading(true);
     setError(null);
     try {
-      const before = history.length ? history[history.length - 1].startTs : undefined;
-      const page = await D.fetchStationHistory(station.id, { before, limit: PAGE_SIZE });
+      const last = history[history.length - 1];
+      const cursor = last ? { beforeTs: last.startTs, beforeRowid: last._rowid } : {};
+      const page = await D.fetchStationHistory(station.id, { ...cursor, limit: PAGE_SIZE });
       setHistory((prev) => {
         const seen = new Set(prev.map((e) => e.id));
         return prev.concat(page.filter((e) => !seen.has(e.id)));
@@ -477,15 +501,21 @@ function StationHistoryGroup({ station, activeEvents, activeCount }) {
     }
   }
 
-  ssEff(() => {
-    if (expanded && !loaded && !inflight.current) loadPage();
-  }, [expanded]);
+  // History is opt-in — there is NO auto-load effect. Quiet stations are only ever opened
+  // to see history, so expanding one loads its first page immediately. Active stations are
+  // auto-expanded for their active glance; their history waits for an explicit click on
+  // the "Historie laden…" button below. Opening the panel triggers zero history requests.
+  function toggle() {
+    const next = !expanded;
+    setExpanded(next);
+    if (next && activeCount === 0 && !loaded && !inflight.current) loadPage();
+  }
 
   const evKey = (e) => e.id ?? `${e.startTs}-${e.severity}-${e.metric || 'sys'}`;
 
   return (
     <div className={`tsp-group ${expanded ? "open" : ""}`}>
-      <button className="tsp-group-head" aria-expanded={expanded} onClick={() => setExpanded((o) => !o)}>
+      <button className="tsp-group-head" aria-expanded={expanded} onClick={toggle}>
         <span className={`station-dot ${station.online ? "on" : "off"}`} />
         <span className="tsp-group-title">{station.name}</span>
         <span className="station-code">{station.code}</span>
@@ -499,9 +529,7 @@ function StationHistoryGroup({ station, activeEvents, activeCount }) {
       {expanded && (
         <div className="tsp-group-body">
           {activeEvents.map((e) => <EventRow event={e} key={evKey(e)} station={station} />)}
-          {(loaded || loading || error) && (
-            <div className="tsp-history-divider">Historie</div>
-          )}
+          {activeCount > 0 && <div className="tsp-history-divider">Historie</div>}
           {history.length > 0 && (
             <div className="tsp-history">
               {history.map((e) => <EventRow event={e} key={evKey(e)} station={station} />)}
@@ -585,8 +613,10 @@ Verifikation per Preview-Tools (kein Node-Test möglich):
 2. `preview_console_logs` — **keine** React-Warnungen (Rules-of-Hooks, Hook-Alias-Kollision → weiße Seite).
 3. Auf die `top-summary`-Pille klicken (`preview_click`), `preview_snapshot`:
    - **alle** Messstellen gelistet; Stationen mit aktiven Meldungen aufgeklappt (aktive Zeilen oben), ruhige eingeklappt mit „keine aktiven".
-4. Eine aktive Station hat „Historie" + Einträge bzw. „weitere Einträge laden…"; eine ruhige Station per Klick aufklappen → lädt Historie bzw. „Keine Meldungen vorhanden.".
-5. `preview_screenshot` als Beleg.
+4. Aktive Station: aktive Zeilen + „Historie"-Trenner + Button „Historie laden…" (Historie **nicht** automatisch geladen). Klick auf „Historie laden…" → erste Seite erscheint; „weitere Einträge laden…" hängt weitere Seiten an.
+5. Ruhige Station per Klick aufklappen → lädt sofort die erste Historie-Seite bzw. „Keine Meldungen vorhanden.".
+6. `preview_network`: das bloße Öffnen des Panels löst **keine** `/events`-Requests aus (Historie strikt opt-in; erst Klick fetcht).
+7. `preview_screenshot` als Beleg.
 
 - [ ] **Step 5: Commit**
 
@@ -664,4 +694,4 @@ git tag -a v0.7.0 -m "v0.7.0"
 
 **Platzhalter-Scan:** keine TBD/TODO; jeder Code-Schritt enthält vollständigen Code bzw. exakte Befehle. Frontend-Tasks (3/4) sind bewusst Browser-/Syntax-verifiziert (begründet), nicht Node-getestet — entspricht der Projektrealität für `data.js`/`.jsx`.
 
-**Typ-Konsistenz:** `buildStationOverview` liefert `{station, activeEvents, activeCount}` (Task 2) — exakt so konsumiert in `D.stationOverview()` (Task 3) und `SystemSummaryPanel`/`StationHistoryGroup`-Props (Task 4). `fetchStationHistory(stationId, {before, limit})` (Task 3) wird in `loadPage()` identisch aufgerufen (Task 4). Endpoint-Parameter `limit/before/active` (Task 1) = exakt die URL-Bildung in Task 3.
+**Typ-Konsistenz:** `buildStationOverview` liefert `{station, activeEvents, activeCount}` (Task 2) — exakt so konsumiert in `D.stationOverview()` (Task 3) und `SystemSummaryPanel`/`StationHistoryGroup`-Props (Task 4). `fetchStationHistory(stationId, {beforeTs, beforeRowid, limit})` (Task 3) wird in `loadPage()` identisch aufgerufen, Cursor aus `last.startTs`/`last._rowid` (Task 4). Endpoint-Parameter `limit/active/before_ts/before_rowid` (Task 1) = exakt die URL-Bildung in Task 3; `mapBackendEvent` reicht `_rowid` durch (Task 3), das die Route als `rowid AS _rowid` liefert (Task 1). Historie ist opt-in: kein Auto-Load-Effekt, `loadPage` nur klick-getriggert (Task 4) — deckt sich mit der „weitere laden"-Semantik des Specs.
