@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { buildStationOverview } = require('../summary-logic.js');
+const { buildStationOverview, historySectionView } = require('../summary-logic.js');
 
 // active defaults to true unless explicitly false.
 function ev(severity, startTs, active) {
@@ -92,4 +92,106 @@ test('public shape carries only { station, activeEvents, activeCount }', () => {
   const stations = { a: { id: 'a', events: [ev('alarm', 100, true)] } };
   const res = buildStationOverview(stations, ['a']);
   assert.deepStrictEqual(Object.keys(res[0]).sort(), ['activeCount', 'activeEvents', 'station']);
+});
+
+// ---------------------------------------------------------------------------
+// historySectionView: pure view-model deciding which controls/content the
+// per-station history section renders. Drives the collapsible-history UX
+// (independent collapse + bottom collapse control) without any DOM/React.
+// ---------------------------------------------------------------------------
+function vstate(over) {
+  return Object.assign(
+    { loaded: false, loading: false, error: null, done: false, histOpen: false, historyCount: 0 },
+    over,
+  );
+}
+
+test('preload (not loaded): shows only the "Historie laden…" button', () => {
+  const v = historySectionView(vstate({}));
+  assert.strictEqual(v.showLoadButton, true);
+  assert.strictEqual(v.showToggle, false);
+  assert.strictEqual(v.showItems, false);
+  assert.strictEqual(v.showLoadMore, false);
+  assert.strictEqual(v.showCollapseFoot, false);
+  assert.strictEqual(v.showLoading, false);
+  assert.strictEqual(v.showError, false);
+});
+
+test('preload while loading: spinner only, no load button', () => {
+  const v = historySectionView(vstate({ loading: true }));
+  assert.strictEqual(v.showLoading, true);
+  assert.strictEqual(v.showLoadButton, false);
+  assert.strictEqual(v.showToggle, false);
+});
+
+test('preload after error: error-retry only, no load button or spinner', () => {
+  const v = historySectionView(vstate({ error: 'boom' }));
+  assert.strictEqual(v.showError, true);
+  assert.strictEqual(v.showLoadButton, false);
+  assert.strictEqual(v.showLoading, false);
+  assert.strictEqual(v.showToggle, false);
+});
+
+test('loaded + open + more pages: toggle, items, load-more, collapse-foot; count suffix "+"', () => {
+  const v = historySectionView(vstate({ loaded: true, histOpen: true, historyCount: 20, done: false }));
+  assert.strictEqual(v.showToggle, true);
+  assert.strictEqual(v.showItems, true);
+  assert.strictEqual(v.showLoadMore, true);
+  assert.strictEqual(v.showCollapseFoot, true);
+  assert.strictEqual(v.showLoadButton, false);
+  assert.strictEqual(v.count, 20);
+  assert.strictEqual(v.countSuffix, '+');
+});
+
+test('loaded + open + done: no load-more; count suffix empty', () => {
+  const v = historySectionView(vstate({ loaded: true, histOpen: true, historyCount: 7, done: true }));
+  assert.strictEqual(v.showItems, true);
+  assert.strictEqual(v.showLoadMore, false);
+  assert.strictEqual(v.showCollapseFoot, true);
+  assert.strictEqual(v.countSuffix, '');
+});
+
+test('loaded + collapsed: toggle stays, content hidden, data preserved (count still reported)', () => {
+  // The user requirement: once loaded, history can be collapsed independently of the
+  // station group without losing the loaded rows.
+  const v = historySectionView(vstate({ loaded: true, histOpen: false, historyCount: 40, done: true }));
+  assert.strictEqual(v.showToggle, true);
+  assert.strictEqual(v.showItems, false);
+  assert.strictEqual(v.showCollapseFoot, false);
+  assert.strictEqual(v.showLoadMore, false);
+  assert.strictEqual(v.showEmptyHint, false);
+  assert.strictEqual(v.count, 40); // rows are not discarded, just hidden
+});
+
+test('loaded + open + zero history: empty hint, no items/foot/load-more', () => {
+  const v = historySectionView(vstate({ loaded: true, histOpen: true, historyCount: 0, done: true }));
+  assert.strictEqual(v.showEmptyHint, true);
+  assert.strictEqual(v.showItems, false);
+  assert.strictEqual(v.showCollapseFoot, false);
+  assert.strictEqual(v.showLoadMore, false);
+});
+
+test('loaded + open + load-more in flight: spinner shown, load-more hidden, foot persists', () => {
+  const v = historySectionView(vstate({ loaded: true, histOpen: true, historyCount: 20, loading: true }));
+  assert.strictEqual(v.showLoading, true);
+  assert.strictEqual(v.showLoadMore, false);
+  assert.strictEqual(v.showError, false);
+  assert.strictEqual(v.showItems, true);
+  assert.strictEqual(v.showCollapseFoot, true);
+});
+
+test('loaded + open + load-more failed: error-retry shown, items still visible', () => {
+  const v = historySectionView(vstate({ loaded: true, histOpen: true, historyCount: 20, error: 'net' }));
+  assert.strictEqual(v.showError, true);
+  assert.strictEqual(v.showLoadMore, false);
+  assert.strictEqual(v.showItems, true);
+  assert.strictEqual(v.showCollapseFoot, true);
+});
+
+test('collapsed phase suppresses spinner/error/empty body controls regardless of flags', () => {
+  const v = historySectionView(vstate({ loaded: true, histOpen: false, loading: true, error: 'x', historyCount: 0 }));
+  assert.strictEqual(v.showToggle, true);
+  assert.strictEqual(v.showLoading, false);
+  assert.strictEqual(v.showError, false);
+  assert.strictEqual(v.showEmptyHint, false);
 });

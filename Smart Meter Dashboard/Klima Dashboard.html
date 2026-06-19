@@ -739,13 +739,21 @@
     font-family: var(--mono); font-size: 10px; color: var(--text-faint);
   }
   .tsp-group-body { padding: 0 2px 2px; }
-  .tsp-history-divider {
-    display: flex; align-items: center; gap: 8px; margin: 8px 6px 4px;
+  button.tsp-history-toggle {
+    width: 100%; appearance: none; background: none; border: none; font: inherit; cursor: pointer;
+    display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; padding: 3px 6px;
+    border-radius: var(--radius-sm);
     font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint);
   }
-  .tsp-history-divider::before, .tsp-history-divider::after {
-    content: ""; flex: 1; height: 1px; background: var(--border);
+  button.tsp-history-toggle:hover { color: var(--text-muted); background: var(--surface-2); }
+  button.tsp-history-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tsp-history-toggle .tsp-hist-count {
+    flex: 0 0 auto; font-family: var(--mono); font-size: 10px; letter-spacing: 0;
+    text-transform: none; color: var(--text-muted);
   }
+  .tsp-history-toggle .tsp-th-rule { flex: 1 1 auto; height: 1px; background: var(--border); }
+  .tsp-history-toggle .chev { flex: 0 0 auto; color: var(--text-faint); transition: transform .15s ease; }
+  .tsp-history-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
   .tsp-history { opacity: 0.82; }
   .tsp-loadmore {
     width: 100%; appearance: none; cursor: pointer; font: inherit; font-size: 12px;
@@ -764,6 +772,16 @@
     background: var(--alarm-tint); border: 1px solid var(--alarm); border-radius: var(--radius-sm);
     color: var(--alarm);
   }
+  button.tsp-collapse-foot {
+    width: 100%; appearance: none; background: none; cursor: pointer; font: inherit; font-size: 11.5px;
+    margin: 2px 0 0; padding: 7px;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    border: none; border-top: 1px solid var(--border); border-radius: 0;
+    color: var(--text-faint);
+  }
+  button.tsp-collapse-foot:hover { color: var(--text-muted); }
+  button.tsp-collapse-foot:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tsp-collapse-foot .chev { transform: rotate(180deg); }
 
   /* ---------- Tile station badge in head ---------- */
   .tile-station {
@@ -1244,15 +1262,15 @@
 
 <!-- ?v=… is a cache-buster: bump it with every release (see VERSION) so a reload
      reliably loads the matching code instead of a stale copy held by the browser. -->
-<script src="metrics-logic.js?v=0.8.2"></script>
-<script src="summary-logic.js?v=0.8.2"></script>
-<script src="status-logic.js?v=0.8.2"></script>
-<script src="data.js?v=0.8.2"></script>
-<script type="text/babel" src="charts.jsx?v=0.8.2"></script>
-<script type="text/babel" src="tiles.jsx?v=0.8.2"></script>
-<script type="text/babel" src="settings.jsx?v=0.8.2"></script>
-<script type="text/babel" src="header.jsx?v=0.8.2"></script>
-<script type="text/babel" src="summary-panel.jsx?v=0.8.2"></script>
-<script type="text/babel" src="app.jsx?v=0.8.2"></script>
+<script src="metrics-logic.js?v=0.9.0"></script>
+<script src="summary-logic.js?v=0.9.0"></script>
+<script src="status-logic.js?v=0.9.0"></script>
+<script src="data.js?v=0.9.0"></script>
+<script type="text/babel" src="charts.jsx?v=0.9.0"></script>
+<script type="text/babel" src="tiles.jsx?v=0.9.0"></script>
+<script type="text/babel" src="settings.jsx?v=0.9.0"></script>
+<script type="text/babel" src="header.jsx?v=0.9.0"></script>
+<script type="text/babel" src="summary-panel.jsx?v=0.9.0"></script>
+<script type="text/babel" src="app.jsx?v=0.9.0"></script>
 </body>
 </html>

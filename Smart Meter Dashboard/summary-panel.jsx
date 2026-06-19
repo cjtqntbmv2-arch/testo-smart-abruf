@@ -40,6 +40,21 @@ function SystemSummaryTrigger({ totals }) {
 
 const PAGE_SIZE = 20;
 
+// Safe wrapper around the pure view-model (summary-logic.js). This panel renders
+// OUTSIDE the per-tile error boundary, so a throw whites out the whole app. During a
+// version-skew reload a stale summary-logic.js may lack historySectionView — degrade
+// to an inert view instead of crashing; the next poll re-render recovers once the
+// assets are consistent. (See dashboard-runtime-gotchas.)
+function historyView(state) {
+  const fn = window.historySectionView;
+  if (typeof fn === "function") return fn(state);
+  return {
+    showLoadButton: false, showToggle: false, showItems: false, showLoadMore: false,
+    showCollapseFoot: false, showEmptyHint: false, showLoading: false, showError: false,
+    count: 0, countSuffix: "",
+  };
+}
+
 function SystemSummaryPanel() {
   const D = window.DASH_DATA;
   // Defensive: this panel renders OUTSIDE the per-tile error boundary, so any throw
@@ -71,12 +86,25 @@ function SystemSummaryPanel() {
 function StationHistoryGroup({ station, activeEvents, activeCount }) {
   const D = window.DASH_DATA;
   const [expanded, setExpanded] = ssState(activeCount > 0);
+  const [histOpen, setHistOpen] = ssState(false);
   const [history, setHistory] = ssState([]);
   const [loading, setLoading] = ssState(false);
   const [loaded, setLoaded] = ssState(false);
   const [done, setDone] = ssState(false);
   const [error, setError] = ssState(null);
   const inflight = ssRef(false);
+  const headRef = ssRef(null);
+  const scrollOnCollapse = ssRef(false);
+
+  // Collapsing a long history from the bottom button removes the rows above the
+  // viewport, leaving the scroll position dangling past the end. Pull the station
+  // head back into view so the user lands at the top of this group, not in limbo.
+  ssEff(() => {
+    if (!histOpen && scrollOnCollapse.current) {
+      scrollOnCollapse.current = false;
+      if (headRef.current) headRef.current.scrollIntoView({ block: "nearest" });
+    }
+  }, [histOpen]);
 
   async function loadPage() {
     if (inflight.current || done) return;
@@ -101,21 +129,31 @@ function StationHistoryGroup({ station, activeEvents, activeCount }) {
     }
   }
 
-  // History is opt-in — there is NO auto-load effect. Quiet stations are only ever opened
-  // to see history, so expanding one loads its first page immediately. Active stations are
-  // auto-expanded for their active glance; their history waits for an explicit click on
-  // the "Historie laden…" button below. Opening the panel triggers zero history requests.
+  // History is opt-in — there is NO auto-load effect. loadFirst() fetches the first page
+  // AND reveals the section; later loadPage() calls (load-more) leave histOpen untouched.
+  // Quiet stations are only ever opened to read history, so expanding one loads+opens
+  // immediately; active stations show their active glance and wait for an explicit click.
+  function loadFirst() { setHistOpen(true); loadPage(); }
+
+  // Independent collapse: hides the loaded rows but keeps them in state (no refetch on
+  // re-open). fromBottom requests the scroll-head-into-view nicety above.
+  function collapseHistory(fromBottom) {
+    if (fromBottom) scrollOnCollapse.current = true;
+    setHistOpen(false);
+  }
+
   function toggle() {
     const next = !expanded;
     setExpanded(next);
-    if (next && activeCount === 0 && !loaded && !inflight.current) loadPage();
+    if (next && activeCount === 0 && !loaded && !inflight.current) loadFirst();
   }
 
   const evKey = (e) => e.id ?? `${e.startTs}-${e.severity}-${e.metric || 'sys'}`;
+  const v = historyView({ loaded, loading, error, done, histOpen, historyCount: history.length });
 
   return (
     <div className={`tsp-group ${expanded ? "open" : ""}`}>
-      <button className="tsp-group-head" aria-expanded={expanded} onClick={toggle}>
+      <button ref={headRef} className="tsp-group-head" aria-expanded={expanded} onClick={toggle}>
         <span className={`station-dot ${station.online ? "on" : "off"}`} />
         <span className="tsp-group-title">{station.name}</span>
         <span className="station-code">{station.code}</span>
@@ -129,27 +167,53 @@ function StationHistoryGroup({ station, activeEvents, activeCount }) {
       {expanded && (
         <div className="tsp-group-body">
           {activeEvents.map((e) => <EventRow event={e} key={evKey(e)} station={station} />)}
-          {activeCount > 0 && <div className="tsp-history-divider">Historie</div>}
-          {history.length > 0 && (
-            <div className="tsp-history">
-              {history.map((e) => <EventRow event={e} key={evKey(e)} station={station} />)}
-            </div>
+
+          {!v.showToggle && (
+            <React.Fragment>
+              {v.showLoadButton && (
+                <button className="tsp-loadmore" onClick={loadFirst}>Historie laden…</button>
+              )}
+              {v.showLoading && <div className="tsp-loading">Historie wird geladen…</div>}
+              {v.showError && (
+                <button className="tsp-error" onClick={loadFirst}>{error} — erneut versuchen</button>
+              )}
+            </React.Fragment>
           )}
-          {loading && <div className="tsp-loading">Historie wird geladen…</div>}
-          {!loading && error && (
-            <button className="tsp-error" onClick={loadPage}>{error} — erneut versuchen</button>
-          )}
-          {!loading && !error && loaded && history.length === 0 && (
-            <div className="tsp-empty-hist">Keine Meldungen vorhanden.</div>
-          )}
-          {!loading && !error && loaded && history.length > 0 && !done && (
-            <button className="tsp-loadmore" onClick={loadPage}>
-              <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
-              weitere Einträge laden…
-            </button>
-          )}
-          {!loading && !error && !loaded && (
-            <button className="tsp-loadmore" onClick={loadPage}>Historie laden…</button>
+
+          {v.showToggle && (
+            <React.Fragment>
+              <button className="tsp-history-toggle" aria-expanded={histOpen}
+                      onClick={() => (histOpen ? collapseHistory(false) : setHistOpen(true))}>
+                <span className="tsp-th-label">Historie</span>
+                {v.count > 0 && <span className="tsp-hist-count">{v.count}{v.countSuffix}</span>}
+                <span className="tsp-th-rule" />
+                <svg className="chev" width="12" height="12" viewBox="0 0 12 12" fill="none"
+                     stroke="currentColor" strokeWidth="1.5"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
+              </button>
+
+              {v.showItems && (
+                <div className="tsp-history">
+                  {history.map((e) => <EventRow event={e} key={evKey(e)} station={station} />)}
+                </div>
+              )}
+              {v.showEmptyHint && <div className="tsp-empty-hist">Keine Meldungen vorhanden.</div>}
+              {v.showLoading && <div className="tsp-loading">Historie wird geladen…</div>}
+              {v.showError && (
+                <button className="tsp-error" onClick={loadPage}>{error} — erneut versuchen</button>
+              )}
+              {v.showLoadMore && (
+                <button className="tsp-loadmore" onClick={loadPage}>
+                  <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
+                  weitere Einträge laden…
+                </button>
+              )}
+              {v.showCollapseFoot && (
+                <button className="tsp-collapse-foot" onClick={() => collapseHistory(true)}>
+                  <svg className="chev" width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
+                  Historie einklappen
+                </button>
+              )}
+            </React.Fragment>
           )}
         </div>
       )}

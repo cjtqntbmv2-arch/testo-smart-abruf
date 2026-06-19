@@ -48,9 +48,49 @@
     return rows.map((r) => ({ station: r.station, activeEvents: r.activeEvents, activeCount: r.activeCount }));
   }
 
-  const api = { buildStationOverview };
+  // Decide what one station's history section renders, given its load/collapse state.
+  // Pure: no DOM, no React. The component holds the state and the loaded rows; this
+  // only maps that state to visibility flags so the collapse UX is unit-testable.
+  // state: { loaded, loading, error, done, histOpen, historyCount }
+  function historySectionView(state) {
+    const s = state || {};
+    const has = (s.historyCount || 0) > 0;
+    if (!s.loaded) {
+      // Before the first page is fetched: a single affordance — spinner, error, or load button.
+      return {
+        showLoadButton: !s.loading && !s.error,
+        showLoading: !!s.loading,
+        showError: !s.loading && !!s.error,
+        showToggle: false,
+        showItems: false,
+        showLoadMore: false,
+        showCollapseFoot: false,
+        showEmptyHint: false,
+        count: 0,
+        countSuffix: '',
+      };
+    }
+    // Loaded: the toggle header replaces the load button and is always present.
+    // Body controls are gated behind histOpen so collapsing hides content without
+    // discarding the loaded rows (component keeps them; historyCount stays > 0).
+    return {
+      showLoadButton: false,
+      showToggle: true,
+      showItems: s.histOpen && has,
+      showEmptyHint: s.histOpen && !has && !s.loading && !s.error,
+      showLoading: s.histOpen && !!s.loading,
+      showError: s.histOpen && !s.loading && !!s.error,
+      showLoadMore: s.histOpen && !s.loading && !s.error && !s.done && has,
+      showCollapseFoot: s.histOpen && has,
+      count: s.historyCount || 0,
+      countSuffix: s.done ? '' : '+',
+    };
+  }
+
+  const api = { buildStationOverview, historySectionView };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') {
     window.buildStationOverview = buildStationOverview;
+    window.historySectionView = historySectionView;
   }
 })();
