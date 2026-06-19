@@ -183,14 +183,28 @@ git commit -m "feat(dashboard): add explainSyncError sync-error translation help
 In `backend/tests/server.test.js` nach dem letzten `test(...)`-Block einfügen (mock-Key wird aus früheren Tests bereits gesetzt sein, hier defensiv erneut):
 
 ```js
-test('POST /api/sync stößt einen Sync an und meldet started', async () => {
+test('POST /api/sync startet einen Sync und ist bei laufendem Sync idempotent', async () => {
   saveSetting('api_key', 'mock-api-key');
   saveSetting('api_region', 'eu');
-  const res = await fetch('http://localhost:3001/api/sync', { method: 'POST' });
-  assert.ok(res.status === 202 || res.status === 200);
-  const body = await res.json();
-  assert.ok(body.hasOwnProperty('started'));
-  assert.strictEqual(typeof body.started, 'boolean');
+
+  const res1 = await fetch('http://localhost:3001/api/sync', { method: 'POST' });
+  assert.ok(res1.status === 202 || res1.status === 200);
+  const body1 = await res1.json();
+  assert.strictEqual(typeof body1.started, 'boolean');
+
+  // Zweiter Aufruf: solange der erste Sync läuft, darf nicht erneut gestartet werden.
+  // Race-tolerant: ist der erste (Mock-)Sync schon fertig, ist started===true ebenfalls valide.
+  const res2 = await fetch('http://localhost:3001/api/sync', { method: 'POST' });
+  const body2 = await res2.json();
+  assert.ok(body2.hasOwnProperty('started'));
+
+  // WICHTIG: vor Testende auf Ruhezustand warten, damit after()/closeDb() nicht gegen
+  // einen noch laufenden fire-and-forget-Sync läuft (sonst Write-after-close-Race).
+  for (let i = 0; i < 100; i++) {
+    const s = await (await fetch('http://localhost:3001/api/system/status')).json();
+    if (!s.scheduler.isSyncing) break;
+    await new Promise(r => setTimeout(r, 20));
+  }
 });
 ```
 
@@ -236,7 +250,7 @@ git commit -m "feat(backend): add POST /api/sync to trigger a manual sync cycle"
 - Modify: `Smart Meter Dashboard/Klima Dashboard.html` (CSS nach `.hc-sub`, ~Zeile 1045)
 
 **Interfaces:**
-- Produces: `HealthCard` akzeptiert zusätzlich optionale Props `cause: string`, `causeRaw: string`, `actions: Array<{label, onClick, primary?, disabled?}>`. Werden nur gerendert, wenn vorhanden. Bestehende Aufrufe (nur `status/label/value/sub/icon/progress`) bleiben unverändert funktionsfähig.
+- Produces: `HealthCard` akzeptiert zusätzlich optionale Props `cause: string`, `causeRaw: string`, `actions: Array<{label, onClick, primary?, disabled?}>`. Werden nur gerendert, wenn vorhanden. Bestehende Aufrufe (nur `status/label/value/sub/icon/progress`) bleiben unverändert funktionsfähig. Zusätzlich (Grill-Fix): das Status-Badge wird nur noch für `ok`/`warn`/`err` gerendert — ein unbekannter Status (z. B. Speicher `unknown`) zeigt **kein** rotes „Fehler"-Badge mehr.
 
 - [ ] **Step 1: `HealthCard` ersetzen**
 
@@ -248,7 +262,9 @@ function HealthCard({ status, label, value, sub, icon, progress, cause, causeRaw
     <div className={`health-card st-${status}`}>
       <div className="hc-top">
         <span className="hc-icon"><NavIcon id={icon} /></span>
-        <StatusBadge status={status} label={status === "ok" ? "OK" : status === "warn" ? "Achtung" : "Fehler"} />
+        {(status === "ok" || status === "warn" || status === "err") && (
+          <StatusBadge status={status} label={status === "ok" ? "OK" : status === "warn" ? "Achtung" : "Fehler"} />
+        )}
       </div>
       <div className="hc-value">{value}</div>
       <div className="hc-label">{label}</div>
@@ -385,7 +401,7 @@ Nach `const { database, scheduler, storage, api } = systemStatus;` (Zeile 272) d
     apiCause = ex.plain;
     apiCauseRaw = ex.showRaw ? scheduler.lastSyncError : null;
     apiActions = [
-      { label: resyncing ? 'Synchronisiert…' : 'Erneut synchronisieren', onClick: handleResync, primary: true, disabled: resyncing },
+      { label: resyncing ? 'Sync gestartet…' : 'Erneut synchronisieren', onClick: handleResync, primary: true, disabled: resyncing },
       { label: 'API-Schlüssel prüfen →', onClick: () => onNavigate('api') },
     ];
   } else if (apiStatus === 'warn') {
@@ -423,9 +439,17 @@ Nach `const { database, scheduler, storage, api } = systemStatus;` (Zeile 272) d
   }
 
   // --- Speicherbelegung ---
+  // Grill-Fix: storage.status kann 'unknown' sein (z. B. :memory:-DB oder statfs-Fehler).
+  // Dann sind usedGb/totalGb null → kein "null / null GB", kein NaN-Balken, kein rotes Badge.
   let storageValue = `${storage.usedGb} / ${storage.totalGb} GB`;
+  let storageSub = `${Math.round((storage.usedGb / storage.totalGb) * 100)} % belegt · Pfad: ../klima.db`;
+  let storageProgress = storage.usedGb / storage.totalGb;
   let storageCause = null, storageActions = null;
-  if (storage.status === 'warn') {
+  if (storage.status === 'unknown' || storage.usedGb == null) {
+    storageValue = 'Nicht verfügbar';
+    storageSub = 'Speicherinfo nicht verfügbar · Pfad: ../klima.db';
+    storageProgress = null;
+  } else if (storage.status === 'warn') {
     storageValue = 'Speicher fast voll';
     storageCause = 'Weniger als 1 GB frei.';
     storageActions = [{ label: 'Aufbewahrung anpassen →', onClick: () => onNavigate('database'), primary: true }];
@@ -475,9 +499,9 @@ Anschließend im `return`-JSX (Zeilen 289–336) die sechs `HealthCard`-Aufrufe 
           status={storage.status}
           label="Speicherbelegung (Drive)"
           value={storageValue}
-          sub={`${Math.round((storage.usedGb / storage.totalGb) * 100)} % belegt · Pfad: ../klima.db`}
+          sub={storageSub}
           icon="disk"
-          progress={storage.usedGb / storage.totalGb}
+          progress={storageProgress}
           cause={storageCause}
           actions={storageActions}
         />
@@ -520,12 +544,13 @@ git commit -m "feat(dashboard): enrich overview status cards with cause + action
 Dev-Server starten (Preview-Tools, nicht Bash): Dashboard öffnen → Einstellungen → Übersicht.
 - **Kein API-Schlüssel** (frische DB / Schlüssel entfernt): API-Karte zeigt „Kein API-Schlüssel" (Badge „Achtung"), Ursache „Kein API-Schlüssel hinterlegt.", Aktion „API-Schlüssel hinterlegen →". Klick springt zu „API & Verbindung".
 - **Eine Station offline**: Messstellen-Karte zeigt „1 offline", Ursache nennt den Stationsnamen, Aktion „Messstellen öffnen →".
+- **Speicher (Grill-Fix)**: Im Normalbetrieb (Datei-DB) zeigt die Karte echte GB-Werte. Falls `storage.status==='unknown'` auftritt, zeigt sie „Nicht verfügbar" ohne Balken und **ohne** rotes „Fehler"-Badge (nicht „null / null GB / NaN %").
 - Konsole prüfen (`preview_console_logs`): keine Fehler, keine leere Seite (Hook-Order ok).
 Quelle bei Problemen lesen/fixen, dann erneut prüfen.
 
 - [ ] **Step 2: Live-Verifikation des Fehler-Pfads + Resync**
 
-API-Karte im `err`-Zustand erzeugen: ungültigen, nicht-mock Schlüssel setzen (z. B. über die Settings-UI einen Fantasie-Schlüssel speichern), sodass der nächste Sync mit echtem Fehler endet (`lastSyncStatus = 'error'`). Übersicht zeigt dann „Sync fehlgeschlagen" + übersetzte Ursache + ggf. kleine Rohzeile. „Erneut synchronisieren" klicken → `preview_network` zeigt `POST /api/sync` (202); Button-Label wechselt kurz auf „Synchronisiert…". Danach mock-Schlüssel wiederherstellen.
+API-Karte im `err`-Zustand erzeugen: ungültigen, nicht-mock Schlüssel setzen (z. B. über die Settings-UI einen Fantasie-Schlüssel speichern), sodass der nächste Sync mit echtem Fehler endet (`lastSyncStatus = 'error'`). Übersicht zeigt dann „Sync fehlgeschlagen" + übersetzte Ursache + ggf. kleine Rohzeile. „Erneut synchronisieren" klicken → `preview_network` zeigt `POST /api/sync` (202); Button-Label wechselt kurz auf „Sync gestartet…". **Erwartung (Grill-Hinweis):** Die Karte wird NICHT sofort grün — der Sync läuft asynchron, die Karte heilt sich beim nächsten 10-Sekunden-Poll (bzw. sobald der echte Schlüssel wieder gesetzt ist). Danach mock-Schlüssel wiederherstellen.
 (Die exakten Übersetzungstreffer sind durch die Unit-Tests aus Task 1 abgedeckt.)
 
 - [ ] **Step 3: Screenshot als Nachweis**
@@ -577,6 +602,16 @@ git log --oneline -1
 Expected: Tag `v0.6.0` existiert; HEAD ist der Merge-Commit auf master.
 
 ---
+
+## Aus dem Grilling übernommen
+
+- **Blocking 1 (Test-Race)** → Task 2: Test wartet via `isSyncing`-Poll auf Ruhezustand vor Teardown + prüft zusätzlich den „läuft bereits"-Pfad (Spec-Idempotenz).
+- **Blocking 2 (Speicher null/NaN + rotes Badge)** → Task 4 (unknown-Zweig) + Task 3 (Badge nur für ok/warn/err).
+- **Resync-UX** → ehrliches Label „Sync gestartet…", Selbstheilung über 10s-Poll (bewusst gegen ein Nachpoll-Konstrukt entschieden — YAGNI).
+- **`POST /api/sync` Status** → 200 `{started:false}` bei laufendem Sync (kein Client-Fehler).
+- **Scheduler-Aktion** → Ziel `api`; warn-Zweig ist defensiv (im Normalbetrieb selten erreichbar), live verifizieren.
+
+**Follow-up (außerhalb dieses Scopes):** Die API-Status-String-Ableitung existiert dreifach (Backend `server.js`, `OverviewSection`, `ApiSection`) — Kandidat für spätere Extraktion nach `status-logic.js`.
 
 ## Self-Review
 
