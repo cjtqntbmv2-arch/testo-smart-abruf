@@ -89,7 +89,7 @@ test('metricAlertState: non-array / missing id -> {null,null}', () => {
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `npm test`
-Expected: FAIL in the frontend-logic suite with `metricAlertState is not a function` (or similar). The backend suite still passes.
+Expected: exactly the **7 new `metricAlertState` tests fail** with `metricAlertState is not a function`. The destructure of a not-yet-exported name yields `undefined` (it does **not** throw at require time), so the file still loads and all existing `metricAlertStatus`/`metricTrend`/backend tests stay **green**. Do not read a green summary as "nothing failed" — confirm the 7 new failures are present.
 
 - [ ] **Step 3: Implement `metricAlertState` and delegate**
 
@@ -276,10 +276,10 @@ In `Smart Meter Dashboard/Klima Dashboard.html`:
     --warn-strong: oklch(0.50 0.13 75);
 ```
 
-(b) Migrate every existing literal `oklch(0.50 0.13 75)` to `var(--warn-strong)`. Find them first:
+(b) Migrate **every** existing literal `oklch(0.50 0.13 75)` to `var(--warn-strong)`. There are **four** exact occurrences (currently ~lines 254, 299, 584, 642), not two — trust the grep, not this prose:
 
 Run: `grep -n "oklch(0.50 0.13 75)" "Smart Meter Dashboard/Klima Dashboard.html"`
-Expected hits include `.offline-banner svg` (~line 254) and `.cv-flag.is-warning` (~line 299). Replace the colour value in each (not the new `:root` token line) with `var(--warn-strong)`.
+Replace the colour value in **each** hit (except the new `:root` token line you just added) with `var(--warn-strong)`. Do **not** touch the near-but-different variants `oklch(0.48 0.12 75)` or `oklch(0.25 0.08 75)` — those are deliberately other shades.
 
 (c) Add the warning value colour next to `.cv-value.is-alarm` (~line 296):
 
@@ -287,13 +287,16 @@ Expected hits include `.offline-banner svg` (~line 254) and `.cv-flag.is-warning
   .cv-value.is-warning { color: var(--warn-strong); }
 ```
 
-(d) Make `.cv-flag` a positioning context and add the direction triangle. Change `.cv-flag` (~line 298) to include `position: relative;`, then add:
+(d) Add the direction triangle **contained inside the flag box** — `.tile` has `overflow: hidden` (`Klima Dashboard.html:170`), so the marker must NOT rely on negative offsets that escape the flag/tile (they would be clipped at a tile edge). Change `.cv-flag` (~line 298) into a fixed-size relative box and place the marker at a non-negative corner inside it:
 
 ```css
-  .lf-dir { position: absolute; right: -4px; font-size: 9px; line-height: 1; pointer-events: none; }
-  .lf-dir-high { top: -4px; }
-  .lf-dir-low { bottom: -5px; }
+  .cv-flag { display: inline-flex; align-items: center; justify-content: center; position: relative; width: 17px; height: 15px; }
+  .lf-dir { position: absolute; right: 0; font-size: 9px; line-height: 1; pointer-events: none; }
+  .lf-dir-high { top: -1px; }
+  .lf-dir-low { bottom: -1px; }
 ```
+
+The 13px symbol sits centred in the 17×15 box; the 9px marker overlaps its upper/lower-right corner (the desired "corner badge" look) while staying within the box → never clipped. Replace the existing `.cv-flag { display: inline-flex; align-items: center; }` rule entirely with the rule above.
 
 - [ ] **Step 6: Live-verify the chart tile**
 
@@ -408,6 +411,7 @@ function StatsBody({ tile }) {
         </div>
         {tile.metrics.map((id) => {
           const M = station.metrics[id];
+          if (!M) return null;   // stale metric id (station no longer exposes it) — match ChartBody's guard
           const s = D.stats(M.series);
           const fmt = (v) => (v == null || Number.isNaN(v)) ? "—" : v.toFixed(M.decimals);
           const state = showFlags ? D.metricAlertState(station.events, id) : { severity: null, direction: null };
@@ -608,6 +612,8 @@ If Steps 1–3 surfaced a defect, fix it, re-verify, and commit with a clear `fi
 - Modify: `VERSION`, `README.md` (badge), `package.json`, `Smart Meter Dashboard/Klima Dashboard.html` (`?v=` cache-buster in all script tags)
 
 > Do this LAST, right before integrating to `master`. If the parallel `feat/status-cards-cause-action` branch already merged as 0.6.0, use 0.7.0 / `v0.7.0` throughout instead.
+>
+> **Known merge landmine (verified):** the parallel branch touches `Klima Dashboard.html` only in two spots — a `.hc-*` CSS block (~line 1043, no overlap with this feature) and **one inserted `<script src="status-logic.js?v=0.5.0">` line in the script-tag block (~line 1199)**. Since this task rewrites every `?v=` in that same block, a three-way merge will conflict there — resolve by keeping both the new `status-logic.js` line and the bumped `?v=`. The parallel branch also already bumped `package.json`; whichever branch merges second must re-bump `package.json` + `VERSION` + README badge to the next free number. This feature does **not** touch `app.jsx`/`tiles.jsx` in a way the parallel branch also touches (confirmed: the parallel branch does not modify `app.jsx` or `tiles.jsx`), so those edits will merge cleanly.
 
 - [ ] **Step 1: Confirm the target version is free**
 
