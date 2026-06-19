@@ -379,6 +379,50 @@ test('POST /api/sync startet einen Sync und respektiert den laufenden-Sync-Guard
   }
 });
 
+test('GET /api/stations/:id/events supports limit, active and compound (start_ts,rowid) cursor', async () => {
+  const db = getDb();
+  db.prepare("INSERT OR IGNORE INTO stations (id, name) VALUES ('evpag', 'Pagination Test')").run();
+  db.prepare("DELETE FROM events WHERE station_id = 'evpag'").run();
+  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-act','evpag','alarm',400,420,1)").run();
+  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-r3','evpag','warning',300,350,0)").run();
+  // two resolved events that SHARE start_ts=200 (realistic tie); e-r2a inserted first => lower rowid
+  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-r2a','evpag','warning',200,250,0)").run();
+  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-r2b','evpag','alarm',200,250,0)").run();
+  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, end_ts, active) VALUES ('e-r1','evpag','warning',100,150,0)").run();
+
+  const base = 'http://localhost:3001/api/stations/evpag/events';
+  const ids = (arr) => arr.map((e) => e.uuid);
+
+  // no params => all 5; active first, then start_ts desc, then rowid desc (e-r2b before e-r2a)
+  assert.deepStrictEqual(ids(await (await fetch(base)).json()), ['e-act', 'e-r3', 'e-r2b', 'e-r2a', 'e-r1']);
+  // active=1 => only active
+  assert.deepStrictEqual(ids(await (await fetch(base + '?active=1')).json()), ['e-act']);
+  // active=0 => only resolved, newest first; rowid breaks the start_ts=200 tie
+  assert.deepStrictEqual(ids(await (await fetch(base + '?active=0')).json()), ['e-r3', 'e-r2b', 'e-r2a', 'e-r1']);
+  // rowid is exposed in the payload for the cursor
+  const first = (await (await fetch(base + '?active=0&limit=1')).json())[0];
+  assert.strictEqual(first.uuid, 'e-r3');
+  assert.ok(Number.isInteger(first._rowid));
+
+  // walk the compound cursor at limit=1 — MUST NOT skip the start_ts=200 tie
+  const collected = [];
+  let cursor = null;
+  for (let i = 0; i < 10; i++) {
+    let url = base + '?active=0&limit=1';
+    if (cursor) url += `&before_ts=${cursor.start_ts}&before_rowid=${cursor._rowid}`;
+    const page = await (await fetch(url)).json();
+    if (page.length === 0) break;
+    collected.push(page[0].uuid);
+    cursor = { start_ts: page[0].start_ts, _rowid: page[0]._rowid };
+  }
+  assert.deepStrictEqual(collected, ['e-r3', 'e-r2b', 'e-r2a', 'e-r1']); // both start_ts=200 rows present
+
+  // invalid params ignored => same as no params
+  assert.deepStrictEqual(ids(await (await fetch(base + '?limit=abc&before_ts=xyz&active=2')).json()), ['e-act', 'e-r3', 'e-r2b', 'e-r2a', 'e-r1']);
+  // before_ts beyond all data => empty
+  assert.deepStrictEqual(await (await fetch(base + '?active=0&before_ts=100')).json(), []);
+});
+
 after(() => {
   server.close();
   stopScheduler();

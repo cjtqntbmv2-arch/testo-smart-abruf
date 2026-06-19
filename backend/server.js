@@ -183,12 +183,42 @@ app.get('/api/stations/:id/metrics', (req, res) => {
 });
 
 // GET /api/stations/:id/events
+// Optional query params:
+//   limit       — max rows (positive int); omitted/invalid => no limit (backward compatible)
+//   active      — '0' (resolved only) | '1' (active only); anything else => both
+//   before_ts   — compound cursor anchor (int ms); omitted/invalid => ignored
+//   before_rowid— compound cursor tiebreak (int); only used together with before_ts
+// Cursor (robust against equal start_ts): (start_ts < before_ts) OR (start_ts = before_ts AND rowid < before_rowid).
 app.get('/api/stations/:id/events', (req, res) => {
-  const events = getDb().prepare(`
-    SELECT * FROM events
-    WHERE station_id = ?
-    ORDER BY active DESC, start_ts DESC
-  `).all(req.params.id);
+  const clauses = ['station_id = ?'];
+  const params = [req.params.id];
+
+  if (req.query.active === '0' || req.query.active === '1') {
+    clauses.push('active = ?');
+    params.push(Number(req.query.active));
+  }
+
+  const beforeTs = Number.parseInt(req.query.before_ts, 10);
+  if (Number.isFinite(beforeTs)) {
+    const beforeRowid = Number.parseInt(req.query.before_rowid, 10);
+    if (Number.isFinite(beforeRowid)) {
+      clauses.push('(start_ts < ? OR (start_ts = ? AND rowid < ?))');
+      params.push(beforeTs, beforeTs, beforeRowid);
+    } else {
+      clauses.push('start_ts < ?');
+      params.push(beforeTs);
+    }
+  }
+
+  let sql = `SELECT *, rowid AS _rowid FROM events WHERE ${clauses.join(' AND ')} ORDER BY active DESC, start_ts DESC, rowid DESC`;
+
+  const limit = Number.parseInt(req.query.limit, 10);
+  if (Number.isFinite(limit) && limit > 0) {
+    sql += ' LIMIT ?';
+    params.push(limit);
+  }
+
+  const events = getDb().prepare(sql).all(...params);
   res.json(events);
 });
 
