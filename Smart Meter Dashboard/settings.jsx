@@ -892,12 +892,14 @@ function StatusBadge({ status, label }) {
   );
 }
 
-function HealthCard({ status, label, value, sub, icon, progress }) {
+function HealthCard({ status, label, value, sub, icon, progress, cause, causeRaw, actions }) {
   return (
     <div className={`health-card st-${status}`}>
       <div className="hc-top">
         <span className="hc-icon"><NavIcon id={icon} /></span>
-        <StatusBadge status={status} label={status === "ok" ? "OK" : status === "warn" ? "Achtung" : "Fehler"} />
+        {(status === "ok" || status === "warn" || status === "err") && (
+          <StatusBadge status={status} label={status === "ok" ? "OK" : status === "warn" ? "Achtung" : "Fehler"} />
+        )}
       </div>
       <div className="hc-value">{value}</div>
       <div className="hc-label">{label}</div>
@@ -905,6 +907,20 @@ function HealthCard({ status, label, value, sub, icon, progress }) {
         <div className="hc-progress"><span style={{ width: `${Math.min(100, progress * 100)}%` }} /></div>
       )}
       <div className="hc-sub">{sub}</div>
+      {cause && (
+        <div className="hc-cause">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>{cause}</span>
+        </div>
+      )}
+      {causeRaw && <div className="hc-cause-raw">{causeRaw}</div>}
+      {actions && actions.length > 0 && (
+        <div className="hc-actions">
+          {actions.map((a, i) => (
+            <button key={i} className={`btn ${a.primary ? "primary" : ""}`} disabled={a.disabled} onClick={a.onClick}>{a.label}</button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
