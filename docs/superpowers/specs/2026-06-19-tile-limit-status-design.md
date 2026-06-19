@@ -20,7 +20,7 @@ In allen **Wert-Kacheln** (`kpi`, `chart`, `stats`) wird der Grenzwert-Status **
 
 1. **Wert-Einfärbung:** aktive Warnung → Wert in Warn-Farbe (dunkles Gelb); aktiver Alarm → Wert in Alarm-Farbe (Rot). Alarm schlägt Warnung.
 2. **Warn-/Alarm-Symbol** (das bestehende Dreieck) neben dem Wert — wie heute in der Diagramm-Kachel, jetzt auch in `kpi` und `stats`.
-3. **Richtungs-Dreieck** am Symbol: ▲ oben rechts = oberer Grenzwert überschritten (`high`), ▼ unten rechts = unterer Grenzwert unterschritten (`low`).
+3. **Richtungs-Symbol** am Warn-/Alarm-Symbol (Eckmarke „Grenzlinie + Spitze", **kein** ▲/▼ — sonst Verwechslung mit dem Trendpfeil): kurze waagerechte Grenzlinie mit Spitze **darüber** = oberer Grenzwert überschritten (`high`), Spitze **darunter** = unterer Grenzwert unterschritten (`low`). Einheitlich in allen drei Kachel-Typen.
 4. **Kein aktives Event** → Wert in Normalfarbe, kein Symbol.
 5. Gilt für **alle in der Kachel gewählten Messwerte** gemeinsam (ein Kontrollkästchen pro Kachel).
 
@@ -92,7 +92,7 @@ Beide werden im Browser als Globals gesetzt und in Node exportiert; `data.js` re
 
 **`LimitFlag({ severity, direction })`** (ersetzt `AlertFlag`):
 - rendert das bestehende Warn-/Alarm-Dreieck-SVG (`<path d="M7 2l6 10H1z"/>` + Ausrufezeichen), Farbe per Modifier `is-warning`/`is-alarm` wie heute;
-- zusätzlich ein kleines Richtungs-Dreieck als Eckmarke: `<span class="lf-dir lf-dir-high">▲</span>` (oben rechts) bzw. `lf-dir-low` `▼` (unten rechts);
+- zusätzlich ein kleines Richtungs-SVG „Grenzlinie + Spitze" als Eckmarke (`.lf-dir.lf-dir-high` = Spitze über der Linie / `.lf-dir-low` = Spitze unter der Linie), `fill="currentColor"` (erbt die Flag-Farbe). Exakte Pfade siehe Plan (`LimitFlag`);
 - `aria-label`/`title`: z. B. „Alarm aktiv · oberer Grenzwert" / „Warnung aktiv · unterer Grenzwert".
 
 **Wert-Einfärbung** je Kachel-Body, nur wenn `showLimitFlags`:
@@ -112,7 +112,7 @@ Hinweis Abgrenzung: Das 24-h-**Trend**-Dreieck der Kennzahl-Kachel (`.kpi-trend 
 
 - Neues Token **`--warn-strong: oklch(0.50 0.13 75)`** im `:root`. Die bereits **drei** vorhandenen Vorkommen dieses Literals (`.cv-flag.is-warning`, `.offline-banner svg`, ggf. weitere) werden auf das Token migriert (kleine, im Rahmen liegende Aufräumung), neue Vorkommen nutzen es ebenfalls.
 - Wert-Einfärbung Warnung: `.cv-value.is-warning`, `.kpi-value .num.is-warning`, `.srow-v.current.is-warning` → `color: var(--warn-strong)`. Alarm-Pendants (`.is-alarm`) für `.kpi-value .num` und `.srow-v.current` ergänzen (`color: var(--alarm)`; `.cv-value.is-alarm` existiert bereits).
-- Richtungs-Dreieck: `.cv-flag { position: relative }` + `.lf-dir { position:absolute; right:-4px; font-size:9–10px; line-height:1 }`, `.lf-dir-high { top:-4px }`, `.lf-dir-low { bottom:-5px }`. Farbe erbt vom `.cv-flag`-Modifier (`currentColor`).
+- Richtungs-Symbol: `.cv-flag` wird eine fixe relative Box (17×15, Symbol zentriert) — wichtig, weil `.tile` `overflow:hidden` hat (Eckmarke darf nicht aus der Box/Kachel ragen → würde geclippt). `.lf-dir` (das 9px-SVG) sitzt mit `right:0` + `top:0`/`bottom:0` in der Ecke. Farbe erbt vom `.cv-flag`-Modifier (`currentColor`).
 - Kontrollkästchen-Zeile im Dialog: schlichter `.dialog-check`-Stil (Checkbox + Label), passend zu `.field`/`.dialog-foot`.
 
 ## Edge Cases
@@ -148,5 +148,5 @@ MINOR-Bump **0.5.0 → 0.6.0** (neues, abwärtskompatibles Feature), synchron in
 
 ## Offene Punkte
 
-- Exakte Pixel-Platzierung/Größe des Richtungs-Dreiecks (`.lf-dir`) und die finale Warn-Wertfarbe werden in der Live-Verifikation feinjustiert (Startwert: `--warn-strong`).
+- Exakte Pixel-Platzierung/Größe des Richtungs-Symbols (`.lf-dir`, „Grenzlinie + Spitze") und die finale Warn-Wertfarbe werden in der Live-Verifikation feinjustiert (Startwert: `--warn-strong`).
 - Engstand in der `stats`-„Aktuell"-Zelle (5-Spalten-Grid): falls Symbol + Richtung dort zu eng wird, im Plan kleinere Symbolgröße bzw. Umbruchregel festlegen.

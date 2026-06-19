@@ -13,7 +13,7 @@
 - **No backend/API/DB change.** Status + direction derive only from existing frontend data (`station.events`).
 - **Default ON everywhere:** `tile.limitFlags === undefined` ⇒ treated as on. Render gate is always `tile.limitFlags !== false`.
 - **In scope:** tile types `kpi`, `chart`, `stats`. **Out of scope and untouched:** `gauge` (separate future feature), `alerts` (no checkbox — it is the alarm list itself).
-- **Direction semantics:** `condition === 'high'` ⇒ upper limit exceeded ⇒ ▲ (top-right); `condition === 'low'` ⇒ lower limit undershot ⇒ ▼ (bottom-right). Unknown/missing ⇒ `'high'`.
+- **Direction semantics:** `condition === 'high'` ⇒ upper limit exceeded ⇒ "limit-line + spike" glyph with the spike ABOVE the line; `condition === 'low'` ⇒ lower limit undershot ⇒ spike BELOW the line. Unknown/missing ⇒ `'high'`. This glyph is a small SVG corner badge on the warn/alarm symbol — deliberately NOT a ▲/▼ (would clash with the tiles' trend arrow). Identical across kpi/chart/stats.
 - **Colour tokens:** alarm value/symbol = `var(--alarm)`; warning value/symbol = `var(--warn-strong)` (= `oklch(0.50 0.13 75)`, the existing warn-symbol colour, promoted to a token in Task 2). Do **not** use the light `var(--warn)` for text/symbols.
 - **Babel-in-browser caution:** do not introduce bare `useState`/`useEffect`/etc. in `.jsx` files — they collide with other files' globals and blank the page. `tiles.jsx` uses aliases `tRef/tEff/tState`; `app.jsx` uses `aState/aEff`. `LimitFlag` uses no hooks.
 - **Worktree hygiene:** never `git add -A` (node_modules symlink trap); add exact paths only.
@@ -202,12 +202,21 @@ function LimitFlag({ severity, direction }) {
   const sevLabel = severity === "alarm" ? "Alarm aktiv" : "Warnung aktiv";
   const low = direction === "low";
   const label = `${sevLabel} · ${low ? "unterer" : "oberer"} Grenzwert`;
+  // Direction glyph "limit-line + spike": short threshold line with the value-spike
+  // above it (upper limit exceeded) or below it (lower limit undershot). Built as an
+  // element array (no JSX fragment) to match the codebase's plain style. Inherits the
+  // flag colour via fill="currentColor".
+  const dirPaths = low
+    ? [<rect key="line" x="2" y="4.2" width="8" height="1.6" />, <path key="spike" d="M6 11l-3-4h6z" />]
+    : [<path key="spike" d="M6 1l3 4H3z" />, <rect key="line" x="2" y="6.2" width="8" height="1.6" />];
   return (
     <span className={`cv-flag is-${severity}`} role="img" aria-label={label} title={label}>
       <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
         <path d="M7 2l6 10H1z"/><path d="M7 6v3M7 10.5v.5" strokeLinecap="round"/>
       </svg>
-      <span className={`lf-dir lf-dir-${low ? "low" : "high"}`} aria-hidden="true">{low ? "▼" : "▲"}</span>
+      <svg className={`lf-dir lf-dir-${low ? "low" : "high"}`} width="9" height="9" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+        {dirPaths}
+      </svg>
     </span>
   );
 }
@@ -287,16 +296,16 @@ Replace the colour value in **each** hit (except the new `:root` token line you 
   .cv-value.is-warning { color: var(--warn-strong); }
 ```
 
-(d) Add the direction triangle **contained inside the flag box** — `.tile` has `overflow: hidden` (`Klima Dashboard.html:170`), so the marker must NOT rely on negative offsets that escape the flag/tile (they would be clipped at a tile edge). Change `.cv-flag` (~line 298) into a fixed-size relative box and place the marker at a non-negative corner inside it:
+(d) Position the direction glyph **contained inside the flag box** — `.tile` has `overflow: hidden` (`Klima Dashboard.html:170`), so the glyph must NOT rely on offsets that escape the flag/tile (they would be clipped at a tile edge). Change `.cv-flag` (~line 298) into a fixed-size relative box and place the 9px SVG glyph at the right corner inside it:
 
 ```css
   .cv-flag { display: inline-flex; align-items: center; justify-content: center; position: relative; width: 17px; height: 15px; }
-  .lf-dir { position: absolute; right: 0; font-size: 9px; line-height: 1; pointer-events: none; }
-  .lf-dir-high { top: -1px; }
-  .lf-dir-low { bottom: -1px; }
+  .lf-dir { position: absolute; right: 0; pointer-events: none; }
+  .lf-dir-high { top: 0; }
+  .lf-dir-low { bottom: 0; }
 ```
 
-The 13px symbol sits centred in the 17×15 box; the 9px marker overlaps its upper/lower-right corner (the desired "corner badge" look) while staying within the box → never clipped. Replace the existing `.cv-flag { display: inline-flex; align-items: center; }` rule entirely with the rule above.
+The 13px warn/alarm symbol sits centred in the 17×15 box; the 9px `lf-dir` glyph (an `<svg>`, not text — no `font-size`) overlaps its upper/lower-right corner (the "corner badge" look) while staying within the box → never clipped. It fills with `currentColor`, so it inherits `var(--warn-strong)` / `var(--alarm)` from the `.cv-flag.is-*` modifier. Replace the existing `.cv-flag { display: inline-flex; align-items: center; }` rule entirely with the rule above.
 
 - [ ] **Step 6: Live-verify the chart tile**
 
