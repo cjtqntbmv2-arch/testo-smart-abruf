@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText } = require('../device-bridge');
+const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText, measurementAlarmText } = require('../device-bridge');
 
 test('mapPhysicalProperty maps testo property names to dashboard metrics', () => {
   assert.strictEqual(mapPhysicalProperty('Temperature'), 'temperature');
@@ -246,4 +246,52 @@ test('systemAlarmText returns German headline + detail per system subtype, with 
   assert.deepStrictEqual(systemAlarmText('unbekannt'), systemAlarmText('maintenance'));
   assert.deepStrictEqual(systemAlarmText(null), systemAlarmText('maintenance'));
   assert.deepStrictEqual(systemAlarmText(undefined), systemAlarmText('maintenance'));
+});
+
+test('measurementAlarmText builds a German metric+direction headline, falling back to direction-only then generic', () => {
+  // Known metric + direction: the clearest possible headline.
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: true, direction: 'high', metric: 'humidity', serialNo: '51620927', alarmValue: 55.6 }).message,
+    'Luftfeuchte zu hoch');
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: true, direction: 'low', metric: 'temperature', serialNo: 'SN1', alarmValue: 4.2 }).message,
+    'Temperatur zu niedrig');
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: true, direction: 'high', metric: 'pressure', serialNo: 'SN1', alarmValue: 1100 }).message,
+    'Druck zu hoch');
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: true, direction: 'low', metric: 'dewpoint', serialNo: 'SN1', alarmValue: -5 }).message,
+    'Taupunkt zu niedrig');
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: true, direction: 'high', metric: 'abshumid', serialNo: 'SN1', alarmValue: 30 }).message,
+    'Absolute Feuchte zu hoch');
+
+  // Recovery (alarm_status 'Ok'): metric without direction, since the value is back in range.
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: false, direction: 'high', metric: 'humidity', serialNo: 'SN1', alarmValue: 54.1 }).message,
+    'Luftfeuchte wieder im Normbereich');
+
+  // Unknown/null metric (e.g. an unmapped CO₂ channel) → precise direction-only wording.
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: true, direction: 'high', metric: null, serialNo: 'SN1', alarmValue: 9 }).message,
+    'Oberer Grenzwert überschritten');
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: true, direction: 'low', metric: null, serialNo: 'SN1', alarmValue: 1 }).message,
+    'Unterer Grenzwert unterschritten');
+
+  // Neither metric nor direction known → safe generic German (never English, never "undefined").
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: true, direction: null, metric: null, serialNo: 'SN1', alarmValue: 1 }).message,
+    'Grenzwert verletzt');
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: false, direction: null, metric: null, serialNo: 'SN1', alarmValue: 1 }).message,
+    'Grenzwert wieder eingehalten');
+
+  // Detail mirrors the scheduler/systemAlarmText shape, with the null-value guard intact.
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: true, direction: 'high', metric: 'temperature', serialNo: 'SN123', alarmValue: 28.5 }).detail,
+    'Sensor SN123 hat einen Wert von 28.5 gemeldet.');
+  assert.strictEqual(
+    measurementAlarmText({ isViolation: true, direction: 'high', metric: 'temperature', serialNo: 'SN123', alarmValue: null }).detail,
+    'Sensor SN123 hat einen Grenzwert verletzt.');
 });

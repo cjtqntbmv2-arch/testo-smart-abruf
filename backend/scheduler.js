@@ -1,6 +1,6 @@
 const { getDb, getSetting, saveSetting } = require('./db');
 const TestoClient = require('./testo-client');
-const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText } = require('./device-bridge');
+const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText, measurementAlarmText } = require('./device-bridge');
 
 let isSyncing = false;
 let lastSyncTime = null;
@@ -311,25 +311,31 @@ async function runSyncCycle(customClient = null) {
             : null;
 
           const metric = mapPhysicalProperty(a.physical_property_name, a.physical_extension);
-          // Threshold lookup: system alarms have no measurement threshold; for
-          // measurement alarms derive direction from the condition type string and
-          // look up the pre-loaded limits cache. Falls back to null when no matching
-          // limit was synced (e.g. first run before measuring-objects are fetched, or
-          // a conflict caused the key to be dropped from the cache).
+          // Threshold direction from the condition type string ("Upper limit"/"Lower
+          // limit"); also drives the German headline below. System alarms carry no
+          // measurement threshold or direction.
+          const direction = severity !== 'system' ? alarmConditionDirection(a.alarm_condition_type) : null;
+          // Threshold lookup: for measurement alarms look up the pre-loaded limits cache.
+          // Falls back to null when no matching limit was synced (e.g. first run before
+          // measuring-objects are fetched, or a conflict dropped the key from the cache).
           let threshold = null;
-          if (severity !== 'system' && metric) {
-            const direction = alarmConditionDirection(a.alarm_condition_type);
-            if (direction) threshold = limitsCache.get(`${metric}:${direction}:${severity}`) ?? null;
+          if (severity !== 'system' && metric && direction) {
+            threshold = limitsCache.get(`${metric}:${direction}:${severity}`) ?? null;
           }
 
+          // Headline/detail: system alarms get systemAlarmText; measurement alarms get a
+          // German metric+direction headline (never the raw English alarm_reason).
           let message, detail;
           if (severity === 'system') {
             ({ message, detail } = systemAlarmText(systemType));
           } else {
-            message = a.alarm_reason || 'Grenzwert verletzt';
-            detail = alarmValue != null
-              ? `Sensor ${a.serial_no} hat einen Wert von ${alarmValue} gemeldet.`
-              : `Sensor ${a.serial_no} hat einen Grenzwert verletzt.`;
+            ({ message, detail } = measurementAlarmText({
+              isViolation: a.alarm_status === 'Alarm',
+              direction,
+              metric,
+              serialNo: a.serial_no,
+              alarmValue,
+            }));
           }
 
           insertAlarmStmt.run(

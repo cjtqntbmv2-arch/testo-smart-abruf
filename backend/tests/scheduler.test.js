@@ -821,6 +821,47 @@ test('Measurement alarm with a non-numeric value gets a generic detail, never "W
   closeDb();
 });
 
+test('Measurement alarm headline is German (metric + direction), not the raw English alarm_reason', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  saveSetting('api_region', 'eu');
+
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
+    .run('emc', 'EMC', 'dev-1');
+
+  // testo delivers the generic English headline "Alarm condition is violated"/"… adhered".
+  // The dashboard must show a German metric+direction headline instead.
+  const alarms = [
+    {
+      uuid: 'meas-viol-1', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
+      alarm_type: 'measurement alarm', alarm_severity: 'Warning', alarm_status: 'Alarm',
+      alarm_reason: 'Alarm condition is violated', alarm_condition_type: 'Upper limit',
+      alarm_value: '28.5', physical_property_name: 'Temperature', physical_extension: 'Air Temperature',
+      alarm_time: '2026-05-29T06:10:00Z', last_status_change_time: '2026-05-29T06:10:00Z'
+    },
+    {
+      uuid: 'meas-rec-1', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
+      alarm_type: 'measurement alarm', alarm_severity: 'Warning', alarm_status: 'Ok',
+      alarm_reason: 'Alarm condition is adhered', alarm_condition_type: 'Upper limit',
+      alarm_value: '24.1', physical_property_name: 'Temperature', physical_extension: 'Air Temperature',
+      alarm_time: '2026-05-29T07:10:00Z', last_status_change_time: '2026-05-29T07:10:00Z'
+    },
+  ];
+
+  await schedulerModule.runSyncCycle(new MockTestoClient(alarms));
+
+  const viol = db.prepare("SELECT message, detail FROM events WHERE uuid = ?").get('meas-viol-1');
+  assert.strictEqual(viol.message, 'Temperatur zu hoch');
+  assert.strictEqual(viol.detail, 'Sensor SN123 hat einen Wert von 28.5 gemeldet.');
+  assert.ok(!/Alarm condition/.test(viol.message), 'headline darf kein englisches "Alarm condition" enthalten');
+
+  const rec = db.prepare("SELECT message FROM events WHERE uuid = ?").get('meas-rec-1');
+  assert.strictEqual(rec.message, 'Temperatur wieder im Normbereich');
+
+  closeDb();
+});
+
 test('Sync ingests a non-connection/non-battery system alarm with the maintenance fallback text', async () => {
   initDb();
   saveSetting('api_key', 'mock-key');

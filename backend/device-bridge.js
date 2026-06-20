@@ -122,6 +122,55 @@ function systemAlarmText(systemType) {
   }
 }
 
+// German metric labels for measurement-alarm headlines. Keyed by the metric values
+// mapPhysicalProperty produces. A metric that maps to null (e.g. an unmapped CO₂ channel)
+// has no entry and falls back to direction-only wording below.
+const METRIC_LABELS_DE = {
+  temperature: 'Temperatur',
+  humidity: 'Luftfeuchte',
+  pressure: 'Druck',
+  dewpoint: 'Taupunkt',
+  abshumid: 'Absolute Feuchte',
+};
+
+// Build the German headline + detail for a measurement (threshold) alarm. testo delivers
+// the headline as the English, metric-agnostic alarm_reason ("Alarm condition is violated"/
+// "… is adhered") — identical for an over-temperature and an under-humidity breach, which
+// is uninformative. This re-derives a meaningful German headline from data already on the
+// row, mirroring systemAlarmText so feed-based measurement and system messages read alike.
+//   isViolation - true for a breach (alarm_status 'Alarm'), false for a recovery ('Ok')
+//   direction   - 'high' | 'low' | null (from alarmConditionDirection on the condition type)
+//   metric      - dashboard metric key | null (from mapPhysicalProperty)
+//   serialNo    - sensor serial, for the detail line
+//   alarmValue  - measured value (number) or null
+// Preference order: "<Metrik> zu hoch/niedrig" → "Oberer/Unterer Grenzwert …" → generic.
+// The detail keeps the null-value guard so a missing value never prints the literal "null".
+function measurementAlarmText({ isViolation, direction, metric, serialNo, alarmValue } = {}) {
+  const label = METRIC_LABELS_DE[metric] || null;
+
+  let message;
+  if (!isViolation) {
+    // Recovery: the value is back in range, so direction is irrelevant.
+    message = label ? `${label} wieder im Normbereich` : 'Grenzwert wieder eingehalten';
+  } else if (label && direction === 'high') {
+    message = `${label} zu hoch`;
+  } else if (label && direction === 'low') {
+    message = `${label} zu niedrig`;
+  } else if (direction === 'high') {
+    message = 'Oberer Grenzwert überschritten';
+  } else if (direction === 'low') {
+    message = 'Unterer Grenzwert unterschritten';
+  } else {
+    message = 'Grenzwert verletzt';
+  }
+
+  const detail = alarmValue != null
+    ? `Sensor ${serialNo} hat einen Wert von ${alarmValue} gemeldet.`
+    : `Sensor ${serialNo} hat einen Grenzwert verletzt.`;
+
+  return { message, detail };
+}
+
 // Build lookup maps from Device Properties rows (one row per channel).
 function buildDeviceBridge(properties) {
   const sensorToDevice = new Map();
@@ -266,4 +315,4 @@ function parseAlarmConfiguration(moRows) {
   return results;
 }
 
-module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText };
+module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText, measurementAlarmText };
