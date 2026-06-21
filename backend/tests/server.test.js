@@ -423,6 +423,22 @@ test('GET /api/stations/:id/events supports limit, active and compound (start_ts
   assert.deepStrictEqual(await (await fetch(base + '?active=0&before_ts=100')).json(), []);
 });
 
+test('GET /api/stations/:id/events hides recovery (Ok) rows, keeps Alarm and sys-* rows', async () => {
+  const db = getDb();
+  db.prepare("INSERT INTO stations (id, name) VALUES ('evfilt','EvFilt')").run();
+  const t = Date.now() - 3600000;
+  db.prepare("INSERT INTO events (uuid, station_id, severity, alarm_status, start_ts, active) VALUES ('ev-alarm','evfilt','warning','Alarm',?,0)").run(t);
+  db.prepare("INSERT INTO events (uuid, station_id, severity, alarm_status, start_ts, active) VALUES ('ev-ok','evfilt','warning','Ok',?,0)").run(t + 60000);
+  db.prepare("INSERT INTO events (uuid, station_id, severity, alarm_status, start_ts, active) VALUES ('ev-sys','evfilt','system',NULL,?,0)").run(t + 120000);
+
+  const res = await fetch('http://localhost:3001/api/stations/evfilt/events?active=0');
+  assert.strictEqual(res.status, 200);
+  const uuids = (await res.json()).map(e => e.uuid);
+  assert.ok(uuids.includes('ev-alarm'), 'violation rows are shown');
+  assert.ok(uuids.includes('ev-sys'), 'self-derived sys-* rows are shown');
+  assert.ok(!uuids.includes('ev-ok'), 'recovery (Ok) rows are hidden');
+});
+
 after(() => {
   server.close();
   stopScheduler();

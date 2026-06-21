@@ -193,6 +193,12 @@ app.get('/api/stations/:id/events', (req, res) => {
   const clauses = ['station_id = ?'];
   const params = [req.params.id];
 
+  // Recovery transitions ('Ok') are the closing edge of an episode, not standalone
+  // events — their timestamp is folded into the violation's duration (end_ts), so they
+  // must never render as their own card. Self-derived sys-* rows (alarm_status NULL)
+  // and active rows (never 'Ok') are unaffected.
+  clauses.push("(alarm_status IS NULL OR alarm_status <> 'Ok')");
+
   if (req.query.active === '0' || req.query.active === '1') {
     clauses.push('active = ?');
     params.push(Number(req.query.active));
