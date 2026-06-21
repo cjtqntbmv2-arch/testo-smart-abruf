@@ -227,18 +227,37 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Defensiver `NaN`-Guard in `formatDuration`
+### Task 3: `null`-feste Dauer-Anzeige (Aufruf-Stelle + `formatDuration`-Guard)
 
 **Files:**
+- Modify: `Smart Meter Dashboard/tiles.jsx` (beide Event-Dauer-Aufrufe, aktuell Zeilen 513 und 562)
 - Modify: `Smart Meter Dashboard/data.js` (`formatDuration`, aktuell Zeilen 365–372)
 
 **Interfaces:**
 - Consumes: nichts Neues.
-- Produces: `formatDuration(ms)` gibt für nicht-endliche `ms` (`NaN`/`null`/`undefined`) `"—"` zurück, statt „NaN h".
+- Produces: Eine inaktive Zeile mit `end_ts = null` zeigt `"—"` statt einer Müll-Dauer; `formatDuration(ms)` gibt für nicht-endliche `ms` (`NaN`/`undefined`) `"—"` zurück.
 
-**Hinweis:** `data.js` ist die Browser-Datenschicht (Objekt-Literal, via Babel im Browser geladen) und hat keinen node-Unit-Test-Harness. Der Guard ist ein defensiver Einzeiler für den Fall einer inaktiven Zeile ohne `end_ts` (kommt bei sichtbaren Zeilen normalerweise nicht vor, da inaktive Verletzungen stets einen Folge-Übergang haben). Die korrekte Dauer-Anzeige wird in Task 4 in der Preview verifiziert.
+**Warum zwei Stellen (wichtiger Korrektheits-Hinweis):** Der naheliegende `formatDuration`-Guard `if (!Number.isFinite(ms))` allein **reicht nicht**: Das Frontend ruft `formatDuration(e.endTs - e.startTs)` auf. Ist `e.endTs` SQL-`NULL` → JS `null`, dann ist `null - startTs` eine **endliche negative Zahl** (`null` wird zu `0` gecoerced), **kein `NaN`** — der Guard greift nicht und es erscheint „< 1 min". Nur `undefined - startTs` ergäbe `NaN`. Der `null`-Fall muss daher an der **Aufruf-Stelle** abgefangen werden (`e.endTs == null`). Empirisch verifiziert: `null - startTs = -1780036200000`, `Number.isFinite === true`, `formatDuration` → „< 1 min".
 
-- [ ] **Step 1: Guard einfügen** (`Smart Meter Dashboard/data.js`)
+`data.js` ist die Browser-Datenschicht (Objekt-Literal, via Babel geladen) ohne node-Unit-Test-Harness. Beide Änderungen sind defensive Einzeiler — der `null`-`end_ts`-Fall tritt bei sichtbaren Zeilen normalerweise nicht auf (inaktive Verletzungen haben stets einen Folge-Übergang), aber die Defensive ist damit tatsächlich wirksam und die Anzeige nie irreführend. Korrekte Dauer-Anzeige wird in Task 4 in der Preview verifiziert.
+
+- [ ] **Step 1: Aufruf-Stelle `null`-fest machen** (`Smart Meter Dashboard/tiles.jsx`)
+
+Beide identischen Zeilen (513 und 562) von:
+
+```jsx
+          <div className="ev-dur">{e.active ? "läuft" : D.formatDuration(e.endTs - e.startTs)}</div>
+```
+
+ändern zu:
+
+```jsx
+          <div className="ev-dur">{e.active ? "läuft" : (e.endTs == null ? "—" : D.formatDuration(e.endTs - e.startTs))}</div>
+```
+
+(Hinweis: Zeile 513 steht im System-Alarm-Zweig, Zeile 562 im Messwert-Zweig; beide bekommen exakt dieselbe Änderung.)
+
+- [ ] **Step 2: `formatDuration`-Guard gegen `NaN`/`undefined` ergänzen** (`Smart Meter Dashboard/data.js`)
 
 `formatDuration` so ändern (erste Zeile ergänzen):
 
@@ -254,19 +273,19 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
     },
 ```
 
-- [ ] **Step 2: Manuelle Plausibilität (kein Build-Step)**
+- [ ] **Step 3: Manuelle Plausibilität (kein Build-Step)**
 
 Run:
 ```bash
-node -e "const f=(ms)=>{if(!Number.isFinite(ms))return '—';const m=Math.round(ms/60000);if(m<1)return '< 1 min';if(m<60)return m+' min';const h=Math.floor(m/60),rm=m%60;return rm?h+' h '+rm+' min':h+' h';}; console.log(f(NaN),'|',f(null),'|',f(47*60000),'|',f(72*60000),'|',f(30000))"
+node -e "const f=(ms)=>{if(!Number.isFinite(ms))return '—';const m=Math.round(ms/60000);if(m<1)return '< 1 min';if(m<60)return m+' min';const h=Math.floor(m/60),rm=m%60;return rm?h+' h '+rm+' min':h+' h';}; const startTs=1780036200000; console.log('callsite null:', (null==null?'—':'x'), '| f(undefined-startTs):', f(undefined-startTs), '| f(47min):', f(47*60000), '| f(72min):', f(72*60000), '| f(30s):', f(30000))"
 ```
-Expected: `— | — | 47 min | 1 h 12 min | < 1 min` (Guard greift, Zahlfälle unverändert).
+Expected: `callsite null: — | f(undefined-startTs): — | f(47min): 47 min | f(72min): 1 h 12 min | f(30s): < 1 min` (Aufruf-Stelle fängt `null`, Guard fängt `NaN`, Zahlfälle unverändert).
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add "Smart Meter Dashboard/data.js"
-git commit -m "fix(ui): formatDuration faengt nicht-endliche Dauer mit Strich ab
+git add "Smart Meter Dashboard/tiles.jsx" "Smart Meter Dashboard/data.js"
+git commit -m "fix(ui): Dauer-Anzeige faengt null end_ts an der Aufruf-Stelle ab
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
@@ -351,6 +370,6 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Self-Review-Notiz (Plan ↔ Spec)
 
 - Spec-Lösung 1 (Reconciliation `end_ts`) → Task 1. Spec-Lösung 2 (Endpoint-Filter) → Task 2. Spec-Lösung 3 (`formatDuration`-Guard) → Task 3. Versionierung → Task 4.
-- Spec-Tests: Episodendauer-Paar, aktive Verletzung `end_ts NULL`, zwei Verletzungen ohne Entspannung (via `adhered→violated`-Kette in Task-1-Test 1 + `LEAD`-Generik), Partition-Trennung (Task-1-Test 2), `'Ok'`-Filter inkl. `sys-*`/aktiv (Task 2), `formatDuration`-Guard (Task 3 Step 2).
+- Spec-Tests: Episodendauer-Paar, aktive Verletzung `end_ts NULL`, zwei Verletzungen ohne Entspannung (via `adhered→violated`-Kette in Task-1-Test 1 + `LEAD`-Generik), Partition-Trennung (Task-1-Test 2), `'Ok'`-Filter inkl. `sys-*`/aktiv (Task 2), `null`-feste Dauer-Anzeige an Aufruf-Stelle + `formatDuration`-`NaN`-Guard (Task 3, via Grill-Review nachgeschärft).
 - Akzeptanzkriterien 1–7 der Spec sind durch Task 1 (1,3), Task 2 (2,4), „Migration"-Verhalten (5, Task 4 Step 4), `npm test` (6) und Versionskonsistenz (7) abgedeckt.
 - Keine Migration nötig — Bestandsdaten heilen sich beim nächsten Sync; Task 4 Step 4 belegt das auf der realen DB.
