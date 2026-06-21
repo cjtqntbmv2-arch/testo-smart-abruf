@@ -892,3 +892,76 @@ test('Sync ingests a non-connection/non-battery system alarm with the maintenanc
 
   closeDb();
 });
+
+test('Sync derives episode end_ts from the next transition in the same group', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  saveSetting('api_region', 'eu');
+
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
+    .run('emc', 'EMC', 'dev-1');
+
+  const base = Date.parse('2026-05-29T06:00:00Z');
+  const mk = (uuid, status, offsetMin) => ({
+    uuid, serial_no: 'SN123', alarm_source_uuid: 'dev-1',
+    alarm_type: 'device system alarm', alarm_severity: 'Warning', alarm_status: status,
+    alarm_reason: status === 'Alarm' ? 'Alarm condition is violated' : 'Alarm condition is adhered',
+    alarm_condition_type: 'Connection timeout, device did not communicated in expected time',
+    alarm_value: null,
+    alarm_time: new Date(base + offsetMin * 60000).toISOString(),
+    last_status_change_time: new Date(base + offsetMin * 60000).toISOString(),
+  });
+
+  // violated(0) -> adhered(20) -> violated(40), one logical group
+  await schedulerModule.runSyncCycle(new MockTestoClient([
+    mk('v1', 'Alarm', 0),
+    mk('a1', 'Ok', 20),
+    mk('v2', 'Alarm', 40),
+  ]));
+
+  const by = Object.fromEntries(
+    db.prepare("SELECT uuid, start_ts, end_ts, active FROM events WHERE station_id='emc'")
+      .all().map(r => [r.uuid, r])
+  );
+  assert.strictEqual(by['v1'].end_ts, base + 20 * 60000, 'violation end_ts = its recovery start');
+  assert.strictEqual(by['v1'].end_ts - by['v1'].start_ts, 20 * 60000, 'episode duration = 20 min');
+  assert.strictEqual(by['a1'].end_ts, base + 40 * 60000, 'recovery end_ts = following violation start');
+  assert.strictEqual(by['v2'].end_ts, null, 'latest (active) transition has null end_ts');
+  assert.strictEqual(by['v2'].active, 1, 'latest unresolved violation stays active');
+
+  closeDb();
+});
+
+test('end_ts pairs only within a group — interleaved groups do not cross-pair', async () => {
+  initDb();
+  saveSetting('api_key', 'mock-key');
+  saveSetting('api_region', 'eu');
+
+  const db = getDb();
+  db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
+    .run('emc', 'EMC', 'dev-1');
+
+  // Insert two logical groups directly, timestamps interleaved across groups.
+  // group A: alarm_condition_type 'connection', group B: 'battery' (distinct partitions).
+  const base = Date.parse('2026-05-29T06:00:00Z');
+  const ins = db.prepare(`INSERT INTO events
+    (uuid, station_id, severity, alarm_status, alarm_condition_type, serial_no, metric, start_ts, end_ts, active)
+    VALUES (?, 'emc', 'system', ?, ?, 'SN123', NULL, ?, ?, 0)`);
+  ins.run('A-v',  'Alarm', 'connection', base + 0 * 60000,  base + 0 * 60000);
+  ins.run('B-v',  'Alarm', 'battery',    base + 10 * 60000, base + 10 * 60000);
+  ins.run('A-ok', 'Ok',    'connection', base + 30 * 60000, base + 30 * 60000);
+  ins.run('B-ok', 'Ok',    'battery',    base + 50 * 60000, base + 50 * 60000);
+
+  // Empty alarm feed: no inserts, but reconciliation still recomputes end_ts over all rows.
+  await schedulerModule.runSyncCycle(new MockTestoClient([]));
+
+  const by = Object.fromEntries(
+    db.prepare("SELECT uuid, end_ts FROM events WHERE station_id='emc'")
+      .all().map(r => [r.uuid, r])
+  );
+  assert.strictEqual(by['A-v'].end_ts, base + 30 * 60000, 'connection violation pairs with connection recovery');
+  assert.strictEqual(by['B-v'].end_ts, base + 50 * 60000, 'battery violation pairs with battery recovery');
+
+  closeDb();
+});

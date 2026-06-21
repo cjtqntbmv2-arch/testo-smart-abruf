@@ -377,6 +377,29 @@ async function runSyncCycle(customClient = null) {
             ) WHERE rn = 1 AND alarm_status = 'Alarm'
           )
         `).run();
+
+        // Episode end_ts = start of the NEXT transition in the same logical group.
+        // The feed is a transition log; a violation's real end is its recovery's start
+        // (or the next violation if no recovery was recorded). LEAD over the SAME
+        // partition as the active reconciliation, ordered ascending, yields that next
+        // start. The newest row in a group (the active violation, or a trailing
+        // recovery) gets NULL — the frontend shows "läuft" for active rows via the
+        // active flag, not via end_ts. This runs over ALL stored feed rows every cycle,
+        // so historical durations settle even when only one side was fetched this cycle.
+        db.prepare(`
+          UPDATE events AS e
+          SET end_ts = nxt.next_start
+          FROM (
+            SELECT rowid AS rid,
+              LEAD(start_ts) OVER (
+                PARTITION BY station_id, COALESCE(serial_no,''), alarm_condition_type, severity, COALESCE(metric,'')
+                ORDER BY start_ts ASC, rowid ASC
+              ) AS next_start
+            FROM events
+            WHERE alarm_status IS NOT NULL
+          ) AS nxt
+          WHERE e.rowid = nxt.rid AND e.alarm_status IS NOT NULL
+        `).run();
       })();
 
       // Only advance the watermark when the bridge was available, otherwise alarms
