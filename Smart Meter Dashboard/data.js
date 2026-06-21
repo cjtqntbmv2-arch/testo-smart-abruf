@@ -363,6 +363,7 @@
       return `vor ${d} d`;
     },
     formatDuration(ms) {
+      if (!Number.isFinite(ms)) return "—";
       const m = Math.round(ms / 60000);
       if (m < 1) return "< 1 min";
       if (m < 60) return `${m} min`;

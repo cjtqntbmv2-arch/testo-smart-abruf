@@ -510,7 +510,7 @@ function EventRow({ event: e, compact, station }) {
         </div>
         <div className="ev-meta">
           <div className="ev-when">{D.formatRelative(e.startTs)}</div>
-          <div className="ev-dur">{e.active ? "läuft" : D.formatDuration(e.endTs - e.startTs)}</div>
+          <div className="ev-dur">{e.active ? "läuft" : (e.endTs == null ? "—" : D.formatDuration(e.endTs - e.startTs))}</div>
         </div>
       </div>
     );
@@ -559,7 +559,7 @@ function EventRow({ event: e, compact, station }) {
       </div>
       <div className="ev-meta">
         <div className="ev-when">{D.formatRelative(e.startTs)}</div>
-        <div className="ev-dur">{e.active ? "läuft" : D.formatDuration(e.endTs - e.startTs)}</div>
+        <div className="ev-dur">{e.active ? "läuft" : (e.endTs == null ? "—" : D.formatDuration(e.endTs - e.startTs))}</div>
       </div>
     </div>
   );
