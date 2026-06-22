@@ -1,12 +1,12 @@
 const express = require('express');
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
 const { initDb, getDb, getSetting, saveSetting, closeDb } = require('./db');
 const { startScheduler, runSyncCycle, getSchedulerStatus, stopScheduler } = require('./scheduler');
 const TestoClient = require('./testo-client');
 const { handleListenError } = require('./listen-error');
-require('dotenv').config();
 
 // Read application version from VERSION file; fall back to package.json
 const fs = require('fs');
