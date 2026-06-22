@@ -68,7 +68,7 @@ Standard ist nur-lokal. Fuer Zugriff von Tablets/anderen PCs:
 
 Nach jedem App-Update **VERSION**, README-Badge und die `?v=`-Cache-Buster im
 `Klima Dashboard.html` synchron halten (gleicher SemVer). Achtung: `?v=` kommt
-**mehrfach** vor — in jedem `<script src="...?v=...">`-Tag (aktuell 10) — alle
+**mehrfach** vor — in jedem `<script src="...?v=...">`-Tag (aktuell 12) — alle
 zugleich bumpen, nicht nur eins. Der Server sendet keine Cache-Header → der
 `?v=`-Bump ist der einzige Invalidierungs-Hebel; im Browser des Bedieners
 zusaetzlich einmal hart neu laden (Strg+F5).
@@ -89,6 +89,38 @@ zusaetzlich einmal hart neu laden (Strg+F5).
   `npm ci` wiederholen oder AV-Ausnahme fuer den App-Ordner setzen.
 - **AV/EDR & DB:** AV-Ausnahme fuer `C:\ProgramData\TestoSmartAbruf\` empfohlen
   (haeufige `-wal`/`-shm`-Schreibzugriffe).
+
+## §9 Abnahmekriterien (Acceptance Criteria)
+
+Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfuellt sein, bevor der Release als abgenommen gilt.
+
+### Basisbetrieb
+
+- `http://localhost:3000` zeigt das Dashboard ohne JS-Fehler in der Konsole.
+- `C:\ProgramData\TestoSmartAbruf\klima.db` existiert; WAL-Dateien (`-wal`, `-shm`) tauchen auf.
+- Logs werden nach `C:\ProgramData\TestoSmartAbruf\logs\app.log` geschrieben.
+- **Reboot ohne Login** → Dienst startet automatisch, Server ist danach erreichbar.
+- `GET http://localhost:3000/api/system/status` liefert `200 OK` mit `scheduler`, `db`, `storage` alle ohne Fehler.
+
+### CSV-Export (ab v0.11.0)
+
+- Einstellungen → Exportieren: Panel ist sichtbar und bedienbar.
+- Einstellungen `csv_format` (Semikolon/Komma/Tab), `backup_enabled`, `backup_dir` sind unter `GET /api/settings` als Felder vorhanden (API-Key maskiert).
+- Ein manuell ausgeloester CSV-Download (`GET /api/export/csv?…`) liefert eine gueltige CSV-Datei mit korrektem Delimiter.
+
+### Monatlicher Backup (ab v0.11.0)
+
+- Backup-Verzeichnis: Standard `C:\ProgramData\TestoSmartAbruf\backups` (ueberschreibbar via `backup_dir`-Einstellung).
+- Nach dem ersten Backup-Lauf existiert pro Messstelle eine ZIP-Datei mit dem Namensschema `<safeName>_<stationId>_<YYYY-MM>.zip` (Beispiel: `Lager_42_2026-05.zip`).
+- **Idempotenz:** Ein zweiter Lauf im selben Monat ueberschreibt die bestehende ZIP (kein Duplikat).
+- **Leer-Schutz:** Monate ohne Messdaten erzeugen keine ZIP.
+- **Prune-Sicherheit:** Messdaten werden erst geloescht, wenn sie in einer ZIP gesichert sind. Nicht gesicherte Monate (z. B. weil `backup_enabled=false` war) werden **nicht** vorzeitig geloescht (`effectiveCutoff = min(retentionCutoff, computePruneFloor)`).
+- Der laufende Monat wird nie gesichert oder geloescht (Cutoff liegt immer vor Monatsbeginn des aktuellen Monats).
+
+### Versionscheck
+
+- `GET /api/system/status` → Feld `version` lautet `0.11.0`.
+- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.11.0` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
 
 ## Alternativen (nicht Standard)
 

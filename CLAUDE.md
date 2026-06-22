@@ -31,7 +31,7 @@ The application is deployed as a **login-independent background service on a cor
 - **"Nothing surprising" for corporate EDR:** no new bundled binaries, no surprising network calls at startup. `puppeteer` stays in `devDependencies` (the server installs with `npm ci --omit=dev`); the only outbound traffic is the testo-cloud sync.
 - **SQLite WAL:** the DB must stay on a **local disk** — WAL breaks on UNC / network shares.
 - **Server binding:** configure via `PORT` / `HOST` env; `HOST` defaults to localhost. LAN access is opt-in (a firewall rule), never the default.
-- **On release / when the deployment story changes:** keep `VERSION`, the README badge, `package.json` version, and all `?v=` cache-busters in `Klima Dashboard.html` (10 script tags) in sync; update `deploy/windows/` and re-run the Windows acceptance.
+- **On release / when the deployment story changes:** keep `VERSION`, the README badge, `package.json` version, and all `?v=` cache-busters in `Klima Dashboard.html` (12 script tags) in sync; update `deploy/windows/` and re-run the Windows acceptance.
 
 ## Ignore: `spec/`
 
