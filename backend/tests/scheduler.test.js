@@ -965,3 +965,31 @@ test('end_ts pairs only within a group — interleaved groups do not cross-pair'
 
   closeDb();
 });
+
+// ── Task 7: retention prune clamped by backup floor ───────────────────────────
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+test('retention prune protects an un-backed-up month, deletes a backed-up one', () => {
+  process.env.DB_PATH = ':memory:';
+  const { getDb, saveSetting } = require('../db');
+  const { computePruneFloor } = require('../backup-runner');
+  const { stationBase } = require('../export-service');
+  const db = getDb();
+  db.exec("DELETE FROM measurements; DELETE FROM events; DELETE FROM stations;");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sch-'));
+  saveSetting('backup_dir', dir); saveSetting('backup_enabled', '1'); saveSetting('retention_days', '30');
+  db.prepare("INSERT INTO stations (id,name) VALUES ('s1','S')").run();
+  const aprTs = Date.UTC(2026, 3, 15); // April — pretend already archived
+  const mayTs = Date.UTC(2026, 4, 15); // May  — NOT archived
+  const ins = db.prepare("INSERT INTO measurements (uuid,station_id,timestamp,value,physical_property,unit) VALUES (?,?,?,1,'temperature','°C')");
+  ins.run('a', 's1', aprTs); ins.run('m', 's1', mayTs);
+  // Simulate April's ZIP existing so computePruneFloor treats April as backed up (May stays un-backed).
+  fs.writeFileSync(path.join(dir, `${stationBase({ id: 's1', name: 'S' })}_2026-04.zip`), 'x');
+  const now = Date.UTC(2026, 5, 20);
+  const effectiveCutoff = Math.min(now - 30 * 86400000, computePruneFloor(now)); // floor = May 1
+  db.prepare("DELETE FROM measurements WHERE timestamp < ?").run(effectiveCutoff);
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid='m'").get().c, 1); // un-backed May survives
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid='a'").get().c, 0); // backed-up April pruned
+});

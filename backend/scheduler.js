@@ -1,6 +1,7 @@
 const { getDb, getSetting, saveSetting } = require('./db');
 const TestoClient = require('./testo-client');
 const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText, measurementAlarmText } = require('./device-bridge');
+const { maybeRunBackupScan, computePruneFloor } = require('./backup-runner');
 
 let isSyncing = false;
 let lastSyncTime = null;
@@ -441,15 +442,26 @@ async function runSyncCycle(customClient = null) {
       }
     }
 
-    // 4. Data retention cleanup
+    // 3b. Monthly CSV backup (throttled once per local day; catches up missed months).
+    try {
+      maybeRunBackupScan(Date.now());
+    } catch (e) {
+      console.error('Error running monthly backup scan:', e.message);
+      // Do NOT set hasError — a backup failure must not mark the data sync failed; surfaced via backup_health.
+    }
+
+    // 4. Data retention cleanup (clamped so un-backed-up months are never deleted)
     try {
       const daysSetting = getSetting('retention_days') || '365';
       const days = parseInt(daysSetting, 10);
       const validDays = isNaN(days) || days <= 0 ? 365 : days;
-      const limit = Date.now() - validDays * 24 * 3600 * 1000;
-      db.prepare("DELETE FROM measurements WHERE timestamp < ?").run(limit);
+      const now = Date.now();
+      const retentionCutoff = now - validDays * 24 * 3600 * 1000;
+      const backupFloor = computePruneFloor(now); // Infinity if backups disabled; window-bounded
+      const effectiveCutoff = Math.min(retentionCutoff, backupFloor);
+      db.prepare("DELETE FROM measurements WHERE timestamp < ?").run(effectiveCutoff);
       // Only purge closed (inactive) events; active alarms must survive regardless of age.
-      db.prepare("DELETE FROM events WHERE start_ts < ? AND active = 0").run(limit);
+      db.prepare("DELETE FROM events WHERE start_ts < ? AND active = 0").run(effectiveCutoff);
     } catch (e) {
       console.error('Error executing database retention cleanup:', e.message);
       hasError = true; errorMsg = e.message;
