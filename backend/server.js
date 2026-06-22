@@ -91,7 +91,9 @@ app.post('/api/settings', (req, res) => {
     saveSetting('csv_format', v);
   }
   if (req.body.backup_enabled !== undefined) {
-    saveSetting('backup_enabled', req.body.backup_enabled ? '1' : '0');
+    const be = req.body.backup_enabled;
+    const disabled = be === false || be === 0 || be === '0' || be === 'false';
+    saveSetting('backup_enabled', disabled ? '0' : '1');
   }
   if (req.body.backup_dir !== undefined) {
     const dir = String(req.body.backup_dir || '').trim();
@@ -453,7 +455,7 @@ app.post('/api/export', (req, res) => {
       dialectName: dialect || getSetting('csv_format') || 'de',
       nowMs: Date.now(),
     });
-    const asciiName = out.filename.replace(/[^\x20-\x7E]/g, '_');
+    const asciiName = out.filename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
     res.setHeader('Content-Type', out.mime);
     res.setHeader('Content-Disposition', `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(out.filename)}`);
     res.send(out.buffer);

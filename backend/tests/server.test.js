@@ -498,6 +498,22 @@ test('settings round-trip persists backup keys (stored as 0/1 strings)', async (
   assert.strictEqual(gs('backup_enabled'), '0'); // stored '0', not 'false'
 });
 
+test('POST /api/settings: string "false" backup_enabled stored as 0', async () => {
+  await fetch('http://localhost:3001/api/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ backup_enabled: 'false' }) });
+  const { getSetting } = require('../db');
+  assert.strictEqual(getSetting('backup_enabled'), '0');
+});
+
+test('POST /api/settings: invalid csv_format => 400', async () => {
+  const res = await fetch('http://localhost:3001/api/settings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ csv_format: 'xml' }) });
+  assert.strictEqual(res.status, 400);
+});
+
+test('POST /api/export: from > to => 400', async () => {
+  const res = await fetch('http://localhost:3001/api/export', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ stationIds: ['s1'], from: 100, to: 1 }) });
+  assert.strictEqual(res.status, 400);
+});
+
 after(() => {
   server.close();
   stopScheduler();
