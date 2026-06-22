@@ -1,5 +1,6 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 let db = null;
@@ -7,6 +8,9 @@ let db = null;
 function initDb() {
   if (db) return;
   const dbPath = process.env.DB_PATH || path.join(__dirname, '../klima.db');
+  if (dbPath !== ':memory:') {
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  }
   db = new Database(dbPath);
   db.pragma('foreign_keys = ON');
   // WAL mode reduces write contention; no-op/harmless for :memory:
