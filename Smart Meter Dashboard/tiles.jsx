@@ -547,7 +547,7 @@ function EventRow({ event: e, compact, station }) {
         </div>
         {!compact && (
           <div className="ev-sub">
-            {fmtExtreme !== "—" && <>Spitze {fmtExtreme} {M.unit}</>}
+            {fmtExtreme !== "—" && <>Auslösewert {fmtExtreme} {M.unit}</>}
             {(e.threshold != null && !Number.isNaN(e.threshold)) && (
               <>{fmtExtreme !== "—" ? " · " : ""}Schwelle {e.threshold} {M.unit}</>
             )}
