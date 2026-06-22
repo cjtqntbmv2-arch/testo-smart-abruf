@@ -5,6 +5,7 @@ dns.setDefaultResultOrder('ipv4first');
 const { initDb, getDb, getSetting, saveSetting, closeDb } = require('./db');
 const { startScheduler, runSyncCycle, getSchedulerStatus, stopScheduler } = require('./scheduler');
 const TestoClient = require('./testo-client');
+const { handleListenError } = require('./listen-error');
 require('dotenv').config();
 
 // Read application version from VERSION file; fall back to package.json
@@ -428,6 +429,14 @@ const server = process.env.HOST
   : app.listen(PORT, () => {
       console.log(`Klima Dashboard server running on http://localhost:${PORT}`);
     });
+
+// Nur außerhalb der Tests anhängen: backend/tests/server.test.js importiert dieses
+// Modul und bindet real Port 3001 (process.env.PORT). Ein process.exit(1) im
+// 'error'-Handler würde sonst bei einem Port-Konflikt den Test-Worker hart beenden.
+// Gleiches NODE_ENV-Guard-Muster wie die Test-Route in server.js (Zeile ~408).
+if (process.env.NODE_ENV !== 'test') {
+  server.on('error', (e) => handleListenError(e));
+}
 
 // Graceful shutdown on SIGINT / SIGTERM.
 // Guard with a flag in case the module cache is cleared / the module is loaded more than once.
