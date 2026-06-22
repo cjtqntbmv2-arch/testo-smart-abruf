@@ -43,9 +43,9 @@
   function parseFilename(cd) {
     if (!cd) return null;
     const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
-    if (star) { try { return decodeURIComponent(star[1]); } catch (_) { return star[1]; } }
+    if (star) { const raw = star[1].trim(); try { return decodeURIComponent(raw); } catch (_) { return raw; } }
     const plain = /filename="?([^";]+)"?/i.exec(cd);
-    return plain ? plain[1] : null;
+    return plain ? plain[1].trim() : null;
   }
 
   const api = { presetRange, unionMetrics, buildExportPayload, parseFilename };

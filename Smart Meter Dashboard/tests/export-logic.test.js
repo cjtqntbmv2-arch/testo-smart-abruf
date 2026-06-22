@@ -34,3 +34,8 @@ test('parseFilename: extracts filename* then filename', () => {
   assert.strictEqual(parseFilename('attachment; filename="x.zip"'), 'x.zip');
   assert.strictEqual(parseFilename(null), null);
 });
+
+test('parseFilename: trims trailing whitespace from the capture', () => {
+  assert.strictEqual(parseFilename("attachment; filename*=UTF-8''report.csv  "), 'report.csv');
+  assert.strictEqual(parseFilename('attachment; filename="x.zip" '), 'x.zip');
+});
