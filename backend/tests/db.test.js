@@ -25,6 +25,24 @@ test('SQLite schema setup and settings operations', () => {
   closeDb();
 });
 
+test('initDb seeds CSV-export/backup settings defaults (fresh file DB)', () => {
+  // The seed block only runs for a NON-:memory: fresh DB (db.js gates it), so exercise it via a temp file.
+  const os = require('node:os'); const path = require('node:path'); const fs = require('node:fs');
+  const { getDb, getSetting, closeDb } = require('../db');
+  const prev = process.env.DB_PATH;
+  closeDb(); // drop any cached singleton from earlier tests in this file
+  process.env.DB_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dbseed-')), 'seed.db');
+  try {
+    getDb(); // fresh file DB → seed runs
+    assert.strictEqual(getSetting('backup_enabled'), '1');
+    assert.strictEqual(getSetting('csv_format'), 'de');
+    assert.strictEqual(getSetting('backup_dir'), '');
+  } finally {
+    closeDb();
+    process.env.DB_PATH = prev; // restore for other tests in this file
+  }
+});
+
 test('Cascade delete testing', () => {
   initDb();
   const db = getDb();

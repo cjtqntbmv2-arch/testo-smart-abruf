@@ -124,6 +124,9 @@ function initDb() {
       stmt.run('api_region', process.env.TESTO_API_REGION || 'eu');
       stmt.run('poll_interval_sec', process.env.POLL_INTERVAL_SEC || '900');
       stmt.run('retention_days', process.env.RETENTION_DAYS || '365');
+      stmt.run('backup_enabled', '1');
+      stmt.run('backup_dir', '');
+      stmt.run('csv_format', 'de');
     }
 
     // Stations are created by the user via the assignment UI and bound to real
