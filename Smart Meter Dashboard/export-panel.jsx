@@ -40,11 +40,13 @@ function ExportPanel() {
     setList(list.includes(id) ? list.filter(x => x !== id) : [...list, id]);
   }
 
+  const PRESET_LABELS = { last7: 'Letzte 7 Tage', last30: 'Letzte 30 Tage', thisMonth: 'Aktueller Monat', lastMonth: 'Letzter Monat', custom: 'Benutzerdefiniert' };
+
   async function doExport() {
     setError(null); setBusy(true);
     try {
       const fromTs = new Date(fromStr + 'T00:00:00').getTime();
-      const toTs = new Date(toStr + 'T23:59:59').getTime();
+      const toTs = new Date(toStr + 'T23:59:59.999').getTime();
       if (!stationIds.length) throw new Error('Bitte mindestens eine Messstelle wählen');
       if (!(fromTs <= toTs)) throw new Error('Zeitraum ungültig (von > bis)');
       const payload = window.buildExportPayload({ stationIds, metricKeys, fromTs, toTs, includeEvents, dialect });
@@ -74,7 +76,7 @@ function ExportPanel() {
 
       <div className="label">Zeitraum</div>
       {['last7','last30','thisMonth','lastMonth','custom'].map(k => (
-        <button key={k} className={preset === k ? 'preset active' : 'preset'} onClick={() => applyPreset(k)}>{k}</button>
+        <button key={k} className={preset === k ? 'preset active' : 'preset'} onClick={() => applyPreset(k)}>{PRESET_LABELS[k]}</button>
       ))}
       <div>
         Von <input type="date" value={fromStr} onChange={e => { setFromStr(e.target.value); setPreset('custom'); }} />
