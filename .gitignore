@@ -10,3 +10,6 @@ klima.backup-*.db
 .env
 
 node_modules
+
+# Superpowers brainstorming visual-companion mockups (transient)
+.superpowers/
