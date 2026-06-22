@@ -42,6 +42,7 @@ const SETTINGS_SECTIONS = [
   { id: "database",  label: "Datenbank",        icon: "db" },
   { id: "stations",  label: "Messstellen",      icon: "node" },
   { id: "advanced",  label: "Erweitert",        icon: "sliders" },
+  { id: "export",    label: "Datenexport",      icon: "download" },
 ];
 
 function SettingsPage({ onClose }) {
@@ -215,6 +216,7 @@ function SettingsPage({ onClose }) {
   if (section === "database")      body = <DatabaseSection settings={settings} update={update} systemStatus={systemStatus} />;
   if (section === "stations")  body = <StationsSection />;
   if (section === "advanced")  body = <AdvancedSection {...ctx} systemStatus={systemStatus} onReset={() => setSettings(DEFAULT_SETTINGS)} />;
+  if (section === "export")    body = <ExportPanel />;
 
   return (
     <div className="settings-shell">
@@ -1034,7 +1036,8 @@ function NavIcon({ id }) {
     case "sliders": return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M2 4h10M2 7h10M2 10h10"/><circle cx="4" cy="4" r="1.4" fill="white"/><circle cx="9" cy="7" r="1.4" fill="white"/><circle cx="5.5" cy="10" r="1.4" fill="white"/></svg>;
     case "bolt":    return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"><path d="M8 1 3 8h3l-1 5 5-7H7z"/></svg>;
     case "disk":    return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><rect x="1.5" y="2" width="11" height="10" rx="1.5"/><rect x="4" y="2" width="6" height="4"/><circle cx="7" cy="9" r="1.4"/></svg>;
-    case "archive": return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><rect x="1.5" y="2.5" width="11" height="3" rx="0.5"/><path d="M2.5 5.5h9V12h-9zM5.5 8h3"/></svg>;
+    case "archive":   return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><rect x="1.5" y="2.5" width="11" height="3" rx="0.5"/><path d="M2.5 5.5h9V12h-9zM5.5 8h3"/></svg>;
+    case "download":  return <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M7 1v8M4 6l3 3 3-3"/><path d="M1.5 10v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10"/></svg>;
     default:        return null;
   }
 }
