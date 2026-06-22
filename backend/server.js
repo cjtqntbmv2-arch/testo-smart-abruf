@@ -7,6 +7,8 @@ const { initDb, getDb, getSetting, saveSetting, closeDb } = require('./db');
 const { startScheduler, runSyncCycle, getSchedulerStatus, stopScheduler } = require('./scheduler');
 const TestoClient = require('./testo-client');
 const { handleListenError } = require('./listen-error');
+const { getExportMetadata, exportStations } = require('./export-service');
+const { resolveBackupDir } = require('./backup-runner');
 
 // Read application version from VERSION file; fall back to package.json
 const fs = require('fs');
@@ -41,7 +43,10 @@ app.get('/api/settings', (req, res) => {
     api_key_set: storedKey.length > 0,
     api_region: getSetting('api_region') || 'eu',
     poll_interval_sec: parseInt(getSetting('poll_interval_sec') || '900', 10),
-    retention_days: parseInt(getSetting('retention_days') || '365', 10)
+    retention_days: parseInt(getSetting('retention_days') || '365', 10),
+    backup_enabled: (getSetting('backup_enabled') || '1') === '1',
+    backup_dir: getSetting('backup_dir') || '',
+    csv_format: getSetting('csv_format') || 'de'
   });
 });
 
@@ -78,6 +83,28 @@ app.post('/api/settings', (req, res) => {
   if (api_region !== undefined) saveSetting('api_region', api_region);
   if (poll_interval_sec !== undefined) saveSetting('poll_interval_sec', String(parseInt(poll_interval_sec, 10)));
   if (retention_days !== undefined) saveSetting('retention_days', String(parseInt(retention_days, 10)));
+
+  // csv_format, backup_enabled, backup_dir
+  if (req.body.csv_format !== undefined) {
+    const v = String(req.body.csv_format);
+    if (v !== 'de' && v !== 'rfc') return res.status(400).json({ error: "csv_format must be 'de' or 'rfc'" });
+    saveSetting('csv_format', v);
+  }
+  if (req.body.backup_enabled !== undefined) {
+    saveSetting('backup_enabled', req.body.backup_enabled ? '1' : '0');
+  }
+  if (req.body.backup_dir !== undefined) {
+    const dir = String(req.body.backup_dir || '').trim();
+    if (dir) {
+      try {
+        require('fs').mkdirSync(dir, { recursive: true });
+        require('fs').accessSync(dir, require('fs').constants.W_OK);
+      } catch (e) {
+        return res.status(400).json({ error: `backup_dir nicht beschreibbar: ${e.message}` });
+      }
+    }
+    saveSetting('backup_dir', dir);
+  }
 
   // Restart scheduler with new interval
   startScheduler();
@@ -390,8 +417,49 @@ app.get('/api/system/status', (req, res) => {
       status: schedulerStatus.lastSyncStatus === 'error' ? 'err' : (apiKey ? 'ok' : 'warn'),
       apiKeyConfigured: !!apiKey,
       region: getSetting('api_region') || 'eu'
-    }
+    },
+    backup: (() => {
+      let health = {};
+      try { health = JSON.parse(getSetting('backup_health') || '{}'); } catch (_) {}
+      return {
+        enabled: (getSetting('backup_enabled') || '1') === '1',
+        dir: resolveBackupDir(),
+        lastScanDate: getSetting('last_backup_scan_date') || null,
+        health
+      };
+    })()
   });
+});
+
+// GET /api/export/metadata — returns per-station available metric keys and date range
+app.get('/api/export/metadata', (req, res) => {
+  try { res.json(getExportMetadata()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/export — streams a CSV (or ZIP) export for one or more stations
+app.post('/api/export', (req, res) => {
+  const { stationIds, metrics, from, to, includeEvents, dialect } = req.body || {};
+  if (!Array.isArray(stationIds) || stationIds.length === 0) return res.status(400).json({ error: 'stationIds required' });
+  const fromTs = Number(from), toTs = Number(to);
+  if (!Number.isFinite(fromTs) || !Number.isFinite(toTs) || fromTs > toTs) return res.status(400).json({ error: 'invalid time range' });
+  try {
+    const out = exportStations({
+      stationIds,
+      metricKeys: Array.isArray(metrics) ? metrics : null,
+      fromTs,
+      toTs,
+      includeEvents: !!includeEvents,
+      dialectName: dialect || getSetting('csv_format') || 'de',
+      nowMs: Date.now(),
+    });
+    const asciiName = out.filename.replace(/[^\x20-\x7E]/g, '_');
+    res.setHeader('Content-Type', out.mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(out.filename)}`);
+    res.send(out.buffer);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // POST /api/sync — stößt sofort einen Sync-Zyklus an (Resync-Button der Systemübersicht).

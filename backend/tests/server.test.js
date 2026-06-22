@@ -439,6 +439,65 @@ test('GET /api/stations/:id/events hides recovery (Ok) rows, keeps Alarm and sys
   assert.ok(!uuids.includes('ev-ok'), 'recovery (Ok) rows are hidden');
 });
 
+// ── Export endpoints (Task 8) ────────────────────────────────────────────────
+// Seed station s1 with temperature + humidity measurements for export tests
+{
+  const db = getDb();
+  db.prepare("INSERT OR IGNORE INTO stations (id, name) VALUES ('s1', 'S')").run();
+  db.prepare("INSERT OR IGNORE INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('m-exp-t','s1',1000,21.5,'temperature','°C')").run();
+  db.prepare("INSERT OR IGNORE INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('m-exp-h','s1',1000,55.0,'humidity','%rF')").run();
+}
+
+test('GET /api/export/metadata returns a stations array', async () => {
+  const res = await fetch('http://localhost:3001/api/export/metadata');
+  assert.strictEqual(res.status, 200);
+  assert.ok(Array.isArray(await res.json()));
+});
+
+test('POST /api/export single station returns text/csv attachment', async () => {
+  const res = await fetch('http://localhost:3001/api/export', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ stationIds: ['s1'], metrics: null, from: 0, to: 9e15, includeEvents: false }),
+  });
+  assert.strictEqual(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/csv/);
+  assert.match(res.headers.get('content-disposition') || '', /attachment/);
+});
+
+test('POST /api/export metrics filter limits the columns', async () => {
+  // Re-seed in case an earlier test wiped the measurements table
+  const db = getDb();
+  db.prepare("INSERT OR IGNORE INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('m-exp-t','s1',1000,21.5,'temperature','°C')").run();
+  db.prepare("INSERT OR IGNORE INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('m-exp-h','s1',1000,55.0,'humidity','%rF')").run();
+  const res = await fetch('http://localhost:3001/api/export', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ stationIds: ['s1'], metrics: ['temperature'], from: 0, to: 9e15, includeEvents: false }),
+  });
+  const text = await res.text();
+  assert.ok(text.includes('Temperatur [°C]'));
+  assert.ok(!text.includes('Feuchte [%rF]'));
+});
+
+test('POST /api/export empty stationIds => 400', async () => {
+  const res = await fetch('http://localhost:3001/api/export', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ stationIds: [], from: 0, to: 1 }),
+  });
+  assert.strictEqual(res.status, 400);
+});
+
+test('settings round-trip persists backup keys (stored as 0/1 strings)', async () => {
+  await fetch('http://localhost:3001/api/settings', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ csv_format: 'rfc', backup_enabled: false }),
+  });
+  const get = await (await fetch('http://localhost:3001/api/settings')).json();
+  assert.strictEqual(get.csv_format, 'rfc');
+  assert.strictEqual(get.backup_enabled, false);
+  const { getSetting: gs } = require('../db');
+  assert.strictEqual(gs('backup_enabled'), '0'); // stored '0', not 'false'
+});
+
 after(() => {
   server.close();
   stopScheduler();
