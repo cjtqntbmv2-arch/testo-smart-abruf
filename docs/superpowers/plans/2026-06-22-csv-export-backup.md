@@ -18,6 +18,9 @@
 - **SQLite WAL stays on local disk.** Only the ZIP backups may live on a network share (`backup_dir`).
 - **CSV dialects:** `de` = delimiter `;`, decimal `,`; `rfc` = delimiter `,`, decimal `.`. Both: UTF-8 **with BOM** (`﻿`) + **CRLF** (`\r\n`). Default `de`.
 - **CSV injection:** text cells beginning with `= + - @`, TAB or CR get a leading `'`. Numbers/timestamps are never injection-prefixed.
+- **Backup/export filenames:** always `<safeName>_<stationId>_…` — include the station id so two stations with the same sanitized name cannot collide (collision = silent data loss: the second is never archived and falls out of the prune floor). Applies to monthly ZIP names AND the CSV entry names inside a multi-station ZIP.
+- **Event classification:** `Art`/system-vs-measurement is decided by the `severity` column (`severity==='system'` → Meldung), NEVER by `metric` membership — system events carry a measured `metric` and would be mislabeled.
+- **Retention guard:** `retention_days` is sanitized `(NaN||<=0)→365` before any cutoff math (existing guard must be preserved). The prune cutoff is `min(retentionCutoff, computePruneFloor(now))` — no `2×retention` hard floor (the scan window bounds it).
 - **Frontend hook aliases:** every `.jsx` must alias React hooks uniquely (e.g. `const { useState: useStateX } = React`); bare `useState`/`useEffect` collide with charts.jsx globals → blank page.
 - **Test command:** `npm test` (runs `backend/tests/*.test.js` globbed + the explicitly-listed frontend logic tests).
 
@@ -273,6 +276,16 @@ test('createZip: sets UTF-8 general-purpose flag (bit 11) for filenames', () => 
   const flags = buf.readUInt16LE(6); // local header general purpose bit flag
   assert.strictEqual(flags & 0x0800, 0x0800);
 });
+
+test('createZip: umlaut filename round-trips as UTF-8 (central directory + flag)', () => {
+  const name = 'Büro_2026-05.csv';
+  const buf = createZip([{ name, data: 'x', mtime: FIXED }]);
+  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const cd = buf.readUInt32LE(eocd + 16);
+  const nameLen = buf.readUInt16LE(cd + 28);
+  assert.strictEqual(buf.toString('utf8', cd + 46, cd + 46 + nameLen), name);
+  assert.strictEqual(buf.readUInt16LE(cd + 8) & 0x0800, 0x0800); // UTF-8 flag set in central dir too
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -443,10 +456,12 @@ test('pivotMeasurements: groups by timestamp, one column per metric, blanks for 
   assert.strictEqual(data[1].values.has('humidity'), false);
 });
 
-test('classifyEventArt: measured metric => Alarm, system => Meldung', () => {
-  assert.strictEqual(classifyEventArt({ metric: 'temperature', threshold: 8 }), 'Alarm');
-  assert.strictEqual(classifyEventArt({ metric: null, alarm_reason: 'connection' }), 'Meldung');
-  assert.strictEqual(classifyEventArt({ metric: 'battery' }), 'Meldung');
+test('classifyEventArt: classifies on severity, not metric', () => {
+  assert.strictEqual(classifyEventArt({ severity: 'alarm', metric: 'temperature' }), 'Alarm');
+  assert.strictEqual(classifyEventArt({ severity: 'warning', metric: 'humidity' }), 'Alarm');
+  // regression: a SYSTEM event that carries a measured metric must NOT be 'Alarm'
+  assert.strictEqual(classifyEventArt({ severity: 'system', metric: 'temperature' }), 'Meldung');
+  assert.strictEqual(classifyEventArt({ severity: 'system', metric: null }), 'Meldung');
 });
 
 test('buildMeasurementsCsv: BOM, header block, CRLF table, decimal per dialect', () => {
@@ -462,6 +477,12 @@ test('buildMeasurementsCsv: BOM, header block, CRLF table, decimal per dialect',
 test('buildMeasurementsCsv: empty data => header-only + note', () => {
   const csv = buildMeasurementsCsv({ station: STATION, rows: [], metricKeys: ['temperature'], fromTs: 0, toTs: 1, dialect: DE, appVersion: '0.11.0', nowMs: 0 });
   assert.ok(csv.includes('# Keine Daten im gewählten Zeitraum'));
+});
+
+test('buildMeasurementsCsv: CSV-injection guard neutralizes a malicious station name (end-to-end)', () => {
+  const evil = { name: '=HYPERLINK("http://x")', location: '+x', serial_no: '1', model_code: 'M' };
+  const csv = buildMeasurementsCsv({ station: evil, rows: [], metricKeys: ['temperature'], fromTs: 0, toTs: 1, dialect: DE, appVersion: '0.11.0', nowMs: 0 });
+  assert.ok(csv.includes("'=HYPERLINK"), "leading '=' prefixed with an apostrophe in the header block");
 });
 
 test('buildEventsCsv: columns + Art + open end empty', () => {
@@ -521,8 +542,12 @@ function pivotMeasurements(rows, metricKeys) {
 }
 
 function classifyEventArt(event) {
-  if (event && event.metric && MEASURED_METRICS.has(event.metric)) return 'Alarm';
-  return 'Meldung';
+  // Classify on the authoritative `severity` column, NOT on `metric` membership:
+  // system events (connection/battery) ALSO carry a measured metric like 'temperature'
+  // (scheduler.js stores mapPhysicalProperty() unconditionally; ~193 such rows live),
+  // so a metric-based test would mislabel them 'Alarm'. severity==='system' is set by
+  // both event write paths (applySystemEvents + classifyAlarm).
+  return (event && event.severity === 'system') ? 'Meldung' : 'Alarm';
 }
 
 function headerBlock(lines, dialect) {
@@ -675,8 +700,15 @@ function seed() {
 }
 
 test('safeFileName: strips illegal chars, keeps umlauts', () => {
-  assert.strictEqual(svc.safeFileName('Büro 1/OG: A'), 'Büro 1_OG_ A'.replace(/ /g,' ')); // illegal / and : -> _
+  // original regex maps space, '/', ':' to '_' (no collapse) → ': ' becomes '__'
+  assert.strictEqual(svc.safeFileName('Büro 1/OG: A'), 'Büro_1_OG__A');
   assert.strictEqual(svc.safeFileName('a*b?c'), 'a_b_c');
+  assert.strictEqual(svc.safeFileName('Büro'), 'Büro');
+});
+
+test('stationBase: appends station id so same-name stations cannot collide', () => {
+  assert.strictEqual(svc.stationBase({ name: 'Halle', id: 's1' }), 'Halle_s1');
+  assert.notStrictEqual(svc.stationBase({ name: 'Halle', id: 's1' }), svc.stationBase({ name: 'Halle', id: 's2' }));
 });
 
 test('exportStations: single station, no events => single CSV', () => {
@@ -700,14 +732,22 @@ test('exportStations: includeEvents forces zip with 2 files even for one station
   seed();
   const res = svc.exportStations({ stationIds: ['s1'], metricKeys: null, fromTs: 0, toTs: 9e15, includeEvents: true, dialectName: 'de', nowMs: 0 });
   assert.strictEqual(res.kind, 'zip');
+  // ZIP stores entry names literally (uncompressed) in local headers → cheap presence check for both files.
+  assert.ok(res.buffer.includes(Buffer.from('_messwerte.csv')), 'has measurements csv');
+  assert.ok(res.buffer.includes(Buffer.from('_meldungen.csv')), 'has events csv');
 });
 
-test('getExportMetadata: lists stations with available metrics + range', () => {
+test('getExportMetadata: stations carry key+label+unit and range; empty station => [] + null', () => {
   seed();
   const meta = svc.getExportMetadata();
   const s1 = meta.find(x => x.id === 's1');
   assert.deepStrictEqual(s1.metrics.map(m => m.key).sort(), ['humidity','temperature']);
+  assert.strictEqual(s1.metrics.find(m => m.key === 'temperature').label, 'Temperatur');
   assert.strictEqual(s1.earliest_ts, 1000);
+  getDb().prepare("INSERT INTO stations (id,name) VALUES ('s3','Leer')").run();
+  const s3 = svc.getExportMetadata().find(x => x.id === 's3');
+  assert.deepStrictEqual(s3.metrics, []);
+  assert.strictEqual(s3.earliest_ts, null);
 });
 ```
 
@@ -723,7 +763,7 @@ Expected: FAIL — `Cannot find module '../export-service'`.
 // DB-bound orchestration: queries + builds CSV or ZIP. Shared by manual export and backup.
 const { getDb } = require('./db');
 const { getDialect } = require('./csv-format');
-const { buildMeasurementsCsv, buildEventsCsv, METRIC_ORDER } = require('./csv-export');
+const { buildMeasurementsCsv, buildEventsCsv, METRIC_ORDER, METRIC_LABELS } = require('./csv-export');
 const { createZip } = require('./zip-writer');
 const APP_VERSION = require('../package.json').version || '0.0.0';
 
@@ -756,12 +796,18 @@ function getStation(stationId) {
   return getDb().prepare("SELECT id, name, location, serial_no, model_code FROM stations WHERE id = ?").get(stationId);
 }
 
+// Filename base unique per station: name PLUS station id, so two stations whose names
+// sanitize to the same string cannot collide (collision = silent data loss via the prune floor).
+function stationBase(station) {
+  return `${safeFileName(station.name)}_${safeFileName(String(station.id))}`;
+}
+
 function getExportMetadata() {
   const db = getDb();
   const stations = db.prepare("SELECT id, name FROM stations ORDER BY name").all();
   return stations.map(s => {
     const metrics = db.prepare("SELECT DISTINCT physical_property AS key, unit FROM measurements WHERE station_id = ?").all(s.id)
-      .map(r => ({ key: r.key, unit: r.unit }))
+      .map(r => ({ key: r.key, label: METRIC_LABELS[r.key] || r.key, unit: r.unit }))
       .sort((a, b) => METRIC_ORDER.indexOf(a.key) - METRIC_ORDER.indexOf(b.key));
     const range = db.prepare("SELECT MIN(timestamp) AS earliest_ts, MAX(timestamp) AS latest_ts FROM measurements WHERE station_id = ?").get(s.id);
     return { id: s.id, name: s.name, metrics, earliest_ts: range.earliest_ts, latest_ts: range.latest_ts };
@@ -770,7 +816,7 @@ function getExportMetadata() {
 
 // Build the per-station CSV file objects ({name, data}) for the ZIP / single download.
 function stationFiles(station, { metricKeys, fromTs, toTs, includeEvents, dialect, nowMs }) {
-  const base = safeFileName(station.name);
+  const base = stationBase(station);
   const files = [];
   const rows = queryMeasurements(station.id, fromTs, toTs, metricKeys);
   files.push({ name: `${base}_messwerte.csv`, data: buildMeasurementsCsv({ station, rows, metricKeys, fromTs, toTs, dialect, appVersion: APP_VERSION, nowMs }) });
@@ -794,7 +840,7 @@ function exportStations({ stationIds, metricKeys, fromTs, toTs, includeEvents, d
     const files = stationFiles(stations[0], opts);
     return {
       kind: 'csv', mime: 'text/csv; charset=utf-8',
-      filename: `${safeFileName(stations[0].name)}_messwerte.csv`,
+      filename: files[0].name, // already `${stationBase}_messwerte.csv`
       buffer: Buffer.from(files[0].data, 'utf8'),
     };
   }
@@ -803,18 +849,18 @@ function exportStations({ stationIds, metricKeys, fromTs, toTs, includeEvents, d
   for (const st of stations) for (const f of stationFiles(st, opts)) entries.push({ name: f.name, data: f.data, mtime: new Date(now) });
   return {
     kind: 'zip', mime: 'application/zip',
-    filename: stations.length === 1 ? `${safeFileName(stations[0].name)}_export.zip` : `messwert-export.zip`,
+    filename: stations.length === 1 ? `${stationBase(stations[0])}_export.zip` : `messwert-export.zip`,
     buffer: createZip(entries),
   };
 }
 
-module.exports = { safeFileName, queryMeasurements, queryEvents, getExportMetadata, exportStations, stationFiles };
+module.exports = { safeFileName, stationBase, queryMeasurements, queryEvents, getExportMetadata, exportStations, stationFiles };
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test backend/tests/export-service.test.js`
-Expected: PASS. (Note: the `safeFileName` assertion in the test uses `: `→`_ ` — verify the exact expected string matches the regex; adjust the test literal to the actual output if needed.)
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -838,13 +884,22 @@ git commit -m "feat(export): add export-service (queries + csv/zip orchestration
 
 ```js
 // backend/tests/db.test.js — ADD this test (keep existing ones)
-test('initDb seeds CSV-export/backup settings defaults', () => {
-  process.env.DB_PATH = ':memory:';
-  const { getDb, getSetting } = require('../db');
-  getDb(); // triggers initDb + seed
-  assert.strictEqual(getSetting('backup_enabled'), '1');
-  assert.strictEqual(getSetting('csv_format'), 'de');
-  assert.strictEqual(getSetting('backup_dir'), '');
+test('initDb seeds CSV-export/backup settings defaults (fresh file DB)', () => {
+  // The seed block only runs for a NON-:memory: fresh DB (db.js gates it), so exercise it via a temp file.
+  const os = require('node:os'); const path = require('node:path'); const fs = require('node:fs');
+  const { getDb, getSetting, closeDb } = require('../db');
+  const prev = process.env.DB_PATH;
+  closeDb(); // drop any cached singleton from earlier tests in this file
+  process.env.DB_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dbseed-')), 'seed.db');
+  try {
+    getDb(); // fresh file DB → seed runs
+    assert.strictEqual(getSetting('backup_enabled'), '1');
+    assert.strictEqual(getSetting('csv_format'), 'de');
+    assert.strictEqual(getSetting('backup_dir'), '');
+  } finally {
+    closeDb();
+    process.env.DB_PATH = prev; // restore for other tests in this file
+  }
 });
 ```
 (If `db.test.js` lacks `require('node:test')`/`assert` headers at top, they already exist — match the file's existing style.)
@@ -908,10 +963,13 @@ const { getDb, getSetting, saveSetting } = require('../db');
 const runner = require('../backup-runner');
 
 function tmpDir() {
+  getDb().exec("DELETE FROM measurements; DELETE FROM events; DELETE FROM stations;"); // reset shared :memory: state
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'bkp-'));
   saveSetting('backup_dir', d);
   saveSetting('backup_enabled', '1');
   saveSetting('last_backup_scan_date', '');
+  saveSetting('backup_health', '');
+  saveSetting('retention_days', '365');
   return d;
 }
 function seedMonth(stationId, name, year, monthIdx0, value) {
@@ -945,6 +1003,13 @@ test('runBackupScan: idempotent — second run skips existing zip', () => {
   assert.ok(res2.skipped >= 1);
 });
 
+test('runBackupScan: leaves no .tmp file behind on success', () => {
+  const dir = tmpDir();
+  seedMonth('s1', 'Serverraum', 2026, 4, 21.0);
+  runner.runBackupScan(Date.UTC(2026, 5, 10, 9, 0, 0));
+  assert.strictEqual(fs.readdirSync(dir).filter(f => f.endsWith('.tmp')).length, 0);
+});
+
 test('runBackupScan: skips (station,month) with no data — no empty zip', () => {
   const db = getDb();
   db.exec("DELETE FROM measurements; DELETE FROM events; DELETE FROM stations;");
@@ -962,7 +1027,7 @@ test('computePruneFloor: returns start of oldest un-backed-up data month', () =>
   const now = Date.UTC(2026, 5, 10, 9, 0, 0);
   seedMonth('s1', 'Serverraum', 2026, 4, 21.0); // May 2026, not yet backed up
   const floor = runner.computePruneFloor(now);
-  assert.strictEqual(floor, Date.UTC(2026, 4, 1, 0, 0, 0) === floor ? floor : runner.monthStartMs(2026, 4));
+  assert.strictEqual(floor, runner.monthStartMs(2026, 4)); // May 1 (local) — compare to the production helper, TZ-independent
 });
 
 test('computePruneFloor: Infinity when backups disabled', () => {
@@ -1011,7 +1076,7 @@ const path = require('node:path');
 const { getDb, getSetting, saveSetting } = require('./db');
 const { getDialect } = require('./csv-format');
 const { createZip } = require('./zip-writer');
-const { stationFiles, safeFileName } = require('./export-service');
+const { stationFiles, stationBase } = require('./export-service');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -1029,7 +1094,10 @@ function monthKey(epochMs) { const d = new Date(epochMs); return `${d.getFullYea
 function monthStartMs(year, monthIdx0) { return new Date(year, monthIdx0, 1, 0, 0, 0, 0).getTime(); }
 function localDateKey(epochMs) { const d = new Date(epochMs); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
 
-function retentionDays() { return parseInt(getSetting('retention_days') || '365', 10); }
+function retentionDays() {
+  const n = parseInt(getSetting('retention_days') || '365', 10);
+  return (Number.isNaN(n) || n <= 0) ? 365 : n; // same guard as scheduler.js — never 0/NaN (else window/prune break)
+}
 function lookbackMs() { return (retentionDays() + 62) * DAY_MS; }
 
 // List of {year, monthIdx0, startMs} for complete months within the lookback window.
@@ -1055,8 +1123,9 @@ function stationHasData(stationId, startMs, endMs) {
   return !!e;
 }
 
-function zipPathFor(dir, stationName, year, monthIdx0) {
-  return path.join(dir, `${safeFileName(stationName)}_${year}-${pad2(monthIdx0 + 1)}.zip`);
+function zipPathFor(dir, station, year, monthIdx0) {
+  // stationBase = safeName + station id → no cross-station filename collisions
+  return path.join(dir, `${stationBase(station)}_${year}-${pad2(monthIdx0 + 1)}.zip`);
 }
 
 function writeHealth(status, extra) {
@@ -1083,7 +1152,7 @@ function runBackupScan(nowMs) {
   for (const st of stations) {
     for (const mth of months) {
       const endMs = monthStartMs(mth.year, mth.monthIdx0 + 1);
-      const zipPath = zipPathFor(dir, st.name, mth.year, mth.monthIdx0);
+      const zipPath = zipPathFor(dir, st, mth.year, mth.monthIdx0);
       if (fs.existsSync(zipPath)) { result.skipped++; continue; }
       if (!stationHasData(st.id, mth.startMs, endMs)) continue;
       try {
@@ -1099,11 +1168,12 @@ function runBackupScan(nowMs) {
     }
   }
 
-  const floor = computePruneFloor(nowMs);
-  const overdue = floor !== Infinity && floor < (nowMs - retentionDays() * DAY_MS);
-  writeHealth(result.errors.length ? 'error' : (overdue ? 'overdue' : 'ok'), {
+  // Health is 'ok' or 'error'. (A post-scan un-backed data-month only occurs when a write
+  // errored — already covered by errors.length — so an 'overdue' status is unreachable here.)
+  writeHealth(result.errors.length ? 'error' : 'ok', {
     lastZip: result.written[result.written.length - 1] || null,
     lastError: result.errors[0] || null,
+    written: result.written.length,
   });
   return result;
 }
@@ -1129,7 +1199,7 @@ function computePruneFloor(nowMs) {
     const endMs = monthStartMs(mth.year, mth.monthIdx0 + 1);
     for (const st of stations) {
       if (!stationHasData(st.id, mth.startMs, endMs)) continue;
-      const zp = zipPathFor(dir, st.name, mth.year, mth.monthIdx0);
+      const zp = zipPathFor(dir, st, mth.year, mth.monthIdx0);
       if (!fs.existsSync(zp)) { floor = Math.min(floor, mth.startMs); break; }
     }
   }
@@ -1170,29 +1240,30 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-test('retention prune respects backup floor (un-backed-up month not deleted)', () => {
+test('retention prune protects an un-backed-up month, deletes a backed-up one', () => {
   process.env.DB_PATH = ':memory:';
   const { getDb, saveSetting } = require('../db');
   const { computePruneFloor } = require('../backup-runner');
+  const { stationBase } = require('../export-service');
   const db = getDb();
   db.exec("DELETE FROM measurements; DELETE FROM events; DELETE FROM stations;");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sch-'));
-  saveSetting('backup_dir', dir);
-  saveSetting('backup_enabled', '1');
-  saveSetting('retention_days', '1'); // aggressive: everything older than 1 day is prune-eligible
+  saveSetting('backup_dir', dir); saveSetting('backup_enabled', '1'); saveSetting('retention_days', '30');
   db.prepare("INSERT INTO stations (id,name) VALUES ('s1','S')").run();
-  const oldTs = Date.UTC(2026, 4, 15); // May 2026, no zip yet
-  db.prepare("INSERT INTO measurements (uuid,station_id,timestamp,value,physical_property,unit) VALUES ('x','s1',?,1,'temperature','°C')").run(oldTs);
+  const aprTs = Date.UTC(2026, 3, 15); // April — pretend already archived
+  const mayTs = Date.UTC(2026, 4, 15); // May  — NOT archived
+  const ins = db.prepare("INSERT INTO measurements (uuid,station_id,timestamp,value,physical_property,unit) VALUES (?,?,?,1,'temperature','°C')");
+  ins.run('a', 's1', aprTs); ins.run('m', 's1', mayTs);
+  // Simulate April's ZIP existing so computePruneFloor treats April as backed up (May stays un-backed).
+  fs.writeFileSync(path.join(dir, `${stationBase({ id: 's1', name: 'S' })}_2026-04.zip`), 'x');
   const now = Date.UTC(2026, 5, 20);
-  const floor = computePruneFloor(now);
-  const retentionCutoff = now - 1 * 24 * 3600 * 1000;
-  const effective = Math.max(now - 2 * 1 * 24 * 3600 * 1000, Math.min(retentionCutoff, floor));
-  // floor (May 1) is below the 2×retention hardFloor? hardFloor = now-2d. floor << hardFloor → hardFloor wins.
-  // Assert: the data row is NOT deletable under `effective` if floor protects it.
-  assert.ok(effective <= oldTs || floor <= oldTs, 'prune floor computed');
+  const effectiveCutoff = Math.min(now - 30 * 86400000, computePruneFloor(now)); // floor = May 1
+  db.prepare("DELETE FROM measurements WHERE timestamp < ?").run(effectiveCutoff);
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid='m'").get().c, 1); // un-backed May survives
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid='a'").get().c, 0); // backed-up April pruned
 });
 ```
-(This test mainly guards `computePruneFloor` wiring; the core floor logic is covered in Task 6. Keep it lightweight.)
+(Behavioral test: runs a real DELETE with the production `min(retentionCutoff, computePruneFloor)` and asserts the un-backed month survives while the backed-up one is pruned — no tautology, and it exercises the window-bounded floor.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1215,24 +1286,29 @@ In `runSyncCycle`, **before** the `// 4. Data retention cleanup` block, add:
       maybeRunBackupScan(Date.now());
     } catch (e) {
       console.error('Error running monthly backup scan:', e.message);
+      // Do NOT set hasError — a backup failure must not mark the data sync as failed;
+      // it is surfaced separately via backup_health.
     }
 ```
 
 Replace the retention cleanup body so the cutoff is clamped by the backup floor + a 2×retention hard floor:
 
 ```js
-    // 4. Data retention cleanup
+    // 4. Data retention cleanup (clamped so un-backed-up months are never deleted)
     try {
-      const days = parseInt(getSetting('retention_days') || '365', 10);
+      const n = parseInt(getSetting('retention_days') || '365', 10);
+      const days = (Number.isNaN(n) || n <= 0) ? 365 : n; // PRESERVE existing guard (else 0 wipes the DB)
       const now = Date.now();
       const retentionCutoff = now - days * 24 * 60 * 60 * 1000;
-      const hardFloor = now - 2 * days * 24 * 60 * 60 * 1000;
-      const backupFloor = computePruneFloor(now); // Infinity if backups disabled / nothing pending
-      const effectiveCutoff = Math.max(hardFloor, Math.min(retentionCutoff, backupFloor));
+      // backupFloor is Infinity when backups are disabled/nothing pending, and is naturally
+      // bounded by the (retention+62d) scan window — no separate 2×retention hard floor needed.
+      const backupFloor = computePruneFloor(now);
+      const effectiveCutoff = Math.min(retentionCutoff, backupFloor);
       db.prepare("DELETE FROM measurements WHERE timestamp < ?").run(effectiveCutoff);
       db.prepare("DELETE FROM events WHERE start_ts < ? AND active = 0").run(effectiveCutoff);
     } catch (e) {
       console.error('Error executing database retention cleanup:', e.message);
+      hasError = true; errorMsg = e.message; // PRESERVE: keep the existing sync error reporting
     }
 ```
 (Keep the surrounding structure/variable names as they exist; only the cutoff computation changes. If the original used `limit`, rename to `effectiveCutoff` consistently within the block.)
@@ -1263,17 +1339,22 @@ git commit -m "feat(export): run monthly backup + clamp retention prune to backu
 - [ ] **Step 1: Write the failing test**
 
 ```js
-// backend/tests/server.test.js — ADD (match existing supertest/http style in the file)
-test('GET /api/export/metadata returns stations with metrics', async () => {
-  // seed one station + measurement via getDb() as other tests in this file do, then:
-  const res = await fetch(`${base}/api/export/metadata`);
+// backend/tests/server.test.js — ADD. Mirror THIS file's real harness: at the top it sets
+//   process.env.DB_PATH=':memory:'; process.env.PORT='3001'; then `const server = require('../server')`
+//   (requiring server.js calls app.listen(3001) as a side effect). Tests fetch the LITERAL
+//   'http://localhost:3001/...' — there is NO `base` var and NO supertest. Seed via getDb().
+// Before these tests, seed s1 with temperature + humidity (like the existing station tests do):
+//   getDb().prepare("INSERT OR IGNORE INTO stations (id,name) VALUES ('s1','S')").run();
+//   + two measurements for s1: ('temperature','°C') and ('humidity','%rF').
+
+test('GET /api/export/metadata returns a stations array', async () => {
+  const res = await fetch('http://localhost:3001/api/export/metadata');
   assert.strictEqual(res.status, 200);
-  const body = await res.json();
-  assert.ok(Array.isArray(body));
+  assert.ok(Array.isArray(await res.json()));
 });
 
-test('POST /api/export single station returns text/csv', async () => {
-  const res = await fetch(`${base}/api/export`, {
+test('POST /api/export single station returns text/csv attachment', async () => {
+  const res = await fetch('http://localhost:3001/api/export', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ stationIds: ['s1'], metrics: null, from: 0, to: 9e15, includeEvents: false }),
   });
@@ -1282,26 +1363,36 @@ test('POST /api/export single station returns text/csv', async () => {
   assert.match(res.headers.get('content-disposition') || '', /attachment/);
 });
 
-test('POST /api/export validation: empty stationIds => 400', async () => {
-  const res = await fetch(`${base}/api/export`, {
+test('POST /api/export metrics filter limits the columns', async () => {
+  const res = await fetch('http://localhost:3001/api/export', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ stationIds: ['s1'], metrics: ['temperature'], from: 0, to: 9e15, includeEvents: false }),
+  });
+  const text = await res.text();
+  assert.ok(text.includes('Temperatur [°C]'));
+  assert.ok(!text.includes('Feuchte [%rF]'));
+});
+
+test('POST /api/export empty stationIds => 400', async () => {
+  const res = await fetch('http://localhost:3001/api/export', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ stationIds: [], from: 0, to: 1 }),
   });
   assert.strictEqual(res.status, 400);
 });
 
-test('settings round-trip includes backup keys', async () => {
-  const post = await fetch(`${base}/api/settings`, {
+test('settings round-trip persists backup keys (stored as 0/1 strings)', async () => {
+  await fetch('http://localhost:3001/api/settings', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ csv_format: 'rfc', backup_enabled: false }),
   });
-  assert.strictEqual(post.status, 200);
-  const get = await (await fetch(`${base}/api/settings`)).json();
+  const get = await (await fetch('http://localhost:3001/api/settings')).json();
   assert.strictEqual(get.csv_format, 'rfc');
   assert.strictEqual(get.backup_enabled, false);
+  const { getSetting } = require('../db');
+  assert.strictEqual(getSetting('backup_enabled'), '0'); // stored '0', not 'false'
 });
 ```
-(Use the file's existing test harness conventions — `base` URL, seeding helper. The exact harness call differs per file; mirror neighbours.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1548,7 +1639,7 @@ git commit -m "feat(export): add export-logic frontend helpers + wire into test 
 
 - [ ] **Step 1: Add the methods**
 
-In `Smart Meter Dashboard/data.js`, inside the returned object (next to `forceApiRefresh`), add:
+In `Smart Meter Dashboard/data.js`, inside the returned object, add these two methods **immediately before** the existing `forceApiRefresh` method (each snippet below already ends with a comma; `forceApiRefresh` is the last property and has NO trailing comma, so inserting before it keeps the object-literal syntax valid):
 
 ```js
     async fetchExportMetadata() {
@@ -1578,11 +1669,10 @@ In `Smart Meter Dashboard/data.js`, inside the returned object (next to `forceAp
     },
 ```
 
-- [ ] **Step 2: Lint-check (no unit test — fetch/DOM bound)**
+- [ ] **Step 2: Syntax-check the file**
 
-Run: `node -e "require('fs').readFileSync('Smart Meter Dashboard/data.js','utf8'); console.log('parse-ok')"`
-Then verify the comma/braces are valid by loading in the browser later (Task 11 preview).
-Expected: `parse-ok` and no syntax error when the page loads.
+Run: `node --check "Smart Meter Dashboard/data.js"`
+Expected: no output, exit 0. `node --check` parses (without executing) and WILL catch a missing/extra comma — the prior `readFileSync` trick would not. Browser globals (`window`/`document`/`fetch`) are only referenced inside functions, so parse-only succeeds.
 
 - [ ] **Step 3: Commit**
 
@@ -1601,7 +1691,7 @@ git commit -m "feat(export): add fetchExportMetadata + postExport to data layer"
 
 **Interfaces:**
 - Consumes: `window.presetRange`, `window.unionMetrics`, `window.buildExportPayload` (export-logic); `window.DASH_DATA.fetchExportMetadata/postExport`.
-- Produces: global `window.ExportPanel` React component.
+- Produces: global `ExportPanel` React component (bare `function ExportPanel()` declaration in the Babel global scope — no `window.` export, like every other component).
 
 > **Hook-alias rule:** at the top of the component module, alias every hook: `const { useState: useStateE, useEffect: useEffectE, useMemo: useMemoE } = React;`. Use only the aliased names. Bare `useState` collides with charts.jsx globals → blank page.
 
@@ -1678,7 +1768,7 @@ function ExportPanel() {
       <div className="label">Messgrößen <span style={{ opacity: .6 }}>(leer = alle)</span></div>
       {availMetrics.map(m => (
         <label key={m.key} style={{ display: 'block' }}>
-          <input type="checkbox" checked={metricKeys.includes(m.key)} onChange={() => toggle(metricKeys, setMetricKeys, m.key)} /> {m.key} [{m.unit}]
+          <input type="checkbox" checked={metricKeys.includes(m.key)} onChange={() => toggle(metricKeys, setMetricKeys, m.key)} /> {m.label || m.key} [{m.unit}]
         </label>
       ))}
 
@@ -1704,12 +1794,15 @@ function ExportPanel() {
     </div>
   );
 }
-window.ExportPanel = ExportPanel;
+// Bare global function declaration — matches every other component (SettingsPage,
+// SystemSummaryPanel, App). Babel concatenates all .jsx into one global scope, so NO
+// `window.ExportPanel = …` and NO `window.ExportPanel ?` guard (those are non-idiomatic here
+// and the guard would silently render null instead of surfacing a load error).
 ```
 
 - [ ] **Step 2: Wire into the HTML**
 
-In `Smart Meter Dashboard/Klima Dashboard.html`, add two script tags alongside the others (order: `export-logic.js` as a plain script BEFORE the babel block; `export-panel.jsx` in the babel block, after `settings.jsx`):
+**(a) HTML script tags** — in `Smart Meter Dashboard/Klima Dashboard.html`: add `export-logic.js` as a PLAIN script with the other plain `.js` (the metrics-logic / data.js group), and `export-panel.jsx` in the babel block AFTER `settings.jsx`:
 
 ```html
 <script src="export-logic.js?v=0.11.0"></script>
@@ -1718,7 +1811,12 @@ In `Smart Meter Dashboard/Klima Dashboard.html`, add two script tags alongside t
 <script type="text/babel" src="export-panel.jsx?v=0.11.0"></script>
 ```
 
-Mount `<ExportPanel/>` inside the settings view where sections render (mirror how `settings.jsx` composes sections; if settings.jsx renders a list of panels, add `<ExportPanel/>`). If settings is a single component, render `{window.ExportPanel ? <ExportPanel/> : null}` at the end of its returned settings markup.
+**(b) Wire ExportPanel as a real settings section.** `settings.jsx` is a sidebar + single-body **state machine** (NOT a panel list): a `SETTINGS_SECTIONS` array drives the nav, and a `section` string selects ONE body via an `if (section === "...") body = <...Section/>` chain. Make three edits in `settings.jsx`:
+1. Add a sixth entry to `SETTINGS_SECTIONS` (~the `{id,label,icon}` array): `{ id: "export", label: "Datenexport", icon: "download" }`.
+2. In the section→body dispatch chain (the `if (section === "overview") body = …` block), add: `if (section === "export") body = <ExportPanel />;`
+3. In `NavIcon` (the icon `switch`/`if` by id), add a `case "download":` returning a download/save SVG (mirror an existing icon case's `<svg>` structure) so the nav entry isn't icon-less.
+
+Reference `<ExportPanel />` directly as a bare global — no `window.` and no presence guard.
 
 - [ ] **Step 3: Verify in the browser (preview)**
 
@@ -1738,7 +1836,7 @@ git commit -m "feat(export): add export-panel UI + wire scripts into dashboard"
 ## Task 12: Release 0.11.0 (version sync + docs)
 
 **Files:**
-- Modify: `VERSION`, `README.md` (badge), `package.json` (`version`), `Smart Meter Dashboard/Klima Dashboard.html` (all `?v=`), `deploy/windows/README.md`.
+- Modify: `VERSION`, `README.md` (badge), `package.json` (`version`), `Smart Meter Dashboard/Klima Dashboard.html` (all `?v=`), `deploy/windows/README.md`, `CLAUDE.md` (script-tag count 10→12).
 
 - [ ] **Step 1: Bump VERSION + README badge + package.json**
 
@@ -1750,9 +1848,10 @@ Replace every `?v=0.10.0` with `?v=0.11.0` in `Smart Meter Dashboard/Klima Dashb
 Run: `grep -c "?v=0.11.0" "Smart Meter Dashboard/Klima Dashboard.html"`
 Expected: `13` (12 script tags + 1 comment line referencing `?v=`). Confirm `grep -c "?v=0.10.0" …` returns `0`.
 
-- [ ] **Step 3: Update deploy docs**
+- [ ] **Step 3: Update deploy docs + CLAUDE.md**
 
-In `deploy/windows/README.md` add the backup behaviour to the §9 acceptance: backup directory (default `C:\ProgramData\TestoSmartAbruf\backups`), monthly ZIP per station, prune-safety, `csv_format`/`backup_dir`/`backup_enabled` settings. Note the 12-script-tag count.
+In `deploy/windows/README.md` add the backup behaviour to the §9 acceptance: backup directory (default `C:\ProgramData\TestoSmartAbruf\backups`), monthly ZIP per station, prune-safety, `csv_format`/`backup_dir`/`backup_enabled` settings.
+In `CLAUDE.md` change "(10 script tags)" → "(12 script tags)" in BOTH places it appears: the `scripts/` "Key locations" bullet AND the release-sync rule ("all `?v=` cache-busters in `Klima Dashboard.html` (10 script tags)").
 
 - [ ] **Step 4: Full suite + manual smoke**
 
@@ -1789,8 +1888,14 @@ git tag -a v0.11.0 -m "v0.11.0"
 
 **3. Type consistency:** `stationFiles`, `exportStations`, `computePruneFloor`, `runBackupScan`, `maybeRunBackupScan`, `resolveBackupDir`, `presetRange`, `unionMetrics`, `buildExportPayload`, `parseFilename`, `getDialect`, `formatNumber`, `escapeField`, `joinRow`, `formatTimestamps`, `buildMeasurementsCsv`, `buildEventsCsv`, `pivotMeasurements`, `classifyEventArt`, `createZip` — names consistent across Interfaces blocks and call sites. `metricKeys` used consistently (not `metrics` in service layer; the API maps body `metrics` → `metricKeys`).
 
-**Known soft spots for the grilling pass (Task review):**
-- `classifyEventArt` heuristic (measured-metric set) needs validation against real `events` rows — system alarms may carry a non-null `metric`.
-- `computePruneFloor` runs every cycle (file-stat × stations × months) — cheap but confirm window bound.
-- `formatTimestamps` uses host TZ; correct for single-site, documented assumption.
-- Test literal for `safeFileName` (Task 4) must match the exact regex output — adjust on first run.
+**Grilling pass — resolved (2026-06-22, 4 parallel adversarial review agents, Opus 4.8):**
+- `classifyEventArt` → now keys on `severity==='system'`, NOT metric membership (system events carry a measured `metric`; ~193 live rows). Fixed in Task 3.
+- Prune safety: dropped the buggy `2×retention` valve (it deleted un-backed data at small retention); `effectiveCutoff = min(retentionCutoff, computePruneFloor)`, naturally bounded by the scan window. `retention_days<=0/NaN → 365` guard restored in BOTH scheduler.js and `backup-runner.retentionDays()` (was dropped → would wipe the DB). Fixed in Tasks 6, 7.
+- Filenames include `stationId` (`stationBase`) so two same-sanitized-name stations cannot collide (was silent data loss via the prune floor). Fixed in Tasks 4, 6.
+- Settings mount is a section state-machine, not a panel list → 6th `SETTINGS_SECTIONS` entry + `section==='export'` body branch + `NavIcon` `download` case; bare-global component (no `window.ExportPanel`). Fixed in Task 11.
+- `server.test.js` uses literal `http://localhost:3001` + `require('../server')` (no supertest/`base`). Fixed in Task 8.
+- Task 5 seed runs only on a file DB (gated off `:memory:`) → test uses a temp-file DB. `data.js` uses `node --check`; insert before `forceApiRefresh`.
+- Dead `overdue` health status removed; `tmpDir()` resets tables + `backup_health`; `computePruneFloor` test compares to `monthStartMs` (TZ-independent).
+- Added tests: behavioral prune-safety (Task 7), atomic no-`.tmp` (Task 6), `includeEvents`→2 entries + empty-station metadata (Task 4), CSV-injection end-to-end (Task 3), ZIP umlaut UTF-8 round-trip (Task 2).
+- Verified sound by the agents: all DB columns exist; scheduler `db`/`getSetting` scope; settings/status insertion; hook-alias rule (charts.jsx:4 bare `const` → SyntaxError → blank page); React UMD globals; ZIP structure & limits; month arithmetic & current-month exclusion; `node --test` per-file process isolation.
+- Remaining accepted/documented: `formatTimestamps` uses host TZ (single-site assumption; pin `process.env.TZ` in tests); first-write-wins for late-arriving data (data still retained in DB for the full retention period).

@@ -140,7 +140,9 @@ Tabellenkopf:
 `Start (ISO);Start (lokal);Ende (ISO);Ende (lokal);Art;Schweregrad;Messgröße;Status;Grund;Auslösewert;Schwelle;Extremwert;Meldungstext;Detail`
 
 - **Art** = `Meldung` (System: Verbindung/Batterie/Netz) vs. `Alarm` (Messgrenze), bestimmt über
-  die bestehenden Klassifizierungs-Helfer in device-bridge (nicht neu erfinden).
+  die **`severity`-Spalte** (`severity==='system'` → Meldung, sonst Alarm). NICHT über `metric`
+  klassifizieren — System-Events tragen real ein `metric` (z.B. 'temperature'; ~193 solche Zeilen
+  in der Live-DB), würden so fälschlich als Alarm gelabelt.
 - Laufendes Ereignis (`end_ts` NULL) → „Ende"-Spalten leer.
 - **Inhalt Backup:** **alle** Events mit `start_ts` im Monat — aktiv **und** beendet (genau das
   macht das Backup zum Archiv).
@@ -193,9 +195,9 @@ validiert (nicht-leer ⇒ Verzeichnis anlegbar/schreibbar; sonst 400).
   Seite. Im neuen Modul konsequent aliasieren.
 - `data.js`: `fetchExportMetadata()`, `postExport(payload)` (Antwort als Blob → Datei-Download via
   Object-URL; Dateiname aus `Content-Disposition`).
-- `Klima Dashboard.html`: neuer `<script type="text/babel" src="export-panel.jsx?v=0.11.0">`-Tag;
-  **alle** `?v=`-Cache-Buster auf `0.11.0` (dann 11 Script-Tags — Anzahl in CLAUDE.md/Deploy-Doku
-  aktualisieren).
+- `Klima Dashboard.html`: zwei neue Tags — `<script src="export-logic.js?v=0.11.0">` (plain) und
+  `<script type="text/babel" src="export-panel.jsx?v=0.11.0">`; **alle** `?v=`-Cache-Buster auf
+  `0.11.0` (dann **12** Script-Tags — Anzahl in CLAUDE.md **und** Deploy-Doku aktualisieren).
 
 ---
 
@@ -218,30 +220,38 @@ validiert (nicht-leer ⇒ Verzeichnis anlegbar/schreibbar; sonst 400).
 3. **Idempotenz:** Datei existiert → überspringen (selbstheilend; gelöschte ZIPs werden neu
    erzeugt, solange die Quelldaten in der DB sind). Spät eintreffende Daten für einen bereits
    gesicherten Monat werden **nicht** neu archiviert (first-wins, akzeptierter Edge Case).
-4. **Dateinamen:** Stellenname → illegale Zeichen `< > : " / \ | ? *` und Steuerzeichen → `_`,
-   führende/abschließende Punkte/Leerzeichen trimmen. Umlaute bleiben erhalten (ZIP-UTF-8-Flag;
-   Windows-Dateisystem unterstützt Umlaute).
+4. **Dateinamen:** `<safeName>_<stationId>_<JJJJ-MM>.zip`. safeName = Stellenname mit illegalen
+   Zeichen `< > : " / \ | ? *` / Steuerzeichen → `_`, führende/abschließende Punkte/Leerzeichen
+   getrimmt. **Die Stations-ID im Namen verhindert Kollisionen**, wenn zwei Stellen denselben
+   safeName ergeben — sonst würde die zweite nie archiviert und fiele aus der Prune-Sperre (stiller
+   Datenverlust). Gilt auch für die CSV-Einträge im manuellen Multi-Stellen-ZIP. Umlaute bleiben
+   erhalten (ZIP-UTF-8-Flag; Windows-Dateisystem unterstützt Umlaute).
 
 ---
 
 ## 9. Prune-Sicherheit (`scheduler.js`)
 
+`retention_days` wird zuerst saniert: `days = (isNaN || days<=0) ? 365 : days` (der bestehende
+Guard in scheduler.js bleibt erhalten; dieselbe Sanierung auch in `backup-runner.retentionDays()`).
+
 Die Retention-Bereinigung nutzt:
 ```
 retentionCutoff = now − retention_days
 backupFloor     = backup_enabled ? Monatsbeginn(ältester abgeschl. Monat OHNE ZIP, im Scan-Fenster) : +∞
-hardFloor       = now − 2 × retention_days            // Safety-Valve gegen Unbounded Growth
-effectiveCutoff = max( hardFloor, min(retentionCutoff, backupFloor) )
+effectiveCutoff = min( retentionCutoff, backupFloor )
 DELETE FROM measurements WHERE timestamp < effectiveCutoff
 ```
-- Normalbetrieb (365 Tage, monatlich): `backupFloor` ≫ `retentionCutoff` → keine Wirkung, keine
-  Kollision.
-- `backup_dir` tot / Backups schlagen fehl: `backupFloor` hält Daten — bis `hardFloor` greift
-  (Daten älter als 2×Retention werden trotzdem gelöscht) **und** Health meldet
-  `overdue`/`error`. So bleibt die DB beschränkt, Daten werden im Normalfall aber nie ohne Archiv
-  gelöscht.
-- Inaktive Events (`end_ts`/`active=0`) werden analog erst nach erfolgreichem Backup ihres Monats
-  geprunt (gleiche `effectiveCutoff`-Logik auf `start_ts`).
+- `backupFloor` ist **durch das Scan-Fenster (`retention_days + 62 Tage`) natural begrenzt** —
+  `computePruneFloor` betrachtet nur Monate im Fenster. Daten älter als das Fenster werden
+  zwangsgelöscht; das bindet die DB **ohne** separaten „2×Retention"-Valve und funktioniert für
+  JEDE Retention (auch kleine).
+- Normalbetrieb: Backups laufen binnen ~32 Tagen → un-gesicherte Monate sind nur transient,
+  `backupFloor` ≫ Daten-Alter → keine Wirkung.
+- `backup_dir` tot / Backups schlagen fehl: un-gesicherte Monate im Fenster bleiben geschützt; die
+  DB wächst auf ~`retention+62 Tage`, dann wird der älteste Monat zwangsgelöscht; Health meldet
+  `overdue`/`error`.
+- Inaktive Events (`end_ts`/`active=0`) werden analog mit demselben `effectiveCutoff` auf `start_ts`
+  geprunt.
 
 ---
 
