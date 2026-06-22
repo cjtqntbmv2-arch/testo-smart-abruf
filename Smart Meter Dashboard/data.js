@@ -412,6 +412,32 @@
       return rows.map(mapBackendEvent);
     },
 
+    async fetchExportMetadata() {
+      const res = await fetch('/api/export/metadata');
+      if (!res.ok) throw new Error('Export-Metadaten konnten nicht geladen werden');
+      return res.json();
+    },
+
+    async postExport(payload) {
+      const res = await fetch('/api/export', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        let msg = 'Export fehlgeschlagen';
+        try { msg = (await res.json()).error || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+      const cd = res.headers.get('content-disposition');
+      const name = (typeof window.parseFilename === 'function' && window.parseFilename(cd)) || 'export.csv';
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name; document.body.appendChild(a); a.click();
+      a.remove(); URL.revokeObjectURL(url);
+      return { ok: true };
+    },
+
     // Extra helpers to allow external calls from components (Zuweisungsmanager / Settings)
     async forceApiRefresh() {
       await refresh();
