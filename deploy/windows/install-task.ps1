@@ -51,6 +51,7 @@ if ($PSCmdlet.ShouldProcess($TaskName, 'Scheduled Task registrieren')) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
   }
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
-    -Principal $principal -Settings $settings | Out-Null
+    -Principal $principal -Settings $settings `
+    -Description 'testo-smart-abruf Klima-Server (Auto-Start, NetworkService)' | Out-Null
   Write-Host "Task '$TaskName' registriert. Manueller Start: schtasks /Run /TN $TaskName"
 }
