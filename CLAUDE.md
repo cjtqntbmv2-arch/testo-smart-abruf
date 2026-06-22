@@ -18,6 +18,21 @@ Run the app with `npm start` (serves on port 3000). Tests: `npm test`.
 
 For any task about the **testo API itself** (endpoint paths, async pattern, authentication, OData, schemas, limit values, migration from Saveris 2), read [testo-smart-connect-api/CLAUDE.md](testo-smart-connect-api/CLAUDE.md) first — it is the documentation index and routes to the right file. For application work, start from the `backend/` and `Smart Meter Dashboard/` files listed above. The editing safety rails below apply to the `testo-smart-connect-api/` docs snapshot, not to the application source.
 
+## Deployment target: the app must stay Windows-runnable
+
+The application is deployed as a **login-independent background service on a corporate Windows 11 x64 machine** (Windows Task Scheduler, account `NT AUTHORITY\NetworkService`, BootTrigger). Shipped in v0.10.0. The dev machine is macOS, so Windows behaviour is confirmed only by content review + a manual acceptance pass on a Windows box. Detailed design / plan / IT setup guide: [docs/superpowers/specs/2026-06-22-windows-service-design.md](docs/superpowers/specs/2026-06-22-windows-service-design.md), [docs/superpowers/plans/2026-06-22-windows-service.md](docs/superpowers/plans/2026-06-22-windows-service.md), [deploy/windows/README.md](deploy/windows/README.md) (the latter holds the §9 acceptance criteria).
+
+**Any change to the app must keep these true** — they are easy to break from macOS, where the broken version still looks fine:
+
+- **Paths:** always `path.join(__dirname, …)`; never hardcode `/`, Unix paths, or manual `'/'` concatenation. The DB path comes from `process.env.DB_PATH` (the service points it at `C:\ProgramData\TestoSmartAbruf\`) — never assume the code directory is writable (it may be read-only / under `C:\Program Files`).
+- **Env loading:** dotenv is called with `{ path: path.join(__dirname, '../.env') }` (CWD-independent) because the service runs with a foreign working directory. Do not revert to bare `require('dotenv').config()`.
+- **npm scripts:** no inline `VAR=value cmd` (breaks cmd.exe/PowerShell) — use `cross-env` (already a devDependency), as the `test` script does.
+- **Native modules:** only add native deps that ship **win32-x64 prebuilds for Node 22/24/26** (the pinned `engines` / `.nvmrc=24`; Node 23/25 are excluded). Avoid deps that need a compiler — that breaks the corporate "nothing-surprising" / no-build-tools constraint. `better-sqlite3` is the only native module today.
+- **"Nothing surprising" for corporate EDR:** no new bundled binaries, no surprising network calls at startup. `puppeteer` stays in `devDependencies` (the server installs with `npm ci --omit=dev`); the only outbound traffic is the testo-cloud sync.
+- **SQLite WAL:** the DB must stay on a **local disk** — WAL breaks on UNC / network shares.
+- **Server binding:** configure via `PORT` / `HOST` env; `HOST` defaults to localhost. LAN access is opt-in (a firewall rule), never the default.
+- **On release / when the deployment story changes:** keep `VERSION`, the README badge, `package.json` version, and all `?v=` cache-busters in `Klima Dashboard.html` (10 script tags) in sync; update `deploy/windows/` and re-run the Windows acceptance.
+
 ## Ignore: `spec/`
 
 The `spec/` directory is a generated reverse-documentation snapshot (reconstruction spec of the application code), produced as a one-off deliverable. **Ignore it during normal work in this project** — do not read, edit, search, index, or treat it as a source of truth. It is not maintained in lockstep with the code and may go stale. Work from the actual source instead.
