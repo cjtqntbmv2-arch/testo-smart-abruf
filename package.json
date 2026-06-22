@@ -5,7 +5,7 @@
   "main": "backend/server.js",
   "scripts": {
     "start": "node backend/server.js",
-    "test": "cross-env NODE_ENV=test node --test backend/tests/*.test.js && cross-env NODE_ENV=test node --test \"Smart Meter Dashboard/tests/metrics-logic.test.js\" \"Smart Meter Dashboard/tests/summary-logic.test.js\" \"Smart Meter Dashboard/tests/status-logic.test.js\""
+    "test": "cross-env NODE_ENV=test node --test backend/tests/*.test.js && cross-env NODE_ENV=test node --test \"Smart Meter Dashboard/tests/metrics-logic.test.js\" \"Smart Meter Dashboard/tests/summary-logic.test.js\" \"Smart Meter Dashboard/tests/status-logic.test.js\" \"Smart Meter Dashboard/tests/export-logic.test.js\""
   },
   "engines": {
     "node": "22.x || 24.x || 26.x"
