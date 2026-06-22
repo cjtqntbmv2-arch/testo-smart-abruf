@@ -5,12 +5,18 @@
   "main": "backend/server.js",
   "scripts": {
     "start": "node backend/server.js",
-    "test": "NODE_ENV=test node --test backend/tests/*.test.js && NODE_ENV=test node --test \"Smart Meter Dashboard/tests/metrics-logic.test.js\" \"Smart Meter Dashboard/tests/summary-logic.test.js\" \"Smart Meter Dashboard/tests/status-logic.test.js\""
+    "test": "cross-env NODE_ENV=test node --test backend/tests/*.test.js && cross-env NODE_ENV=test node --test \"Smart Meter Dashboard/tests/metrics-logic.test.js\" \"Smart Meter Dashboard/tests/summary-logic.test.js\" \"Smart Meter Dashboard/tests/status-logic.test.js\""
+  },
+  "engines": {
+    "node": "22.x || 24.x || 26.x"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
     "puppeteer": "^25.1.0"
   }
 }
