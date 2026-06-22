@@ -49,6 +49,7 @@ test('buildMeasurementsCsv: CSV-injection guard neutralizes a malicious station 
   const evil = { name: '=HYPERLINK("http://x")', location: '+x', serial_no: '1', model_code: 'M' };
   const csv = buildMeasurementsCsv({ station: evil, rows: [], metricKeys: ['temperature'], fromTs: 0, toTs: 1, dialect: DE, appVersion: '0.11.0', nowMs: 0 });
   assert.ok(csv.includes("'=HYPERLINK"), "leading '=' prefixed with an apostrophe in the header block");
+  assert.ok(csv.includes("'+x"), "leading '+' in location prefixed");
 });
 
 test('buildEventsCsv: columns + Art + open end empty', () => {
@@ -59,4 +60,10 @@ test('buildEventsCsv: columns + Art + open end empty', () => {
   assert.ok(csv.includes('Start (ISO);Start (lokal);Ende (ISO);Ende (lokal);Art;'));
   assert.ok(csv.includes(';Alarm;'), 'Art column = Alarm');
   assert.ok(csv.includes('Temp zu hoch'));
+});
+
+test('buildEventsCsv: CSV-injection guard neutralizes a malicious station name (end-to-end)', () => {
+  const evil = { name: '=cmd', location: '+x', serial_no: '1', model_code: 'M' };
+  const csv = buildEventsCsv({ station: evil, events: [], fromTs: 0, toTs: 1, dialect: DE, appVersion: '0.11.0', nowMs: 0 });
+  assert.ok(csv.includes("'=cmd"), "leading '=' in station name prefixed in events header");
 });
