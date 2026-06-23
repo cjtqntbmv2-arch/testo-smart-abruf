@@ -1149,6 +1149,18 @@
   }
   .export-actions .btn { flex-shrink: 0; }
 
+  .backup-path { display: flex; gap: 8px; align-items: center; }
+  .backup-path-input { flex: 1; min-width: 0; } /* Border/Padding/Font erbt von .setting-field-control input[type="text"] (Klima Dashboard.html:1006) */
+  .backup-status { display: flex; flex-direction: column; gap: 10px; }
+  .backup-status-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .backup-status-err { color: var(--alarm); font-size: 13px; }
+  .backup-status-rows { display: flex; flex-direction: column; gap: 6px; }
+  .backup-status-rows > div { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; }
+  .backup-status-rows .k { color: var(--text-muted); white-space: nowrap; }
+  .backup-status-rows .v { font-variant-numeric: tabular-nums; word-break: break-all; text-align: right; }
+  .backup-status-msg { color: var(--text-muted); font-size: 13px; margin: 0; }
+  .backup-status-msg.muted { opacity: 0.85; }
+
   /* Health grid */
   .health-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

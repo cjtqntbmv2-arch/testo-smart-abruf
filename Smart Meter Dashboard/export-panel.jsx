@@ -1,5 +1,5 @@
 // Smart Meter Dashboard/export-panel.jsx
-// Manual CSV export dialog + backup-status block. Mounted as a settings section.
+// Manueller CSV-Export-Dialog + Backup-Einstellungen (Ein/Aus, Pfad) und -Status. Als Settings-Sektion eingehängt.
 const { useState: useStateE, useEffect: useEffectE, useMemo: useMemoE } = React;
 
 function ExportPanel() {
@@ -133,6 +133,114 @@ function ExportPanel() {
             : <><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M7 1v8M4 6l3 3 3-3"/><path d="M1.5 10v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10"/></svg> Exportieren</>}
         </button>
       </div>
+      <BackupSettings />
+    </>
+  );
+}
+function BackupSettings() {
+  const [enabled, setEnabled] = useStateE(true);
+  const [dir, setDir] = useStateE('');
+  const [status, setStatus] = useStateE(null);   // backup-Block aus /api/system/status, oder null
+  const [statusErr, setStatusErr] = useStateE(false);
+  const [pathErr, setPathErr] = useStateE(null);
+  const [savedFlash, setSavedFlash] = useStateE(false);
+  const [busy, setBusy] = useStateE(false);
+  const [pollSec, setPollSec] = useStateE(900); // Poll-Intervall für den „erster Lauf"-Hinweis
+
+  function reloadStatus() {
+    DASH_DATA.fetchBackupStatus()
+      .then(b => { setStatus(b); setStatusErr(false); })
+      .catch(() => setStatusErr(true));
+  }
+
+  useEffectE(() => {
+    DASH_DATA.fetchSettings()
+      .then(s => { setEnabled(s.backup_enabled !== false); setDir(s.backup_dir || ''); setPollSec(s.poll_interval_sec || 900); })
+      .catch(() => {});
+    reloadStatus();
+  }, []);
+
+  async function toggleEnabled(next) {
+    if (busy) return;                  // Doppelklick/Race-Schutz: ein In-Flight-Save zur Zeit
+    setBusy(true);
+    setEnabled(next);                  // optimistisch
+    try { await DASH_DATA.saveSettings({ backup_enabled: next }); }
+    catch (_) { setEnabled(!next); }   // bei Fehler zurücksetzen
+    finally { setBusy(false); reloadStatus(); }
+  }
+
+  async function savePath() {
+    setPathErr(null); setBusy(true);
+    try {
+      await DASH_DATA.saveSettings({ backup_dir: dir });
+      setSavedFlash(true); setTimeout(() => setSavedFlash(false), 2000);
+      reloadStatus();
+    } catch (e) { setPathErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  const effectiveDir = (status && status.dir) || null; // aufgelöster Zielordner (gesetzter Pfad ODER Default)
+  const health = (status && status.health) || {};
+
+  return (
+    <>
+      <SectionHead
+        title="Automatisches Monats-Backup"
+        sub="Sichert je Messstelle Messwerte und Meldungen eines Monats als ZIP. Läuft selbsttätig, höchstens einmal pro Tag."
+      />
+
+      <Card>
+        <Field label="Automatisches Backup" hint="Monatliche ZIP-Sicherung ein- oder ausschalten.">
+          <Toggle checked={enabled} onChange={toggleEnabled} labelOn="Ein" labelOff="Aus" />
+        </Field>
+        <Field label="Speicherpfad" hint="Zielordner für die Backup-ZIPs. Leer = Standardordner.">
+          <div className="backup-path">
+            <input
+              type="text"
+              className="backup-path-input"
+              value={dir}
+              placeholder="Leer lassen für Standardordner"
+              onChange={e => { setDir(e.target.value); setPathErr(null); }}
+            />
+            <button className="btn" disabled={busy} onClick={savePath}>
+              {busy ? <Spinner /> : (savedFlash ? 'Gespeichert ✓' : 'Speichern')}
+            </button>
+          </div>
+          {pathErr && (
+            <div className="export-error">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span>{pathErr}</span>
+            </div>
+          )}
+        </Field>
+      </Card>
+
+      <Card>
+        {statusErr ? (
+          <p className="backup-status-msg">Status nicht verfügbar.</p>
+        ) : !enabled ? (
+          <p className="backup-status-msg muted">Automatisches Backup ist ausgeschaltet.</p>
+        ) : !health.status ? (
+          <p className="backup-status-msg muted">Noch kein Backup gelaufen — der erste Lauf erfolgt beim nächsten Sync (spätestens in {Math.max(1, Math.round(pollSec / 60))} Min).</p>
+        ) : (
+          <div className="backup-status">
+            <div className="backup-status-head">
+              <span className={`status-pill st-${health.status === 'ok' ? 'ok' : 'err'}`}>
+                <span className="status-pill-dot" />
+                {health.status === 'ok' ? 'Aktiv' : 'Fehler'}
+              </span>
+              {health.status !== 'ok' && health.lastError && (
+                <span className="backup-status-err">{health.lastError}</span>
+              )}
+            </div>
+            <div className="backup-status-rows">
+              <div><span className="k">Zielordner</span><span className="v">{effectiveDir || '—'}</span></div>
+              <div><span className="k">Letzter Scan</span><span className="v">{status.lastScanDate || '—'}</span></div>
+              <div><span className="k">Zuletzt geschrieben</span><span className="v">{health.lastZip ? (health.written ? `${health.lastZip} (${health.written})` : health.lastZip) : '—'}</span></div>
+            </div>
+          </div>
+        )}
+      </Card>
     </>
   );
 }
