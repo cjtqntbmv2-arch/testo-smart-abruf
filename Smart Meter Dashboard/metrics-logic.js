@@ -67,11 +67,27 @@
     return { delta, pct, hasTrend: true, ref, last };
   }
 
-  const api = { metricAlertState, metricAlertStatus, metricTrend };
+  // Mirror a device's stored channel into a numeric series aligned to `length`.
+  // Derived metrics (dewpoint, abshumid) are MIRRORED from the stored channel, never
+  // recomputed — the dashboard must match the CSV export's faithful archive. A slot the
+  // device does not report (null/undefined/non-number, or a channel that is absent or
+  // shorter than `length`) becomes NaN, which the UI renders as a gap rather than a
+  // fabricated value.
+  function storedSeries(series, length) {
+    const out = new Array(length);
+    for (let i = 0; i < length; i++) {
+      const v = series && series[i];
+      out[i] = isNum(v) ? v : NaN;
+    }
+    return out;
+  }
+
+  const api = { metricAlertState, metricAlertStatus, metricTrend, storedSeries };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') {
     window.metricAlertState = metricAlertState;
     window.metricAlertStatus = metricAlertStatus;
     window.metricTrend = metricTrend;
+    window.storedSeries = storedSeries;
   }
 })();

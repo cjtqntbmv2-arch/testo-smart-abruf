@@ -6,16 +6,6 @@
   const STEP_MS = 10 * 60 * 1000;
   const POLL_EVENT_LIMIT = 50; // bound the 5s poll's per-station history fetch
 
-  // Dew point & absolute humidity formulas
-  function dewPoint(T, RH) {
-    const a = 17.625, b = 243.04;
-    const alpha = Math.log(Math.max(1, RH) / 100) + (a * T) / (b + T);
-    return (b * alpha) / (a - alpha);
-  }
-  function absHumidity(T, RH) {
-    return (6.112 * Math.exp((17.67 * T) / (T + 243.5)) * RH * 2.1674) / (273.15 + T);
-  }
-
   // Metric metadata definition (identical to static prototype)
   const META = {
     temperature: { id: "temperature", label: "Temperatur",      short: "Temp.",         unit: "°C",   color: "oklch(0.70 0.13 55)",  colorSoft: "oklch(0.70 0.13 55 / 0.18)",  decimals: 1, icon: "thermo" },
@@ -161,7 +151,10 @@
           timestamps = stationTimestamps;
         }
 
-        // Compute derived metrics: dewpoint and abshumid
+        // Resolve all displayed series. Dewpoint and abs. humidity are MIRRORED from the
+        // device's stored channel — never recomputed from temperature/humidity — so the
+        // dashboard shows exactly what is archived and matches the CSV export. A device
+        // that does not store these channels shows a gap, not a fabricated value.
         let seriesT = stationMetrics.temperature.series || [];
         let seriesH = stationMetrics.humidity.series || [];
         let seriesP = stationMetrics.pressure.series || [];
@@ -172,38 +165,18 @@
           seriesT = new Array(POINTS).fill(NaN);
           seriesH = new Array(POINTS).fill(NaN);
           seriesP = new Array(POINTS).fill(NaN);
-          
+
           if (s.id === activeStationId || !activeStationId) {
             timestamps = stationTimestamps;
           }
         }
 
-        seriesT = seriesT.map(v => typeof v === 'number' && !Number.isNaN(v) ? v : NaN);
-        seriesH = seriesH.map(v => typeof v === 'number' && !Number.isNaN(v) ? v : NaN);
-        seriesP = seriesP.map(v => typeof v === 'number' && !Number.isNaN(v) ? v : NaN);
-
-        const seriesD = seriesT.map((t, i) => {
-          const h = seriesH[i];
-          return (Number.isNaN(t) || Number.isNaN(h)) ? NaN : dewPoint(t, h);
-        });
-        const seriesA = seriesT.map((t, i) => {
-          const h = seriesH[i];
-          return (Number.isNaN(t) || Number.isNaN(h)) ? NaN : absHumidity(t, h);
-        });
-
-        // Prefer the device's MEASURED dewpoint / abs. humidity when the backend
-        // delivers that channel; fall back to the locally computed value per
-        // timestamp wherever the device reports no such channel.
-        const measuredD = (stationMetrics.dewpoint && stationMetrics.dewpoint.series) || [];
-        const measuredA = (stationMetrics.abshumid && stationMetrics.abshumid.series) || [];
-        const finalD = seriesD.map((computed, i) => {
-          const m = measuredD[i];
-          return (typeof m === 'number' && !Number.isNaN(m)) ? m : computed;
-        });
-        const finalA = seriesA.map((computed, i) => {
-          const m = measuredA[i];
-          return (typeof m === 'number' && !Number.isNaN(m)) ? m : computed;
-        });
+        const len = seriesT.length;
+        seriesT = storedSeries(seriesT, len);
+        seriesH = storedSeries(seriesH, len);
+        seriesP = storedSeries(seriesP, len);
+        const finalD = storedSeries(stationMetrics.dewpoint && stationMetrics.dewpoint.series, len);
+        const finalA = storedSeries(stationMetrics.abshumid && stationMetrics.abshumid.series, len);
 
         const allSeries = {
           temperature: seriesT,

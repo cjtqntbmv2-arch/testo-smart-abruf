@@ -306,5 +306,9 @@ Backup-Verzeichnis/-Verhalten ergänzen; Windows-Acceptance erneut.
 - Backup-Aufbewahrungs-Obergrenze / Auto-Pruning der ZIPs (unbegrenzt gewählt).
 - Re-Backup spät eingetroffener Daten (first-wins).
 - Streaming großer Exporte.
-- Entfernen der Frontend-Berechnung von Taupunkt/abs. Feuchte → **separate Folgeaufgabe**.
+- ~~Entfernen der Frontend-Berechnung von Taupunkt/abs. Feuchte → **separate Folgeaufgabe**.~~
+  **Erledigt in v0.11.2:** Audit bestätigte, dass alle Messstellen native `dewpoint`/`abshumid`-
+  Kanäle speichern; die Frontend-Fallback-Berechnung wurde entfernt. Das Dashboard spiegelt jetzt
+  ausschließlich gespeicherte Kanäle (`storedSeries` in `metrics-logic.js`) und stimmt mit dem
+  CSV-Export überein. Geräte ohne diese Kanäle zeigen eine Lücke (—) statt eines berechneten Werts.
 - Andere Formate (XLSX/JSON), Zeitzonen-Wahl pro Stelle, E-Mail-Versand der Backups.

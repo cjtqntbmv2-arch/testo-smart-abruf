@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { metricAlertState, metricAlertStatus, metricTrend } = require('../metrics-logic.js');
+const { metricAlertState, metricAlertStatus, metricTrend, storedSeries } = require('../metrics-logic.js');
 
 test('metricAlertStatus: active alarm outranks warning', () => {
   const events = [
@@ -149,4 +149,41 @@ test('metricAlertState: inactive / system / other-metric -> {null,null}', () => 
 test('metricAlertState: non-array / missing id -> {null,null}', () => {
   assert.deepStrictEqual(metricAlertState(null, 'temperature'), { severity: null, direction: null });
   assert.deepStrictEqual(metricAlertState([{ active: true, severity: 'alarm', metric: 'temperature', condition: 'high' }], null), { severity: null, direction: null });
+});
+
+// storedSeries — derived metrics (dewpoint, abshumid) are MIRRORED from the device's
+// stored channel, never recomputed. The dashboard must match the CSV export's faithful
+// archive: a channel the device does not store shows as a gap, not a fabricated value.
+
+test('storedSeries: mirrors numeric values aligned to length', () => {
+  assert.deepStrictEqual(storedSeries([9.5, 9.6, 9.7], 3), [9.5, 9.6, 9.7]);
+});
+
+test('storedSeries: absent channel -> all-NaN gap, never a computed value', () => {
+  const out = storedSeries(null, 3);
+  assert.strictEqual(out.length, 3);
+  assert.ok(out.every((v) => Number.isNaN(v)), 'every slot is a NaN gap');
+});
+
+test('storedSeries: empty channel -> all-NaN gap of requested length', () => {
+  const out = storedSeries([], 144);
+  assert.strictEqual(out.length, 144);
+  assert.ok(out.every((v) => Number.isNaN(v)));
+});
+
+test('storedSeries: null / non-number gaps normalize to NaN, real values kept', () => {
+  const out = storedSeries([null, 8.2, undefined, 'x', 8.4], 5);
+  assert.strictEqual(out.length, 5);
+  assert.ok(Number.isNaN(out[0]));
+  assert.strictEqual(out[1], 8.2);
+  assert.ok(Number.isNaN(out[2]));
+  assert.ok(Number.isNaN(out[3]));
+  assert.strictEqual(out[4], 8.4);
+});
+
+test('storedSeries: pads with NaN when channel shorter than length', () => {
+  const out = storedSeries([5.0], 3);
+  assert.strictEqual(out[0], 5.0);
+  assert.ok(Number.isNaN(out[1]));
+  assert.ok(Number.isNaN(out[2]));
 });
