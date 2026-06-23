@@ -14,6 +14,38 @@ gestartet bei jedem Systemstart, laufend als `NT AUTHORITY\NetworkService`.
   native better-sqlite3-Binary. Hinter Proxy: `npm config set proxy <url>` /
   `https-proxy` setzen; ggf. beide Hosts in der Allowlist freigeben.
 
+## Schnellinstallation (empfohlen)
+
+`setup.ps1` bündelt die Schritte unten zu einem Aufruf: Node-Preflight, Stoppen
+eines ggf. laufenden Dienstes, `npm ci --omit=dev` (inkl. Prebuild-Check),
+Pfad-/Konsistenz-Prüfung, Aufruf von `install-task.ps1`, Task-Start und ein
+`GET /api/system/status`-Smoke-Check. Re-run-sicher = zugleich Update-Pfad.
+
+1. **Pflicht: Installationspfad OHNE Leerzeichen** (z. B. `C:\Apps\TestoSmartAbruf`),
+   nicht unter `C:\Program Files` (enthält ein Leerzeichen), lokale Platte
+   (kein Netzlaufwerk — WAL).
+2. Code auf die Maschine bringen (`git clone`/kopieren — **node_modules NIE
+   mitkopieren**, falsches ABI). Node 24 LTS (x64) muss installiert sein.
+3. Setup ausführen — doppelklickbar **oder** aus einer **Administrator**-PowerShell
+   (auch der Trockenlauf braucht Admin-Rechte), **aus dem Repo-Wurzelverzeichnis**:
+   ```powershell
+   .\deploy\windows\setup.cmd
+   powershell -ExecutionPolicy Bypass -File deploy\windows\setup.ps1 -WhatIf   # Trockenlauf
+   powershell -ExecutionPolicy Bypass -File deploy\windows\setup.ps1
+   ```
+4. Nach Erfolg: **API-Key im Dashboard** unter Einstellungen hinterlegen — der
+   Dienst synct erst danach (der Smoke-Check weist darauf hin, falls noch keiner
+   gesetzt ist).
+
+**Update nach `git pull`:** `setup.ps1` erneut ausführen (stoppt zuerst den
+laufenden Dienst, dann npm ci + Neuregistrierung). Wenn `package-lock.json`
+unverändert ist, mit `-SkipNpm` schneller (der Prebuild-Check läuft trotzdem).
+
+`setup.cmd` ist nur für den interaktiven Doppelklick gedacht. Für Automatisierung
+`setup.ps1` direkt via `-File` aufrufen und `$LASTEXITCODE` prüfen.
+
+Die manuelle Schritt-für-Schritt-Anleitung unten bleibt als Fallback/Transparenz.
+
 ## Installation
 
 1. **Pflicht: Installationspfad OHNE Leerzeichen** (z. B. `C:\Apps\TestoSmartAbruf`),
@@ -89,6 +121,17 @@ zusaetzlich einmal hart neu laden (Strg+F5).
   `npm ci` wiederholen oder AV-Ausnahme fuer den App-Ordner setzen.
 - **AV/EDR & DB:** AV-Ausnahme fuer `C:\ProgramData\TestoSmartAbruf\` empfohlen
   (haeufige `-wal`/`-shm`-Schreibzugriffe).
+- **SmartScreen / „Windows protected your PC" beim Doppelklick:** per Download
+  (Browser/E-Mail) bezogene `.cmd`/`.ps1` tragen das Mark-of-the-Web. Entweder per
+  `git clone` holen (kein MOTW) oder einmalig entsperren:
+  `Get-ChildItem deploy\windows\*.ps1,deploy\windows\*.cmd | Unblock-File`.
+- **`AllSigned` per GPO:** Ist die `ExecutionPolicy` auf MachinePolicy-Ebene auf
+  `AllSigned` gesetzt, überschreibt das `-ExecutionPolicy Bypass` — unsignierte
+  Skripte laufen dann nicht. Ohne Signatur mit der IT klären.
+- **npm hinter Proxy:** `npm config set proxy <url>` / `https-proxy` setzen (oder
+  in `.npmrc`), damit der better-sqlite3-Prebuild von `github.com` geladen wird.
+- **Setup-Eigenlog:** `setup.ps1` schreibt zusätzlich nach
+  `C:\ProgramData\TestoSmartAbruf\logs\setup.log` (auch wenn das Fenster zugeht).
 
 ## §9 Abnahmekriterien (Acceptance Criteria)
 
@@ -119,8 +162,8 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 ### Versionscheck
 
-- `GET /api/system/status` → Feld `version` lautet `0.12.0`.
-- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.12.0` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
+- `GET /api/system/status` → Feld `appVersion` lautet `0.13.0`.
+- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.13.0` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
 
 ## Alternativen (nicht Standard)
 
