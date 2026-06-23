@@ -1082,6 +1082,73 @@
   .status-badge.st-warn { background: var(--warn-tint); color: oklch(0.48 0.12 75); border-color: var(--warn-soft); }
   .status-badge.st-err  { background: var(--alarm-tint); color: var(--alarm); border-color: var(--alarm-soft); }
 
+  /* ---------- Datenexport (export-panel) ---------- */
+  .export-error {
+    display: flex; align-items: flex-start; gap: 9px;
+    margin: 0 0 14px; padding: 11px 14px;
+    background: var(--alarm-tint); color: var(--alarm);
+    border: 1px solid var(--alarm-soft); border-radius: var(--radius-sm);
+    font-size: 13px; line-height: 1.45;
+  }
+  .export-error svg { flex-shrink: 0; margin-top: 1px; }
+
+  .export-checks {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 6px;
+  }
+  .export-check {
+    display: flex; align-items: center; gap: 9px;
+    padding: 8px 11px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--surface-2);
+    font-size: 13px; color: var(--text); cursor: pointer;
+    transition: background .12s ease, border-color .12s ease;
+  }
+  .export-check:hover { background: var(--accent-tint); border-color: var(--accent-soft); }
+  .export-check input[type="checkbox"] {
+    width: 15px; height: 15px; accent-color: var(--accent);
+    cursor: pointer; flex-shrink: 0; margin: 0;
+  }
+  .export-check span { min-width: 0; }
+  .export-unit { color: var(--text-muted); font-family: var(--mono); font-size: 11.5px; }
+
+  .export-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .export-preset {
+    appearance: none; cursor: pointer; font: inherit; font-size: 12.5px;
+    padding: 7px 13px; border-radius: 999px;
+    border: 1px solid var(--border-strong); background: var(--surface);
+    color: var(--text-muted);
+    transition: background .12s ease, border-color .12s ease, color .12s ease;
+  }
+  .export-preset:hover { color: var(--text); background: var(--surface-2); }
+  .export-preset.active {
+    background: var(--accent-tint); border-color: var(--accent);
+    color: var(--accent-dark); font-weight: 500;
+  }
+
+  .export-range { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; }
+  .export-range-field {
+    display: inline-flex; flex-direction: column; gap: 5px;
+    font-size: 12px; color: var(--text-muted);
+  }
+  .export-range-field input[type="date"] {
+    appearance: none; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+    padding: 8px 11px; font: inherit; font-size: 13px;
+    background: var(--surface); color: var(--text); outline: none;
+  }
+  .export-range-field input[type="date"]:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  .export-actions {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-top: 4px;
+  }
+  .export-hint {
+    margin: 0; font-size: 12.5px; color: var(--text-muted);
+    line-height: 1.45; flex: 1; min-width: 220px;
+  }
+  .export-actions .btn { flex-shrink: 0; }
+
   /* Health grid */
   .health-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -1262,17 +1329,17 @@
 
 <!-- ?v=… is a cache-buster: bump it with every release (see VERSION) so a reload
      reliably loads the matching code instead of a stale copy held by the browser. -->
-<script src="metrics-logic.js?v=0.11.0"></script>
-<script src="summary-logic.js?v=0.11.0"></script>
-<script src="status-logic.js?v=0.11.0"></script>
-<script src="data.js?v=0.11.0"></script>
-<script src="export-logic.js?v=0.11.0"></script>
-<script type="text/babel" src="charts.jsx?v=0.11.0"></script>
-<script type="text/babel" src="tiles.jsx?v=0.11.0"></script>
-<script type="text/babel" src="settings.jsx?v=0.11.0"></script>
-<script type="text/babel" src="export-panel.jsx?v=0.11.0"></script>
-<script type="text/babel" src="header.jsx?v=0.11.0"></script>
-<script type="text/babel" src="summary-panel.jsx?v=0.11.0"></script>
-<script type="text/babel" src="app.jsx?v=0.11.0"></script>
+<script src="metrics-logic.js?v=0.11.1"></script>
+<script src="summary-logic.js?v=0.11.1"></script>
+<script src="status-logic.js?v=0.11.1"></script>
+<script src="data.js?v=0.11.1"></script>
+<script src="export-logic.js?v=0.11.1"></script>
+<script type="text/babel" src="charts.jsx?v=0.11.1"></script>
+<script type="text/babel" src="tiles.jsx?v=0.11.1"></script>
+<script type="text/babel" src="settings.jsx?v=0.11.1"></script>
+<script type="text/babel" src="export-panel.jsx?v=0.11.1"></script>
+<script type="text/babel" src="header.jsx?v=0.11.1"></script>
+<script type="text/babel" src="summary-panel.jsx?v=0.11.1"></script>
+<script type="text/babel" src="app.jsx?v=0.11.1"></script>
 </body>
 </html>

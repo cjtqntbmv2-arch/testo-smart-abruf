@@ -56,44 +56,84 @@ function ExportPanel() {
   }
 
   return (
-    <div className="settings-section export-panel">
-      <h3>Datenexport — Messwerte als CSV</h3>
-      {error && <div className="error-banner">{error}</div>}
+    <>
+      <SectionHead
+        title="Datenexport — Messwerte als CSV"
+        sub="Messwerte und optional Meldungen je Messstelle als CSV exportieren. Mehrere Messstellen werden als ZIP gebündelt."
+      />
 
-      <div className="label">Messstellen</div>
-      {meta.map(s => (
-        <label key={s.id} style={{ display: 'block' }}>
-          <input type="checkbox" checked={stationIds.includes(s.id)} onChange={() => toggle(stationIds, setStationIds, s.id)} /> {s.name}
-        </label>
-      ))}
+      {error && (
+        <div className="export-error">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>{error}</span>
+        </div>
+      )}
 
-      <div className="label">Messgrößen <span style={{ opacity: .6 }}>(leer = alle)</span></div>
-      {availMetrics.map(m => (
-        <label key={m.key} style={{ display: 'block' }}>
-          <input type="checkbox" checked={metricKeys.includes(m.key)} onChange={() => toggle(metricKeys, setMetricKeys, m.key)} /> {m.label || m.key} [{m.unit}]
-        </label>
-      ))}
+      <Card>
+        <Field label="Messstellen" hint="Welche Messstellen exportiert werden. Standard: alle.">
+          <div className="export-checks">
+            {meta.map(s => (
+              <label key={s.id} className="export-check">
+                <input type="checkbox" checked={stationIds.includes(s.id)} onChange={() => toggle(stationIds, setStationIds, s.id)} />
+                <span>{s.name}</span>
+              </label>
+            ))}
+          </div>
+        </Field>
+        <Field label="Messgrößen" hint="Leer lassen, um alle verfügbaren Messgrößen zu exportieren.">
+          <div className="export-checks">
+            {availMetrics.map(m => (
+              <label key={m.key} className="export-check">
+                <input type="checkbox" checked={metricKeys.includes(m.key)} onChange={() => toggle(metricKeys, setMetricKeys, m.key)} />
+                <span>{m.label || m.key} <span className="export-unit">[{m.unit}]</span></span>
+              </label>
+            ))}
+          </div>
+        </Field>
+      </Card>
 
-      <div className="label">Zeitraum</div>
-      {['last7','last30','thisMonth','lastMonth','custom'].map(k => (
-        <button key={k} className={preset === k ? 'preset active' : 'preset'} onClick={() => applyPreset(k)}>{PRESET_LABELS[k]}</button>
-      ))}
-      <div>
-        Von <input type="date" value={fromStr} onChange={e => { setFromStr(e.target.value); setPreset('custom'); }} />
-        Bis <input type="date" value={toStr} onChange={e => { setToStr(e.target.value); setPreset('custom'); }} />
+      <Card>
+        <Field label="Zeitraum" hint="Schnellauswahl oder eigener Bereich (von/bis).">
+          <div className="export-presets">
+            {['last7','last30','thisMonth','lastMonth','custom'].map(k => (
+              <button key={k} type="button" className={preset === k ? 'export-preset active' : 'export-preset'} onClick={() => applyPreset(k)}>{PRESET_LABELS[k]}</button>
+            ))}
+          </div>
+          <div className="export-range">
+            <label className="export-range-field">
+              <span>Von</span>
+              <input type="date" value={fromStr} onChange={e => { setFromStr(e.target.value); setPreset('custom'); }} />
+            </label>
+            <label className="export-range-field">
+              <span>Bis</span>
+              <input type="date" value={toStr} onChange={e => { setToStr(e.target.value); setPreset('custom'); }} />
+            </label>
+          </div>
+        </Field>
+      </Card>
+
+      <Card>
+        <Field label="CSV-Format" hint="Deutsch (Excel) nutzt ; und Komma; International (RFC) nutzt , und Punkt.">
+          <SegmentedControl
+            value={dialect}
+            options={[{ value: 'de', label: 'Deutsch (Excel)' }, { value: 'rfc', label: 'International (RFC)' }]}
+            onChange={v => setDialect(v)}
+          />
+        </Field>
+        <Field label="Meldungen & Alarme" hint="Zusätzlich eine Meldungs-CSV je Messstelle exportieren (erzwingt ZIP-Ausgabe).">
+          <Toggle checked={includeEvents} onChange={setIncludeEvents} labelOn="Ein" labelOff="Aus" />
+        </Field>
+      </Card>
+
+      <div className="export-actions">
+        <p className="export-hint">Mehrere Messstellen → ZIP (eine CSV je Stelle). Genau eine Stelle ohne Meldungen → einzelne CSV.</p>
+        <button className="btn primary" disabled={busy} onClick={doExport}>
+          {busy
+            ? <><Spinner /> Export läuft…</>
+            : <><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M7 1v8M4 6l3 3 3-3"/><path d="M1.5 10v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10"/></svg> Exportieren</>}
+        </button>
       </div>
-
-      <div className="label">CSV-Format</div>
-      <label><input type="radio" checked={dialect === 'de'} onChange={() => setDialect('de')} /> Deutsch (Excel)</label>
-      <label><input type="radio" checked={dialect === 'rfc'} onChange={() => setDialect('rfc')} /> International (RFC)</label>
-
-      <label style={{ display: 'block', marginTop: 8 }}>
-        <input type="checkbox" checked={includeEvents} onChange={e => setIncludeEvents(e.target.checked)} /> Meldungen &amp; Alarme zusätzlich exportieren
-      </label>
-
-      <p style={{ fontSize: 13, opacity: .7 }}>Mehrere Messstellen → ZIP (eine CSV je Stelle). Genau eine Stelle ohne Meldungen → einzelne CSV.</p>
-      <button disabled={busy} onClick={doExport}>{busy ? 'Export läuft…' : '⬇ Exportieren'}</button>
-    </div>
+    </>
   );
 }
 // Bare global function declaration — matches every other component (SettingsPage,
