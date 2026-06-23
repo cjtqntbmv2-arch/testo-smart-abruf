@@ -125,4 +125,6 @@ Entwicklung auf macOS, Ziel Windows — ehrliche Abstufung:
 
 ## 11. Release / Versionierung
 
-Reine Tooling-Ergänzung im `deploy/windows/`-Pfad, kein App-Code, keine `?v=`-Cache-Buster betroffen. Dennoch release-würdig (neues Deployment-Feature) → **MINOR-Bump** auf `0.13.0` (VERSION, README-Badge, `package.json`; `?v=`-Tags unverändert, da kein Frontend-Change) plus annotierter Tag `v0.13.0` gemäß Versioning-Workflow.
+Reine Tooling-Ergänzung im `deploy/windows/`-Pfad (kein App-/Frontend-Code), aber release-würdig (neues Deployment-Feature) → **MINOR-Bump** auf `0.13.0`. Dieses Repo hält **alle** Versionsorte im Gleichschritt (genau das prüft §9 der README) — daher werden **gemeinsam** gebumpt: `VERSION`, README-Badge, `package.json` **und alle 12 `?v=`-Cache-Buster** in `Klima Dashboard.html`. Letztere zwingen zwar nur einen unnötigen Cache-Reload (keine `.jsx` geändert), bleiben aber lockstep, sonst schlägt der §9-Versionscheck fehl und die Konsistenzregel aus CLAUDE.md ist verletzt. Anschließend annotierter Tag `v0.13.0`; **kein Push** (lokales Repo ohne Remote).
+
+> Außerdem als kleiner Folge-Fix vermerkt (nicht Teil dieses Plans): Die §9-Akzeptanz nennt das Status-Feld „`version`"; tatsächlich heißt der JSON-Key `appVersion` ([server.js:406](../../../backend/server.js)). Der Smoke-Check in `setup.ps1` liest korrekt `appVersion`.
