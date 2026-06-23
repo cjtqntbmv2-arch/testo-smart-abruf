@@ -411,6 +411,32 @@
       return { ok: true };
     },
 
+    async fetchSettings() {
+      const res = await fetch('/api/settings');
+      if (!res.ok) throw new Error('Einstellungen konnten nicht geladen werden');
+      return res.json();
+    },
+
+    async saveSettings(patch) {
+      const res = await fetch('/api/settings', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        let msg = 'Speichern fehlgeschlagen';
+        try { msg = (await res.json()).error || msg; } catch (_) {}
+        throw new Error(msg);
+      }
+      return res.json().catch(() => ({}));
+    },
+
+    async fetchBackupStatus() {
+      const res = await fetch('/api/system/status');
+      if (!res.ok) throw new Error('Status konnte nicht geladen werden');
+      const s = await res.json();
+      return s.backup || {};
+    },
+
     // Extra helpers to allow external calls from components (Zuweisungsmanager / Settings)
     async forceApiRefresh() {
       await refresh();
