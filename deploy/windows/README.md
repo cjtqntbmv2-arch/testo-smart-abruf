@@ -119,8 +119,8 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 ### Versionscheck
 
-- `GET /api/system/status` → Feld `version` lautet `0.11.0`.
-- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.11.0` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
+- `GET /api/system/status` → Feld `version` lautet `0.12.0`.
+- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.12.0` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
 
 ## Alternativen (nicht Standard)
 
