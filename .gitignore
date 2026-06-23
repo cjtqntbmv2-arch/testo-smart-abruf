@@ -9,6 +9,9 @@ klima__.db
 klima.backup-*.db
 .env
 
+# Monthly CSV/ZIP backup output (default backup_dir = <DB dir>/backups in dev; ProgramData in prod)
+backups/
+
 node_modules
 
 # Superpowers brainstorming visual-companion mockups (transient)
