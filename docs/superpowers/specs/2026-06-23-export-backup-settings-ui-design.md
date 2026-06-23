@@ -22,7 +22,7 @@ Das automatische Monats-Backup ist serverseitig seit v0.11.0 **vollständig impl
 
 | Constraint | Wert |
 |---|---|
-| Backend | **unverändert** — `backup_enabled`/`backup_dir` in `POST /api/settings`, Status in `GET /api/status` existieren bereits |
+| Backend | **unverändert** — `backup_enabled`/`backup_dir` in `POST /api/settings`, Status in `GET /api/system/status` existieren bereits |
 | Frontend-Stack | React via Babel-in-Browser, **kein Build-Schritt**; alle `.jsx` werden global in einen Scope konkateniert |
 | Dateigröße | `export-panel.jsx` bleibt unter ~400 Zeilen (GUI-Entry-Regel) |
 | Script-Tags | **kein** neuer Script-Tag → keine 13. `?v=`-Cache-Buster-Position |
@@ -58,7 +58,7 @@ Card  (Status-Block, schreibgeschützt)
 ### 5.1 Ein/Aus-Schalter
 - Komponente: `Toggle` (dieselbe wie beim manuellen Export).
 - Bindet an `backup_enabled`.
-- **Speichert sofort** per `POST /api/settings { backup_enabled: <bool> }`; danach `GET /api/status` neu laden, damit der Status-Block den neuen Zustand spiegelt.
+- **Speichert sofort** per `POST /api/settings { backup_enabled: <bool> }`; danach `GET /api/system/status` neu laden, damit der Status-Block den neuen Zustand spiegelt.
 - Kann nicht fehlschlagen (keine Validierung).
 
 ### 5.2 Speicherpfad
@@ -66,14 +66,14 @@ Card  (Status-Block, schreibgeschützt)
 - Bindet an `backup_dir`. **Leeres Feld = Standard** (`<db-verzeichnis>/backups`).
 - **Platzhalter** zeigt den aufgelösten Standardpfad aus `status.backup.dir` (z.B. `…\ProgramData\TestoSmartAbruf\backups`), damit klar ist, wohin „leer" schreibt.
 - Speichern per `POST /api/settings { backup_dir: <string> }`.
-- **Validierung im Backend:** Bei nicht beschreibbarem Pfad antwortet das Backend mit `400 { error: "backup_dir nicht beschreibbar: …" }`. Diese Meldung wird **inline rot** unter dem Feld angezeigt (gleiches `export-error`-Muster wie im manuellen Export). Bei Erfolg: kurzes „Gespeichert ✓"-Flash + `GET /api/status` neu laden.
+- **Validierung im Backend:** Bei nicht beschreibbarem Pfad antwortet das Backend mit `400 { error: "backup_dir nicht beschreibbar: …" }`. Diese Meldung wird **inline rot** unter dem Feld angezeigt (gleiches `export-error`-Muster wie im manuellen Export). Bei Erfolg: kurzes „Gespeichert ✓"-Flash + `GET /api/system/status` neu laden.
 
 ### 5.3 Status-Block (schreibgeschützt)
-Quelle: `GET /api/status` → `backup = { enabled, dir, lastScanDate, health }`, wobei `health = { status, lastScan, lastZip, lastError, written }` ist (und `health = {}`, solange noch kein Scan lief).
+Quelle: `GET /api/system/status` → `backup = { enabled, dir, lastScanDate, health }`, wobei `health = { status, lastScan, lastZip, lastError, written }` ist (und `health = {}`, solange noch kein Scan lief).
 
 Anzeige-Logik:
 - **Backup aus** (`enabled === false`): gedämpfter Hinweis „Automatisches Backup ist ausgeschaltet" — keine weiteren Detailzeilen.
-- **`health` leer** (nie gelaufen): grauer Hinweis „Noch kein Backup gelaufen".
+- **`health` leer** (nie gelaufen): grauer Hinweis „Noch kein Backup gelaufen — der erste Lauf erfolgt beim nächsten Sync (spätestens in X Min)", wobei X aus `poll_interval_sec` (von `GET /api/settings`) berechnet wird. Schließt die Sofort-Feedback-Lücke nach dem Aktivieren (D3, frontend-only), ohne „Jetzt sichern"-Button/Backend-Änderung.
 - **`health.status === 'ok'`**: grün „Aktiv".
 - **`health.status === 'error'`**: rot, zeigt `health.lastError`.
 - Detailzeilen (wenn vorhanden): „Letzter Scan" = `lastScanDate` (sonst „—"); „Zuletzt geschrieben" = `health.lastZip` (+ ggf. `health.written` Anzahl).
@@ -81,15 +81,15 @@ Anzeige-Logik:
 
 ## 6. Datenfluss
 
-1. **Mount:** `BackupSettings` lädt parallel `GET /api/settings` (für `backup_enabled`, `backup_dir`) und `GET /api/status` (für `health`/Status-Block).
-2. **Nutzer schaltet Toggle:** optimistischer State-Update → `POST /api/settings` → bei Antwort `GET /api/status` neu laden.
-3. **Nutzer speichert Pfad:** `POST /api/settings` → bei `ok` Flash + `GET /api/status` neu laden; bei `400` Fehlermeldung inline.
+1. **Mount:** `BackupSettings` lädt parallel `GET /api/settings` (für `backup_enabled`, `backup_dir`) und `GET /api/system/status` (für `health`/Status-Block).
+2. **Nutzer schaltet Toggle:** optimistischer State-Update → `POST /api/settings` → bei Antwort `GET /api/system/status` neu laden.
+3. **Nutzer speichert Pfad:** `POST /api/settings` → bei `ok` Flash + `GET /api/system/status` neu laden; bei `400` Fehlermeldung inline.
 4. **Aktualisierung:** Status wird **bei Mount und nach jedem Speichern** geladen. **Kein** Live-Poll (Backups laufen max. 1×/Tag; mit Nutzer bestätigt). Falls später Live-Anzeige gewünscht: 10-s-`setInterval` analog `settings.jsx` nachrüstbar.
 
 ## 7. Fehlerbehandlung
 
 - Pfad nicht schreibbar → Backend-`400`-Meldung inline, **kein** Throw, **kein** leerer Screen.
-- `GET /api/status`/`/api/settings` schlägt fehl → „Status nicht verfügbar", Bedienelemente bleiben bedienbar.
+- `GET /api/system/status`/`/api/settings` schlägt fehl → „Status nicht verfügbar", Bedienelemente bleiben bedienbar.
 - `health = {}` (nie gelaufen) sauber abgefangen (eigener Zweig, kein Zugriff auf `undefined.status`).
 - Komponente bleibt innerhalb der bestehenden Per-Tile-Error-Boundary; Hooks werden **vor** jedem early return aufgerufen (Projekt-Regel gegen Hook-Order-Bugs).
 
@@ -116,3 +116,5 @@ Neues Feature (Frontend) → **MINOR-Bump**, voraussichtlich **0.12.0**:
 - **Live-Poll des Status** zurückgestellt (s. §6.4) — bei Bedarf trivial nachrüstbar.
 - **Intervall-Wähler** bewusst nicht im Umfang (s. §1) — würde Backend-Umbau erfordern.
 - **„Jetzt sichern"-Button** (manueller Backup-Anstoß) nicht im Umfang — nicht angefragt; das Backend holt verpasste Monate ohnehin beim nächsten Sync nach.
+- **Nebeneffekt (akzeptiert):** `POST /api/settings` ruft serverseitig immer `startScheduler()` (server.js:112) — jeder Toggle/Pfad-Speichern startet den Poll-Scheduler neu. Bestehendes Verhalten (gilt auch für Region/Retention-Speichern), unkritisch; der UI-seitige `busy`-Guard verhindert Klick-Spam.
+- **Endpunkt-Korrektur (Grilling):** Der Status kommt aus **`GET /api/system/status`** (nicht `/api/status` — diese Route existiert nicht).
