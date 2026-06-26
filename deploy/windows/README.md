@@ -14,6 +14,41 @@ gestartet bei jedem Systemstart, laufend als `NT AUTHORITY\NetworkService`.
   native better-sqlite3-Binary. Hinter Proxy: `npm config set proxy <url>` /
   `https-proxy` setzen; ggf. beide Hosts in der Allowlist freigeben.
 
+## Installation aus dem Bundle (empfohlen, fuer Laien)
+
+Kein Node-Install, kein `npm ci`, keine Pfadregeln noetig.
+
+**Bereitstellung durch die IT:** Die IT laedt
+`testo-smart-abruf-<version>-win-x64.zip` von der **Releases-Seite** und bringt
+sie auf die Zielmaschine (USB / Fileshare / E-Mail). Der Bediener braucht keinen
+GitHub-Zugang.
+
+**Schritte fuer den Bediener:**
+
+1. ZIP per Rechtsklick **„Alle extrahieren"** vollstaendig entpacken (NICHT
+   `install.cmd` direkt aus dem ZIP-Fenster starten — das schlaegt fehl).
+2. Im entpackten Ordner **`install.cmd` doppelklicken**. Beim SmartScreen-Hinweis:
+   „Weitere Informationen" → „Trotzdem ausfuehren". UAC mit „Ja" bestaetigen.
+   Der Installer richtet alles ein und startet den Dienst.
+3. Im Browser **`http://localhost:3000`** oeffnen (das Fenster versucht das
+   automatisch). Unter **Einstellungen → API-Key** den Schluessel eintragen und
+   **Speichern**. Fertig.
+
+**API-Key — woher:** Der Key stammt aus dem **testo Smart Connect Portal** (bzw.
+von der IT/dem testo-Administrator). Ohne Key laeuft der Dienst, synct aber nichts
+(das Setup-Fenster weist darauf hin).
+
+**Update:** neue ZIP von der IT erhalten, entpacken, `install.cmd` erneut
+doppelklicken (stoppt den Dienst, schaltet per atomarem Wechsel auf die neue
+Version um, re-registriert; bei Fehlschlag Rollback auf die alte Version).
+Die Datenbank in `C:\ProgramData\TestoSmartAbruf\` bleibt erhalten.
+
+> Das Bundle bringt eine offizielle (OpenJS-signierte) portable `node.exe` mit —
+> eine bewusste Lockerung der „keine gebuendelten Binaries"-Regel. Auf
+> gehaerteten Maschinen (AllSigned-GPO, AppLocker/WDAC, gesperrtes „Trotzdem
+> ausfuehren") kann das blockieren → vorab mit EDR/IT abklaeren. Die
+> Quellcode-Variante (`npm ci` + `setup.ps1`) unten bleibt als Alternative.
+
 ## Schnellinstallation (empfohlen)
 
 `setup.ps1` bündelt die Schritte unten zu einem Aufruf: Node-Preflight, Stoppen
@@ -162,8 +197,16 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 ### Versionscheck
 
-- `GET /api/system/status` → Feld `appVersion` lautet `0.13.0`.
-- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.13.0` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
+- `GET /api/system/status` → Feld `appVersion` lautet `0.14.0`.
+- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.14.0` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
+
+### Bundle-Installation (ab v0.14.0)
+
+- ZIP-Artefakt `testo-smart-abruf-<version>-win-x64.zip` existiert auf der Releases-Seite.
+- Frische Maschine **ohne vorinstalliertes Node**: `install.cmd` fuehrt ohne `npm ci` zum laufenden Dienst.
+- Nach Installation existiert `C:\Apps\TestoSmartAbruf\node.exe` und `...\node_modules\better-sqlite3\build\Release\better_sqlite3.node`.
+- Nach erfolgreichem Smoke-Check oeffnet sich der Browser auf `http://localhost:3000`.
+- Update durch erneutes `install.cmd`: Dienst laeuft danach mit neuer `appVersion`, DB-Daten unveraendert.
 
 ## Alternativen (nicht Standard)
 
