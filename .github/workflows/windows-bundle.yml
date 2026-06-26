@@ -1,0 +1,108 @@
+name: Windows Bundle
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # fuer Release-Upload
+
+jobs:
+  bundle:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          architecture: x64
+          cache: 'npm'
+
+      - name: Verify Node arch
+        shell: pwsh
+        run: |
+          $arch = node -p "process.arch"
+          if ($arch -ne 'x64') { throw "Node arch $arch != x64" }
+          Write-Host "Node $(node -v) ($arch)"
+
+      - name: Install prod dependencies
+        run: npm ci --omit=dev
+
+      - name: Assert prebuild (no node-gyp compile)
+        shell: pwsh
+        run: |
+          # prebuild-install legt das .node in build/Release ohne obj/ ab;
+          # node-gyp hinterliesse build/Release/obj/ -> waere ein Compile (Guardrail-Bruch).
+          if (Test-Path 'node_modules/better-sqlite3/build/Release/obj') {
+            throw 'node-gyp-Compile erkannt (obj/ vorhanden) — erwartet wird ein Prebuild.'
+          }
+          if (-not (Test-Path 'node_modules/better-sqlite3/build/Release/better_sqlite3.node')) {
+            throw 'better_sqlite3.node fehlt.'
+          }
+          node -e "require('better-sqlite3'); console.log('prebuild ok')"
+
+      - name: Read app version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = node -p "require('./package.json').version"
+          if (-not $v) { throw 'package.json version leer — Abbruch (ZIP-Name/E2E-Check waeren irrefuehrend).' }
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Take portable node.exe from the runner
+        shell: pwsh
+        # Die von setup-node installierte node.exe direkt nehmen — garantiert
+        # ABI-identisch zum oben geholten Prebuild, kein Netzabruf (kein 404/Drift).
+        run: Copy-Item (Get-Command node).Source -Destination ./node.exe -Force
+
+      - name: Assemble bundle
+        shell: pwsh
+        run: |
+          $dest = "bundle/testo-smart-abruf"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $items = @('backend','scripts','Smart Meter Dashboard','deploy','node_modules','node.exe','package.json','package-lock.json','VERSION')
+          Copy-Item -Path $items -Destination $dest -Recurse -Force
+          Copy-Item -Path 'deploy/windows/install.cmd' -Destination "$dest/install.cmd" -Force
+
+      - name: E2E smoke — bundled node.exe serves the dashboard
+        shell: pwsh
+        # Testet die TATSAECHLICH ausgelieferte Kombination (gebuendelte node.exe +
+        # gebuendeltes node_modules + App), nicht die System-node. Ersetzt das fehlende
+        # End-to-End. Der Scheduled-Task-/NetworkService-Pfad bleibt der Windows-Abnahme (§9).
+        run: |
+          $env:DB_PATH = "$env:RUNNER_TEMP\smoke.db"
+          $env:PORT = "3000"; $env:HOST = "127.0.0.1"
+          $p = Start-Process -FilePath ".\node.exe" -ArgumentList "backend\server.js" `
+               -WorkingDirectory "bundle/testo-smart-abruf" -PassThru
+          try {
+            $ok = $false
+            foreach ($i in 1..15) {
+              Start-Sleep -Seconds 2
+              try { $r = Invoke-RestMethod "http://127.0.0.1:3000/api/system/status" -TimeoutSec 3; $ok = $true; break } catch {}
+            }
+            if (-not $ok) { throw 'Server nicht erreichbar' }
+            if ($r.appVersion -ne '${{ steps.ver.outputs.version }}') { throw "appVersion $($r.appVersion) != ${{ steps.ver.outputs.version }}" }
+            Write-Host "E2E ok: appVersion $($r.appVersion)"
+          } finally {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Zip bundle
+        shell: pwsh
+        # /* -> Wurzelordner NICHT mit einpacken: install.cmd liegt in der ZIP-Wurzel.
+        run: Compress-Archive -Path "bundle/testo-smart-abruf/*" -DestinationPath "testo-smart-abruf-${{ steps.ver.outputs.version }}-win-x64.zip" -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle
+          path: testo-smart-abruf-*-win-x64.zip
+          overwrite: true
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: testo-smart-abruf-*-win-x64.zip
