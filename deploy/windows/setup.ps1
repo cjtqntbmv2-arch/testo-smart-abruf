@@ -9,7 +9,8 @@
 param(
   [string]$DataDir  = 'C:\ProgramData\TestoSmartAbruf',
   [string]$TaskName = 'TestoSmartAbruf',
-  [switch]$SkipNpm
+  [switch]$SkipNpm,
+  [switch]$Bundled
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +24,9 @@ function Fail($msg) {
 }
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 
+# Node-Kommando: im Bundle das mitgelieferte node.exe, sonst System-node (PATH).
+$nodeCmd = if ($Bundled) { Join-Path $AppRoot 'node.exe' } else { 'node' }
+
 # Setup-Eigenlog (nur ausserhalb -WhatIf; best effort, scheitert nie hart)
 if (-not $WhatIfPreference) {
   try {
@@ -35,19 +39,23 @@ if (-not $WhatIfPreference) {
 # ---------- Phase 1/5: Preflight (nur pruefen) ----------
 Step 'Phase 1/5: Preflight-Pruefungen'
 
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Fail "Node.js nicht gefunden. Node 24 LTS (x64) installieren:`n  winget install OpenJS.NodeJS.LTS`n  oder https://nodejs.org/en/download (Windows x64 .msi)"
+if ($Bundled) {
+  if (-not (Test-Path $nodeCmd)) { Fail "Gebuendeltes node.exe fehlt ($nodeCmd). Defektes Bundle — ZIP erneut laden." }
+} else {
+  if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Fail "Node.js nicht gefunden. Node 24 LTS (x64) installieren:`n  winget install OpenJS.NodeJS.LTS`n  oder https://nodejs.org/en/download (Windows x64 .msi)"
+  }
 }
-$nodeVer = (& node -v).Trim()
+$nodeVer = (& $nodeCmd -v).Trim()
 if ($nodeVer -notmatch '^v(\d+)\.') { Fail "Node-Version nicht erkennbar ('$nodeVer'). Node 24 LTS x64 installieren." }
 $major = [int]$Matches[1]
 if ($major -notin 22,24,26) {
   Fail "Node-Version $nodeVer nicht unterstuetzt (erlaubt 22/24/26 — NICHT 23/25, kein better-sqlite3-Prebuild). Node 24 LTS x64 installieren."
 }
-$arch = (& node -p 'process.arch').Trim()
+$arch = (& $nodeCmd -p 'process.arch').Trim()
 if ($arch -ne 'x64') { Fail "Node-Architektur '$arch' — benoetigt x64 (better-sqlite3-Prebuild)." }
-if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { Fail 'npm nicht gefunden (gehoert zu Node.js).' }
-Write-Host "  Node $nodeVer ($arch), npm OK"
+if (-not $Bundled -and -not (Get-Command npm -ErrorAction SilentlyContinue)) { Fail 'npm nicht gefunden (gehoert zu Node.js).' }
+Write-Host "  Node $nodeVer ($arch) [$(if ($Bundled){'gebuendelt'}else{'System'})] OK"
 
 if ($AppRoot -match '\s') { Fail "Installationspfad enthaelt Leerzeichen: '$AppRoot'. Nach z.B. C:\Apps\TestoSmartAbruf legen (Task-Action scheitert; 'C:\Program Files\...' ist deshalb ebenfalls ungeeignet)." }
 if ($AppRoot.StartsWith('\\')) { Fail "UNC-Pfad: '$AppRoot'. SQLite-WAL braucht lokale Platte." }
@@ -85,7 +93,9 @@ if ($existing -and $existing.State -eq 'Running') {
 
 # ---------- Phase 3/5: Dependencies ----------
 Step 'Phase 3/5: Dependencies (npm ci --omit=dev)'
-if (-not $SkipNpm) {
+if ($Bundled) {
+  Write-Host '  npm ci uebersprungen (Bundle bringt node_modules mit)'
+} elseif (-not $SkipNpm) {
   if ($PSCmdlet.ShouldProcess($AppRoot, 'npm ci --omit=dev')) {
     Push-Location $AppRoot
     try {
@@ -107,7 +117,7 @@ if (-not $WhatIfPreference) {
   if (-not (Test-Path $nodeFile)) { Fail "better-sqlite3-Prebuild fehlt ($nodeFile). Falsche Node-Version oder github.com geblockt (node-gyp-Build statt Download). node_modules NIE von macOS/Linux kopieren." }
   Push-Location $AppRoot
   $loadOk = $true
-  try { & node -e "require('better-sqlite3')"; if ($LASTEXITCODE -ne 0) { $loadOk = $false } } catch { $loadOk = $false }
+  try { & $nodeCmd -e "require('better-sqlite3')"; if ($LASTEXITCODE -ne 0) { $loadOk = $false } } catch { $loadOk = $false }
   Pop-Location
   if (-not $loadOk) { Fail 'better-sqlite3 laedt nicht (ABI-Mismatch?). Auf DIESER Maschine neu installieren (node_modules nie kopieren).' }
   Write-Host '  better-sqlite3-Prebuild OK'
@@ -146,6 +156,7 @@ if ($resp) {
   if ($resp.api.apiKeyConfigured) { Write-Host "  API-Key  : konfiguriert" }
   else { Write-Host "  API-Key  : NOCH NICHT konfiguriert -> im Dashboard unter Einstellungen eintragen" -ForegroundColor Yellow }
   Write-Host "  Dashboard: http://localhost:$port"
+  try { Start-Process "http://localhost:$port" } catch {}
   Write-Host "  DB-Datei : $DataDir\klima.db    Log: $DataDir\logs\app.log"
   try { Stop-Transcript | Out-Null } catch {}
 } else {
