@@ -17,4 +17,8 @@ cd /d "%~dp0..\.."
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 
-node backend\server.js >> "%LOGDIR%\app.log" 2>&1
+REM Gebuendeltes node.exe (Bundle) bevorzugen, sonst PATH-node (Quellcode-Betrieb)
+set "NODE_EXE=node"
+if exist "node.exe" set "NODE_EXE=.\node.exe"
+
+"%NODE_EXE%" backend\server.js >> "%LOGDIR%\app.log" 2>&1
