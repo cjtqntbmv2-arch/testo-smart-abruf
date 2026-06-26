@@ -81,7 +81,7 @@ if exist "%LIVE%" (
 )
 move "%STAGE%" "%LIVE%" >nul
 if errorlevel 1 (
-  echo FEHLER beim Umschalten — Rollback auf vorherige Version.
+  echo FEHLER beim Umschalten - Rollback auf vorherige Version.
   if exist "%OLD%" move "%OLD%" "%LIVE%" >nul
   pause & exit /b 1
 )

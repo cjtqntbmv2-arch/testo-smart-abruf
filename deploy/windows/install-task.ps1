@@ -21,7 +21,7 @@ if ($PSCmdlet.ShouldProcess($DataDir, 'Datenordner anlegen')) {
 }
 
 # 2) ACLs: NetworkService = Modify auf Datenordner, ReadExecute auf Code-Ordner.
-#    SID *S-1-5-20 statt Name 'NT AUTHORITY\NetworkService' — locale-unabhaengig
+#    SID *S-1-5-20 statt Name 'NT AUTHORITY\NetworkService' - locale-unabhaengig
 #    (auf deutschem Windows heisst das Konto 'NETZWERKDIENST', der Name wuerde scheitern).
 if ($PSCmdlet.ShouldProcess($DataDir, 'ACL: NetworkService Modify')) {
   icacls $DataDir /grant '*S-1-5-20:(OI)(CI)M' /T | Out-Null
@@ -31,8 +31,10 @@ if ($PSCmdlet.ShouldProcess($AppRoot, 'ACL: NetworkService ReadExecute')) {
 }
 
 # 3) Task-Bestandteile
-$startCmd  = Join-Path $AppRoot 'deploy\windows\start.cmd'
-$action    = New-ScheduledTaskAction -Execute "`"$startCmd`""
+# -Execute braucht den BLANKEN Programmpfad ohne Quotes (Pfad ist leerzeichenfrei).
+# Eingebettete Quotes lassen Task Scheduler ein Programm '"...start.cmd"' inkl.
+# Anfuehrungszeichen suchen -> Task-Start scheitert (0x2 Datei nicht gefunden).
+$action    = New-ScheduledTaskAction -Execute (Join-Path $AppRoot 'deploy\windows\start.cmd')
 $trigger   = New-ScheduledTaskTrigger -AtStartup
 $trigger.Delay = 'PT30S'
 $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\NetworkService' -LogonType ServiceAccount

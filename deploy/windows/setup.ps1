@@ -40,7 +40,7 @@ if (-not $WhatIfPreference) {
 Step 'Phase 1/5: Preflight-Pruefungen'
 
 if ($Bundled) {
-  if (-not (Test-Path $nodeCmd)) { Fail "Gebuendeltes node.exe fehlt ($nodeCmd). Defektes Bundle — ZIP erneut laden." }
+  if (-not (Test-Path $nodeCmd)) { Fail "Gebuendeltes node.exe fehlt ($nodeCmd). Defektes Bundle - ZIP erneut laden." }
 } else {
   if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Fail "Node.js nicht gefunden. Node 24 LTS (x64) installieren:`n  winget install OpenJS.NodeJS.LTS`n  oder https://nodejs.org/en/download (Windows x64 .msi)"
@@ -50,10 +50,10 @@ $nodeVer = (& $nodeCmd -v).Trim()
 if ($nodeVer -notmatch '^v(\d+)\.') { Fail "Node-Version nicht erkennbar ('$nodeVer'). Node 24 LTS x64 installieren." }
 $major = [int]$Matches[1]
 if ($major -notin 22,24,26) {
-  Fail "Node-Version $nodeVer nicht unterstuetzt (erlaubt 22/24/26 — NICHT 23/25, kein better-sqlite3-Prebuild). Node 24 LTS x64 installieren."
+  Fail "Node-Version $nodeVer nicht unterstuetzt (erlaubt 22/24/26 - NICHT 23/25, kein better-sqlite3-Prebuild). Node 24 LTS x64 installieren."
 }
 $arch = (& $nodeCmd -p 'process.arch').Trim()
-if ($arch -ne 'x64') { Fail "Node-Architektur '$arch' — benoetigt x64 (better-sqlite3-Prebuild)." }
+if ($arch -ne 'x64') { Fail "Node-Architektur '$arch' - benoetigt x64 (better-sqlite3-Prebuild)." }
 if (-not $Bundled -and -not (Get-Command npm -ErrorAction SilentlyContinue)) { Fail 'npm nicht gefunden (gehoert zu Node.js).' }
 Write-Host "  Node $nodeVer ($arch) [$(if ($Bundled){'gebuendelt'}else{'System'})] OK"
 
@@ -62,14 +62,14 @@ if ($AppRoot.StartsWith('\\')) { Fail "UNC-Pfad: '$AppRoot'. SQLite-WAL braucht 
 $drive = Split-Path -Qualifier $AppRoot
 $vol = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$drive'" -ErrorAction SilentlyContinue
 if ($vol -and $vol.DriveType -eq 4) { Fail "Netzlaufwerk ($drive): SQLite-WAL braucht lokale Platte." }
-elseif (-not $vol) { Write-Host "  Hinweis: Laufwerkstyp fuer $drive nicht ermittelbar — bitte selbst sicherstellen: lokale Platte (kein Netz/subst)." -ForegroundColor Yellow }
+elseif (-not $vol) { Write-Host "  Hinweis: Laufwerkstyp fuer $drive nicht ermittelbar - bitte selbst sicherstellen: lokale Platte (kein Netz/subst)." -ForegroundColor Yellow }
 Write-Host "  Pfad OK: $AppRoot"
 
 if (Test-Path $startCmd) {
   $m = Select-String -Path $startCmd -Pattern 'set\s+"DB_PATH=([^"]+)"'
   if ($m) {
     $dbDir = Split-Path -Parent $m.Matches[0].Groups[1].Value
-    if ($dbDir -ne $DataDir) { Write-Host "  WARNUNG: start.cmd DB_PATH-Ordner ('$dbDir') != -DataDir ('$DataDir') — angleichen." -ForegroundColor Yellow }
+    if ($dbDir -ne $DataDir) { Write-Host "  WARNUNG: start.cmd DB_PATH-Ordner ('$dbDir') != -DataDir ('$DataDir') - angleichen." -ForegroundColor Yellow }
     else { Write-Host "  Konsistenz OK (DataDir == start.cmd DB_PATH-Ordner)" }
   }
 }

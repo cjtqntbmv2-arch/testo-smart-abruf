@@ -14,6 +14,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Guard - deploy .ps1/.cmd must be pure ASCII
+        shell: pwsh
+        # Windows PowerShell 5.1 parst .ps1 ohne BOM als ANSI (CP1252); ein Nicht-ASCII-
+        # Zeichen (z.B. Geviertstrich) wird zu Mojibake mit Stray-Quote -> ParserError,
+        # setup.ps1 laeuft gar nicht. Auf macOS unsichtbar -> hier hart gaten.
+        run: |
+          $hits = Select-String -Path deploy/windows/*.ps1, deploy/windows/*.cmd -Pattern '[^\x00-\x7F]' -AllMatches
+          if ($hits) {
+            $hits | ForEach-Object { Write-Host "$($_.Path):$($_.LineNumber): $($_.Line)" }
+            throw 'Non-ASCII in deploy scripts -> bricht Windows-PowerShell-5.1-Parsing. Bitte auf ASCII umstellen.'
+          }
+          Write-Host 'deploy scripts are pure ASCII - ok'
+
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
