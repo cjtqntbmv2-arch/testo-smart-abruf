@@ -17,16 +17,22 @@ if %errorlevel% NEQ 0 (
 )
 cd /d "%~dp0"
 
+REM --- Bundle-Wurzel selbst-lokalisieren: node.exe liegt entweder NEBEN install.cmd
+REM     (Wurzel-Kopie) ODER zwei Ebenen darueber (Start aus deploy\windows\). So
+REM     funktioniert beide im Bundle vorhandene install.cmd-Kopien. ---
+set "ROOT="
+for %%A in ("%~dp0.") do set "CAND0=%%~fA"
+for %%A in ("%~dp0..\..") do set "CAND2=%%~fA"
+if exist "%CAND0%\node.exe" set "ROOT=%CAND0%"
+if not defined ROOT if exist "%CAND2%\node.exe" set "ROOT=%CAND2%"
+if not defined ROOT goto :notextracted
+if not exist "%ROOT%\node_modules\better-sqlite3\build\Release\better_sqlite3.node" goto :notextracted
+
 REM --- Nicht aus dem Zielordner selbst starten (sonst wird der laufende Pfad weggemoved) ---
-if /i "%~dp0"=="%LIVE%\" (
+if /i "%ROOT%"=="%LIVE%" (
   echo FEHLER: Bitte install.cmd aus dem entpackten Download-Ordner starten, NICHT aus %LIVE%.
   pause & exit /b 1
 )
-
-REM --- Vollstaendig entpacktes Bundle? (nicht aus dem ZIP-Viewer / OneDrive-Platzhalter) ---
-for %%A in ("%~dp0..\..") do set "ROOT=%%~fA"
-if not exist "%ROOT%\node.exe" goto :notextracted
-if not exist "%ROOT%\node_modules\better-sqlite3\build\Release\better_sqlite3.node" goto :notextracted
 
 echo ==> Bundle entsperren (Mark-of-the-Web)
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Path $env:ROOT -Recurse | Unblock-File" 2>nul

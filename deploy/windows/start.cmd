@@ -7,6 +7,9 @@ REM als "wird ausgefuehrt" gilt (kein START, kein Self-Loop).
 chcp 65001 >NUL
 
 REM --- Konfiguration (von der IT anzupassen) ---
+REM PORT/HOST kommen aus C:\Apps\TestoSmartAbruf\.env (ueberlebt Updates), NICHT
+REM aus dieser Datei (wird beim Bundle-Update ueberschrieben). Sicherer Default
+REM (HOST=127.0.0.1) liegt in backend/server.js.
 set "DB_PATH=C:\ProgramData\TestoSmartAbruf\klima.db"
 set "LOGDIR=C:\ProgramData\TestoSmartAbruf\logs"
 
@@ -15,10 +18,11 @@ cd /d "%~dp0..\.."
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 
-REM Log-Rotation beim Start (mit Zeitstempel gegen ueberschreiben bei Crash-Loops)
+REM Log-Rotation beim Start: app.log mit Zeitstempel sichern (gegen Ueberschreiben
+REM bei Crash-Loops) und auf die letzten 10 .bak begrenzen. Get-Date statt (in Win11
+REM veraltetem) wmic; LOGDIR ist leerzeichenfrei -> keine Inline-Quotes noetig.
 if exist "%LOGDIR%\app.log" (
-  for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set dt=%%I
-  call move /Y "%LOGDIR%\app.log" "%LOGDIR%\app.log.%%dt:~0,14%%.bak" >nul 2>&1
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$d='%LOGDIR%'; $ts=Get-Date -Format yyyyMMddHHmmss; Move-Item -LiteralPath $d\app.log -Destination $d\app.${ts}.log.bak -Force; Get-ChildItem -LiteralPath $d -Filter app.*.log.bak | Sort-Object LastWriteTime -Descending | Select-Object -Skip 10 | Remove-Item -Force -ErrorAction SilentlyContinue" >nul 2>&1
 )
 
 REM Gebuendeltes node.exe (Bundle) bevorzugen, sonst PATH-node (Quellcode-Betrieb)

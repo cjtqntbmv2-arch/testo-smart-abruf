@@ -490,15 +490,12 @@ app.use((err, req, res, _next) => {
 });
 
 const PORT = process.env.PORT || 3000;
-// Bind to HOST env var when set (e.g. 127.0.0.1 for local-only),
-// otherwise omit the host so Express binds to all interfaces (LAN/tablet access).
-const server = process.env.HOST
-  ? app.listen(PORT, process.env.HOST, () => {
-      console.log(`Klima Dashboard server running on http://${process.env.HOST}:${PORT}`);
-    })
-  : app.listen(PORT, () => {
-      console.log(`Klima Dashboard server running on http://localhost:${PORT}`);
-    });
+// HOST defaults to 127.0.0.1 (local-only) — the secure default per CLAUDE.md.
+// Set HOST=0.0.0.0 (e.g. in .env) for opt-in LAN/tablet access (+ firewall rule).
+const HOST = process.env.HOST || '127.0.0.1';
+const server = app.listen(PORT, HOST, () => {
+  console.log(`Klima Dashboard server running on http://${HOST}:${PORT}`);
+});
 
 // Nur außerhalb der Tests anhängen: backend/tests/server.test.js importiert dieses
 // Modul und bindet real Port 3001 (process.env.PORT). Ein process.exit(1) im
