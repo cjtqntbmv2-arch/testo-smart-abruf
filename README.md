@@ -1,6 +1,6 @@
 # testo Smart Abruf
 
-[![Version](https://img.shields.io/badge/version-0.14.0-blue.svg)](VERSION)
+[![Version](https://img.shields.io/badge/version-0.14.2-blue.svg)](VERSION)
 [![API Version](https://img.shields.io/badge/api-v3-orange.svg)](testo-smart-connect-api/CLAUDE.md)
 
 A local **climate-monitoring application** for the **testo Smart Connect API**. It polls the
