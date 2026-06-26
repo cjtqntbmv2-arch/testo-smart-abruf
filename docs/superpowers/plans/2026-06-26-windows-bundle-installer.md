@@ -355,6 +355,7 @@ jobs:
         with:
           node-version: '24'
           architecture: x64
+          cache: 'npm'
 
       - name: Verify Node arch
         shell: pwsh
@@ -384,6 +385,7 @@ jobs:
         shell: pwsh
         run: |
           $v = node -p "require('./package.json').version"
+          if (-not $v) { throw 'package.json version leer — Abbruch (ZIP-Name/E2E-Check waeren irrefuehrend).' }
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Take portable node.exe from the runner
