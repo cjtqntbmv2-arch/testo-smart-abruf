@@ -213,16 +213,19 @@ git commit -m "feat(deploy): setup.ps1 -Bundled mode (skip node-preflight + npm 
 - Consumes: `setup.ps1 -Bundled` aus Task 3 (am Zielpfad).
 - Produces: Einstiegspunkt für den Bediener. Self-elevating; entsperrt das Bundle; stoppt einen laufenden Task; kopiert das Bundle nach `C:\Apps\TestoSmartAbruf`; ruft dort `setup.ps1 -Bundled`.
 
-- [ ] **Step 1: `install.cmd` anlegen**
+- [ ] **Step 1: `install.cmd` anlegen** (Staging-und-Swap)
+
+Begründung der Robustheits-Maßnahmen (aus dem Grilling): **Staging→Swap** statt In-Place-Kopie löst drei Probleme auf einmal — `src==dst`-Selbstkopie, ABI-Mix durch liegengebliebene Altdateien (kein `/MIR` nötig, das `move` ersetzt den Baum atomar) und Rollback bei Fehlschlag (alte Version bleibt bis zum `move` unberührt). Plus: Vollständig-entpackt-Guard (gegen „aus ZIP-Viewer gestartet"/OneDrive-Platzhalter), Prebuild-Lade-Check der **gebündelten** `node.exe`, Poll-Loop + `taskkill` gegen verwaisten `node.exe`, Unblock am Ziel, ACL-Härtung.
 
 ```cmd
 @echo off
-REM Ein-Klick-Installer fuer das vorgebaute Windows-Bundle.
-REM Self-elevating: entsperrt das Bundle, stoppt einen ggf. laufenden Dienst,
-REM kopiert nach C:\Apps\TestoSmartAbruf und ruft setup.ps1 -Bundled.
-REM Re-run-sicher (zugleich Update-Pfad: neue ZIP entpacken -> install.cmd erneut).
+REM Ein-Klick-Installer fuer das vorgebaute Windows-Bundle (Staging+Swap).
+REM Re-run-/update-sicher: entpacken -> install.cmd doppelklicken. Daten liegen
+REM getrennt in C:\ProgramData\TestoSmartAbruf und bleiben unberuehrt.
 setlocal
-set "DEST=C:\Apps\TestoSmartAbruf"
+set "LIVE=C:\Apps\TestoSmartAbruf"
+set "STAGE=C:\Apps\TestoSmartAbruf.staging"
+set "OLD=C:\Apps\TestoSmartAbruf.old"
 set "TASKNAME=TestoSmartAbruf"
 
 REM --- UAC-Self-Elevation ---
@@ -232,34 +235,75 @@ if %errorlevel% NEQ 0 (
   powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
   exit /b
 )
-
-REM Elevated: CWD ist C:\Windows\system32 -> ins Bundle-Verzeichnis wechseln.
 cd /d "%~dp0"
+
+REM --- Nicht aus dem Zielordner selbst starten (sonst wird der laufende Pfad weggemoved) ---
+if /i "%~dp0"=="%LIVE%\" (
+  echo FEHLER: Bitte install.cmd aus dem entpackten Download-Ordner starten, NICHT aus %LIVE%.
+  pause & exit /b 1
+)
+
+REM --- Vollstaendig entpacktes Bundle? (nicht aus dem ZIP-Viewer / OneDrive-Platzhalter) ---
+if not exist "%~dp0node.exe" goto :notextracted
+if not exist "%~dp0node_modules\better-sqlite3\build\Release\better_sqlite3.node" goto :notextracted
 
 echo ==> Bundle entsperren (Mark-of-the-Web)
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Path '%~dp0' -Recurse | Unblock-File" 2>nul
 
-echo ==> Laufenden Dienst stoppen (falls vorhanden)
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Stop-ScheduledTask -TaskName '%TASKNAME%' -ErrorAction SilentlyContinue; Start-Sleep -Seconds 3"
-
-echo ==> Bundle kopieren nach %DEST%
-robocopy "%~dp0." "%DEST%" /E /NFL /NDL /NJH /NJS /R:2 /W:2
+echo ==> Staging vorbereiten (%STAGE%)
+if exist "%STAGE%" rmdir /s /q "%STAGE%"
+robocopy "%~dp0." "%STAGE%" /E /NFL /NDL /NJH /NJS /R:5 /W:3 >nul
 if %errorlevel% GEQ 8 (
-  echo FEHLER: Kopieren nach %DEST% fehlgeschlagen ^(robocopy %errorlevel%^).
-  pause
-  exit /b 1
+  echo FEHLER: Kopieren ins Staging fehlgeschlagen. Bestehende Installation unveraendert.
+  rmdir /s /q "%STAGE%" 2>nul
+  pause & exit /b 1
 )
 
+echo ==> Gebuendeltes node.exe pruefen (better-sqlite3 laedt?)
+"%STAGE%\node.exe" -e "require('better-sqlite3')" 2>nul
+if %errorlevel% NEQ 0 (
+  echo FEHLER: better-sqlite3 laedt nicht ^(defektes Bundle^). Abbruch, alte Version unveraendert.
+  rmdir /s /q "%STAGE%" 2>nul
+  pause & exit /b 1
+)
+
+echo ==> Laufenden Dienst stoppen + verwaisten node.exe beenden
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Stop-ScheduledTask -TaskName '%TASKNAME%' -ErrorAction SilentlyContinue; 1..15 ^| ForEach-Object { if ((Get-ScheduledTask -TaskName '%TASKNAME%' -ErrorAction SilentlyContinue).State -ne 'Running') { break }; Start-Sleep -Seconds 1 }; Start-Sleep -Seconds 2"
+REM ponytail: taskkill /IM node.exe ist grob (killt ALLE node.exe) — auf dieser
+REM dedizierten Dienst-Maschine ok; pro-PID nur bei Mehrnutzung noetig.
+tasklist /FI "IMAGENAME eq node.exe" 2>nul | find /I "node.exe" >nul && taskkill /IM node.exe /F >nul 2>&1
+
+echo ==> Umschalten auf neue Version (atomarer move)
+if exist "%OLD%" rmdir /s /q "%OLD%"
+if exist "%LIVE%" move "%LIVE%" "%OLD%" >nul
+move "%STAGE%" "%LIVE%" >nul
+if %errorlevel% NEQ 0 (
+  echo FEHLER beim Umschalten — Rollback auf vorherige Version.
+  if exist "%OLD%" move "%OLD%" "%LIVE%" >nul
+  pause & exit /b 1
+)
+if exist "%OLD%" rmdir /s /q "%OLD%"
+
+echo ==> Berechtigungen haerten (nur Admin/SYSTEM schreibend; NetworkService liest+fuehrt aus)
+icacls "%LIVE%" /inheritance:r /grant "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-20:(OI)(CI)RX" >nul
+
 echo ==> Einrichtung starten (setup.ps1 -Bundled)
-powershell -NoProfile -ExecutionPolicy Bypass -File "%DEST%\deploy\windows\setup.ps1" -Bundled
+powershell -NoProfile -ExecutionPolicy Bypass -File "%LIVE%\deploy\windows\setup.ps1" -Bundled
 echo.
 pause
+exit /b
+
+:notextracted
+echo FEHLER: Dieses Fenster laeuft nicht aus einem vollstaendig entpackten Ordner.
+echo Bitte die ZIP zuerst per Rechtsklick "Alle extrahieren" entpacken und dann
+echo install.cmd im entpackten Ordner doppelklicken (NICHT direkt aus der ZIP).
+pause & exit /b 1
 ```
 
 - [ ] **Step 2: Verifizieren (Inhaltsprüfung)**
 
-Run: `grep -n "RunAs\|Unblock-File\|Stop-ScheduledTask\|robocopy\|setup.ps1\" -Bundled" deploy/windows/install.cmd`
-Expected: UAC-Elevation, Unblock-File, Stop-ScheduledTask, robocopy nach `%DEST%`, abschließender `setup.ps1 -Bundled`-Aufruf.
+Run: `grep -n "RunAs\|Unblock-File\|STAGE\|better_sqlite3.node\|taskkill\|move \"%STAGE%\"\|inheritance:r\|setup.ps1\" -Bundled\|:notextracted" deploy/windows/install.cmd`
+Expected: UAC-Elevation, Zielordner-Guard, Entpackt-Guard (`better_sqlite3.node`), Unblock, Staging-robocopy, `node.exe`-Prebuild-Check, Stop+`taskkill`, atomarer `move`+Rollback, ACL-Härtung, abschließender `setup.ps1 -Bundled`, `:notextracted`-Label.
 
 - [ ] **Step 3: Commit**
 
@@ -313,8 +357,18 @@ jobs:
       - name: Install prod dependencies
         run: npm ci --omit=dev
 
-      - name: Verify better-sqlite3 prebuild loads
-        run: node -e "require('better-sqlite3'); console.log('prebuild ok')"
+      - name: Assert prebuild (no node-gyp compile)
+        shell: pwsh
+        run: |
+          # prebuild-install legt das .node in build/Release ohne obj/ ab;
+          # node-gyp hinterliesse build/Release/obj/ -> waere ein Compile (Guardrail-Bruch).
+          if (Test-Path 'node_modules/better-sqlite3/build/Release/obj') {
+            throw 'node-gyp-Compile erkannt (obj/ vorhanden) — erwartet wird ein Prebuild.'
+          }
+          if (-not (Test-Path 'node_modules/better-sqlite3/build/Release/better_sqlite3.node')) {
+            throw 'better_sqlite3.node fehlt.'
+          }
+          node -e "require('better-sqlite3'); console.log('prebuild ok')"
 
       - name: Read app version
         id: ver
@@ -323,14 +377,11 @@ jobs:
           $v = node -p "require('./package.json').version"
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Fetch portable node.exe
+      - name: Take portable node.exe from the runner
         shell: pwsh
-        run: |
-          $v = (node -v).Trim()                 # z.B. v24.4.1
-          $url = "https://nodejs.org/dist/$v/node-$v-win-x64.zip"
-          Invoke-WebRequest -Uri $url -OutFile node-win.zip
-          Expand-Archive -Path node-win.zip -DestinationPath node-dist -Force
-          Copy-Item "node-dist/node-$v-win-x64/node.exe" -Destination ./node.exe -Force
+        # Die von setup-node installierte node.exe direkt nehmen — garantiert
+        # ABI-identisch zum oben geholten Prebuild, kein Netzabruf (kein 404/Drift).
+        run: Copy-Item (Get-Command node).Source -Destination ./node.exe -Force
 
       - name: Assemble bundle
         shell: pwsh
@@ -341,15 +392,40 @@ jobs:
           Copy-Item -Path $items -Destination $dest -Recurse -Force
           Copy-Item -Path 'deploy/windows/install.cmd' -Destination "$dest/install.cmd" -Force
 
+      - name: E2E smoke — bundled node.exe serves the dashboard
+        shell: pwsh
+        # Testet die TATSAECHLICH ausgelieferte Kombination (gebuendelte node.exe +
+        # gebuendeltes node_modules + App), nicht die System-node. Ersetzt das fehlende
+        # End-to-End. Der Scheduled-Task-/NetworkService-Pfad bleibt der Windows-Abnahme (§9).
+        run: |
+          $env:DB_PATH = "$env:RUNNER_TEMP\smoke.db"
+          $env:PORT = "3000"; $env:HOST = "127.0.0.1"
+          $p = Start-Process -FilePath ".\node.exe" -ArgumentList "backend\server.js" `
+               -WorkingDirectory "bundle/testo-smart-abruf" -PassThru
+          try {
+            $ok = $false
+            foreach ($i in 1..15) {
+              Start-Sleep -Seconds 2
+              try { $r = Invoke-RestMethod "http://127.0.0.1:3000/api/system/status" -TimeoutSec 3; $ok = $true; break } catch {}
+            }
+            if (-not $ok) { throw 'Server nicht erreichbar' }
+            if ($r.appVersion -ne '${{ steps.ver.outputs.version }}') { throw "appVersion $($r.appVersion) != ${{ steps.ver.outputs.version }}" }
+            Write-Host "E2E ok: appVersion $($r.appVersion)"
+          } finally {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Zip bundle
         shell: pwsh
-        run: Compress-Archive -Path "bundle/testo-smart-abruf" -DestinationPath "testo-smart-abruf-${{ steps.ver.outputs.version }}-win-x64.zip" -Force
+        # /* -> Wurzelordner NICHT mit einpacken: install.cmd liegt in der ZIP-Wurzel.
+        run: Compress-Archive -Path "bundle/testo-smart-abruf/*" -DestinationPath "testo-smart-abruf-${{ steps.ver.outputs.version }}-win-x64.zip" -Force
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-bundle
           path: testo-smart-abruf-*-win-x64.zip
+          overwrite: true
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
@@ -360,8 +436,8 @@ jobs:
 
 - [ ] **Step 2: Verifizieren (Inhaltsprüfung, da kein actionlint lokal)**
 
-Run: `grep -n "runs-on: windows-latest\|npm ci --omit=dev\|node.exe\|install.cmd\|Compress-Archive" .github/workflows/windows-bundle.yml`
-Expected: `windows-latest`, `npm ci --omit=dev`, `node.exe`-Fetch+Copy, `install.cmd` im Bundle, `Compress-Archive`.
+Run: `grep -n "runs-on: windows-latest\|npm ci --omit=dev\|Get-Command node\|install.cmd\|testo-smart-abruf/\*\|overwrite: true\|E2E smoke" .github/workflows/windows-bundle.yml`
+Expected: `windows-latest`, `npm ci --omit=dev`, node.exe vom Runner (`Get-Command node`), `install.cmd` im Bundle, `Compress-Archive` mit `/*`, `overwrite: true`, E2E-Smoke-Step.
 
 - [ ] **Step 3: Commit + Push (Workflow muss am Remote liegen, um zu laufen)**
 
@@ -405,25 +481,38 @@ In `deploy/windows/README.md` oberhalb der bestehenden „Schnellinstallation" e
 ```markdown
 ## Installation aus dem Bundle (empfohlen, fuer Laien)
 
-Kein Node-Install, kein `npm ci`, keine Pfadregeln noetig:
+Kein Node-Install, kein `npm ci`, keine Pfadregeln noetig.
 
-1. Auf der **Releases-Seite** des Repos die Datei
-   `testo-smart-abruf-<version>-win-x64.zip` herunterladen.
-2. ZIP **entpacken** (egal wohin — z. B. Downloads).
-3. Im entpackten Ordner **`install.cmd` doppelklicken**. Beim
-   SmartScreen-Hinweis: „Weitere Informationen" → „Trotzdem ausfuehren".
-   UAC bestaetigen. Der Installer entsperrt, kopiert nach
-   `C:\Apps\TestoSmartAbruf`, registriert den Dienst und startet ihn.
-4. Der Browser oeffnet sich automatisch → **API-Key** unter Einstellungen
-   eintragen. Fertig.
+**Bereitstellung durch die IT:** Die IT laedt
+`testo-smart-abruf-<version>-win-x64.zip` von der **Releases-Seite** und bringt
+sie auf die Zielmaschine (USB / Fileshare / E-Mail). Der Bediener braucht keinen
+GitHub-Zugang.
 
-**Update:** neue ZIP laden, entpacken, `install.cmd` erneut doppelklicken
-(stoppt den Dienst, kopiert ueber `C:\Apps\TestoSmartAbruf`, re-registriert).
+**Schritte fuer den Bediener:**
+
+1. ZIP per Rechtsklick **„Alle extrahieren"** vollstaendig entpacken (NICHT
+   `install.cmd` direkt aus dem ZIP-Fenster starten — das schlaegt fehl).
+2. Im entpackten Ordner **`install.cmd` doppelklicken**. Beim SmartScreen-Hinweis:
+   „Weitere Informationen" → „Trotzdem ausfuehren". UAC mit „Ja" bestaetigen.
+   Der Installer richtet alles ein und startet den Dienst.
+3. Im Browser **`http://localhost:3000`** oeffnen (das Fenster versucht das
+   automatisch). Unter **Einstellungen → API-Key** den Schluessel eintragen und
+   **Speichern**. Fertig.
+
+**API-Key — woher:** Der Key stammt aus dem **testo Smart Connect Portal** (bzw.
+von der IT/dem testo-Administrator). Ohne Key laeuft der Dienst, synct aber nichts
+(das Setup-Fenster weist darauf hin).
+
+**Update:** neue ZIP von der IT erhalten, entpacken, `install.cmd` erneut
+doppelklicken (stoppt den Dienst, schaltet per atomarem Wechsel auf die neue
+Version um, re-registriert; bei Fehlschlag Rollback auf die alte Version).
 Die Datenbank in `C:\ProgramData\TestoSmartAbruf\` bleibt erhalten.
 
-> Das Bundle bringt ein offizielles, signiertes `node.exe` mit. Mit EDR/IT
-> abklaeren. Die Quellcode-Variante (`npm ci` + `setup.ps1`) unten bleibt als
-> Alternative.
+> Das Bundle bringt eine offizielle (OpenJS-signierte) portable `node.exe` mit —
+> eine bewusste Lockerung der „keine gebuendelten Binaries"-Regel. Auf
+> gehaerteten Maschinen (AllSigned-GPO, AppLocker/WDAC, gesperrtes „Trotzdem
+> ausfuehren") kann das blockieren → vorab mit EDR/IT abklaeren. Die
+> Quellcode-Variante (`npm ci` + `setup.ps1`) unten bleibt als Alternative.
 ```
 
 - [ ] **Step 2: §9-Abnahme um Bundle-Punkte erweitern**
@@ -465,6 +554,11 @@ Expected: VERSION/package.json/README-Badge/§9 zeigen `0.14.0`; `?v=`-Zähler =
 
 - [ ] **Step 5: Commit + Tag + Push**
 
+**Erst taggen, wenn der `workflow_dispatch`-Probelauf (Task 5 Step 4) GRÜN war** —
+der Tag-Push triggert den Release-Build; ein Fehlschlag hinterlässt sonst eine
+verbrannte Versionsnummer (Tags werden nie force-überschrieben → Korrektur kostet
+`v0.14.1`).
+
 ```bash
 git add VERSION package.json README.md deploy/windows/README.md deploy/windows/env.example "Smart Meter Dashboard/Klima Dashboard.html"
 git commit -m "chore: bump version to 0.14.0 (Windows bundle installer)"
@@ -495,4 +589,21 @@ Expected: Workflow grün; Release `v0.14.0` trägt `testo-smart-abruf-0.14.0-win
 
 **Placeholder scan:** keine TBD/TODO; alle Code-Schritte enthalten vollständigen Code. ✓
 
-**Type/Name-Konsistenz:** `$nodeCmd`, `$Bundled`, `%DEST%`, `%TASKNAME%`, ZIP-Name `testo-smart-abruf-<version>-win-x64.zip`, Zielpfad `C:\Apps\TestoSmartAbruf` durchgängig identisch verwendet. ✓
+**Type/Name-Konsistenz:** `$nodeCmd`, `$Bundled`, `%LIVE%`/`%STAGE%`/`%OLD%`, `%TASKNAME%`, ZIP-Name `testo-smart-abruf-<version>-win-x64.zip`, Zielpfad `C:\Apps\TestoSmartAbruf` durchgängig identisch verwendet. ✓
+
+## Grill-Review eingearbeitet (4 Subagenten, Opus 4.8)
+
+**Behoben (echte Bugs/Härtungen):**
+- `Compress-Archive` mit `/*` (sonst Doppel-Verschachtelung, `install.cmd` nicht in ZIP-Wurzel).
+- `node.exe` vom Runner kopiert statt von nodejs.org geladen → ABI-identisch, kein 404/Drift.
+- Prebuild-Assertion (kein `obj/` = kein stiller node-gyp-Compile auf `windows-latest`).
+- E2E-Smoke im CI mit der **gebündelten** node.exe (testet die ausgelieferte Kombination).
+- `install.cmd`: Staging→atomarer Swap (löst src==dst, ABI-Mix-Altreste, Rollback); Entpackt-Guard; Zielordner-Guard; Poll-Loop + `taskkill` gegen verwaisten `node.exe`; Unblock; ACL-Härtung (`/inheritance:r`).
+- `upload-artifact overwrite: true` (Re-Run-Kollision); Tag erst nach grünem Dispatch-Lauf.
+- README: IT-Bereitstellungsweg, konkrete API-Key-Herkunft, „vollständig entpacken"-Hinweis, Browser-Open als best-effort.
+
+**Bewusst NICHT gemacht (Zielumgebung „kaum gehärtet", IT-vermittelte Verteilung):**
+- Kein Code-Signing der `.ps1` (kein AllSigned-GPO).
+- Keine AppLocker/WDAC-Publisher-Freigabe (nicht aktiv).
+- Kein öffentliches Repo/Self-Download durch den Laien (IT bringt die ZIP).
+- AV-Ausnahme für `C:\Apps\TestoSmartAbruf\` bleibt eine IT-Empfehlung im README (kein Skript-Eingriff).
