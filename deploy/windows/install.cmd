@@ -48,16 +48,23 @@ if %errorlevel% NEQ 0 (
 )
 
 echo ==> Laufenden Dienst stoppen + verwaisten node.exe beenden
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Stop-ScheduledTask -TaskName '%TASKNAME%' -ErrorAction SilentlyContinue; 1..15 ^| ForEach-Object { if ((Get-ScheduledTask -TaskName '%TASKNAME%' -ErrorAction SilentlyContinue).State -ne 'Running') { break }; Start-Sleep -Seconds 1 }; Start-Sleep -Seconds 2"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Stop-ScheduledTask -TaskName '%TASKNAME%' -ErrorAction SilentlyContinue; foreach ($i in 1..15) { if ((Get-ScheduledTask -TaskName '%TASKNAME%' -ErrorAction SilentlyContinue).State -ne 'Running') { break }; Start-Sleep -Seconds 1 }; Start-Sleep -Seconds 2"
 REM ponytail: taskkill /IM node.exe ist grob (killt ALLE node.exe) — auf dieser
 REM dedizierten Dienst-Maschine ok; pro-PID nur bei Mehrnutzung noetig.
 tasklist /FI "IMAGENAME eq node.exe" 2>nul | find /I "node.exe" >nul && taskkill /IM node.exe /F >nul 2>&1
 
 echo ==> Umschalten auf neue Version (atomarer move)
 if exist "%OLD%" rmdir /s /q "%OLD%"
-if exist "%LIVE%" move "%LIVE%" "%OLD%" >nul
+if exist "%LIVE%" (
+  move "%LIVE%" "%OLD%" >nul
+  if errorlevel 1 (
+    echo FEHLER: Laufende Version konnte nicht nach %OLD% verschoben werden ^(Datei gesperrt?^). Abbruch, alte Version unveraendert.
+    rmdir /s /q "%STAGE%" 2>nul
+    pause & exit /b 1
+  )
+)
 move "%STAGE%" "%LIVE%" >nul
-if %errorlevel% NEQ 0 (
+if errorlevel 1 (
   echo FEHLER beim Umschalten — Rollback auf vorherige Version.
   if exist "%OLD%" move "%OLD%" "%LIVE%" >nul
   pause & exit /b 1
