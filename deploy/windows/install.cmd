@@ -24,19 +24,31 @@ if /i "%~dp0"=="%LIVE%\" (
 )
 
 REM --- Vollstaendig entpacktes Bundle? (nicht aus dem ZIP-Viewer / OneDrive-Platzhalter) ---
-if not exist "%~dp0node.exe" goto :notextracted
-if not exist "%~dp0node_modules\better-sqlite3\build\Release\better_sqlite3.node" goto :notextracted
+for %%A in ("%~dp0..\..") do set "ROOT=%%~fA"
+if not exist "%ROOT%\node.exe" goto :notextracted
+if not exist "%ROOT%\node_modules\better-sqlite3\build\Release\better_sqlite3.node" goto :notextracted
 
 echo ==> Bundle entsperren (Mark-of-the-Web)
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Path '%~dp0' -Recurse | Unblock-File" 2>nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Path $env:ROOT -Recurse | Unblock-File" 2>nul
 
 echo ==> Staging vorbereiten (%STAGE%)
-if exist "%STAGE%" rmdir /s /q "%STAGE%"
-robocopy "%~dp0." "%STAGE%" /E /NFL /NDL /NJH /NJS /R:5 /W:3 >nul
+if exist "%STAGE%" (
+  rmdir /s /q "%STAGE%"
+  if exist "%STAGE%" (
+    echo FEHLER: %STAGE% ist noch gesperrt. Abbruch.
+    pause & exit /b 1
+  )
+)
+robocopy "%ROOT%" "%STAGE%" /E /NFL /NDL /NJH /NJS /R:5 /W:3 >nul
 if %errorlevel% GEQ 8 (
   echo FEHLER: Kopieren ins Staging fehlgeschlagen. Bestehende Installation unveraendert.
   rmdir /s /q "%STAGE%" 2>nul
   pause & exit /b 1
+)
+
+echo ==> Konfiguration aus bestehender Installation uebernehmen
+if exist "%LIVE%\.env" (
+  copy /Y "%LIVE%\.env" "%STAGE%\.env" >nul
 )
 
 echo ==> Gebuendeltes node.exe pruefen (better-sqlite3 laedt?)
@@ -49,9 +61,7 @@ if %errorlevel% NEQ 0 (
 
 echo ==> Laufenden Dienst stoppen + verwaisten node.exe beenden
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Stop-ScheduledTask -TaskName '%TASKNAME%' -ErrorAction SilentlyContinue; foreach ($i in 1..15) { if ((Get-ScheduledTask -TaskName '%TASKNAME%' -ErrorAction SilentlyContinue).State -ne 'Running') { break }; Start-Sleep -Seconds 1 }; Start-Sleep -Seconds 2"
-REM ponytail: taskkill /IM node.exe ist grob (killt ALLE node.exe) — auf dieser
-REM dedizierten Dienst-Maschine ok; pro-PID nur bei Mehrnutzung noetig.
-tasklist /FI "IMAGENAME eq node.exe" 2>nul | find /I "node.exe" >nul && taskkill /IM node.exe /F >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'backend\\server\.js' } | Invoke-CimMethod -MethodName Terminate | Out-Null"
 
 echo ==> Umschalten auf neue Version (atomarer move)
 if exist "%OLD%" rmdir /s /q "%OLD%"

@@ -8,14 +8,18 @@ chcp 65001 >NUL
 
 REM --- Konfiguration (von der IT anzupassen) ---
 set "DB_PATH=C:\ProgramData\TestoSmartAbruf\klima.db"
-set "PORT=3000"
-set "HOST=127.0.0.1"
 set "LOGDIR=C:\ProgramData\TestoSmartAbruf\logs"
 
 REM App-Root = zwei Ebenen ueber diesem Script (deploy\windows\)
 cd /d "%~dp0..\.."
 
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
+
+REM Log-Rotation beim Start (mit Zeitstempel gegen ueberschreiben bei Crash-Loops)
+if exist "%LOGDIR%\app.log" (
+  for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set dt=%%I
+  call move /Y "%LOGDIR%\app.log" "%LOGDIR%\app.log.%%dt:~0,14%%.bak" >nul 2>&1
+)
 
 REM Gebuendeltes node.exe (Bundle) bevorzugen, sonst PATH-node (Quellcode-Betrieb)
 set "NODE_EXE=node"

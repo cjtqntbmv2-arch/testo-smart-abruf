@@ -84,6 +84,7 @@ if ($existing -and $existing.State -eq 'Running') {
       Start-Sleep -Seconds 1
       if ((Get-ScheduledTask -TaskName $TaskName).State -ne 'Running') { break }
     }
+    Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'backend\\server\.js' } | Invoke-CimMethod -MethodName Terminate | Out-Null
     Start-Sleep -Seconds 2   # Grace fuer Datei-/Port-Freigabe (WAL, Port)
     Write-Host '  Dienst gestoppt.'
   }

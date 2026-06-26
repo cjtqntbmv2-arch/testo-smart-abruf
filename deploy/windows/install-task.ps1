@@ -31,7 +31,8 @@ if ($PSCmdlet.ShouldProcess($AppRoot, 'ACL: NetworkService ReadExecute')) {
 }
 
 # 3) Task-Bestandteile
-$action    = New-ScheduledTaskAction -Execute (Join-Path $AppRoot 'deploy\windows\start.cmd')
+$startCmd  = Join-Path $AppRoot 'deploy\windows\start.cmd'
+$action    = New-ScheduledTaskAction -Execute "`"$startCmd`""
 $trigger   = New-ScheduledTaskTrigger -AtStartup
 $trigger.Delay = 'PT30S'
 $principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\NetworkService' -LogonType ServiceAccount

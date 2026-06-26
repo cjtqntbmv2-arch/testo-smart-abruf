@@ -93,8 +93,7 @@ Die manuelle Schritt-für-Schritt-Anleitung unten bleibt als Fallback/Transparen
    cd C:\Apps\TestoSmartAbruf
    npm ci --omit=dev
    ```
-3. Bei Bedarf `deploy\windows\start.cmd` anpassen (`PORT`, `DB_PATH`, `HOST`).
-   Default `HOST=127.0.0.1` = nur lokal erreichbar.
+3. Bei Bedarf Umgebungsvariablen anpassen: Lege dazu eine Datei `.env` in `C:\Apps\TestoSmartAbruf\` an und setze dort `PORT` oder `HOST` (Default `HOST=127.0.0.1` = nur lokal erreichbar).
 4. Task registrieren (Admin-PowerShell), optional vorab mit `-WhatIf`:
    ```powershell
    powershell -ExecutionPolicy Bypass -File deploy\windows\install-task.ps1 -WhatIf
@@ -124,7 +123,7 @@ Die manuelle Schritt-für-Schritt-Anleitung unten bleibt als Fallback/Transparen
 ## LAN-Zugriff (optional, IT-Freigabe)
 
 Standard ist nur-lokal. Fuer Zugriff von Tablets/anderen PCs:
-1. In `start.cmd` `HOST=0.0.0.0` setzen.
+1. Lege eine `.env` Datei unter `C:\Apps\TestoSmartAbruf\.env` an und trage dort `HOST=0.0.0.0` ein.
 2. Eingehende Firewall-Regel (Admin):
    ```powershell
    New-NetFirewallRule -DisplayName "TestoSmartAbruf 3000" -Direction Inbound `
@@ -142,7 +141,7 @@ zusaetzlich einmal hart neu laden (Strg+F5).
 
 ## Troubleshooting
 
-- **`EADDRINUSE` im Log:** Port belegt → in `start.cmd` `PORT` aendern oder den
+- **`EADDRINUSE` im Log:** Port belegt → in `.env` Datei `PORT` aendern oder den
   blockierenden Prozess beenden.
 - **`npm ci` schlaegt fehl (Compiler/`node-gyp`):** falsche Node-Version
   (kein Prebuild) oder `github.com` nicht erreichbar. Node 24 x64 verwenden,
