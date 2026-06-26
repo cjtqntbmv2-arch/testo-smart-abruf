@@ -196,10 +196,10 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 ### Versionscheck
 
-- `GET /api/system/status` → Feld `appVersion` lautet `0.14.1`.
-- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.14.1` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
+- `GET /api/system/status` → Feld `appVersion` lautet `0.14.2`.
+- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.14.2` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
 
-### Bundle-Installation (ab v0.14.1)
+### Bundle-Installation (ab v0.14.0)
 
 - ZIP-Artefakt `testo-smart-abruf-<version>-win-x64.zip` existiert auf der Releases-Seite.
 - Frische Maschine **ohne vorinstalliertes Node**: `install.cmd` fuehrt ohne `npm ci` zum laufenden Dienst.
