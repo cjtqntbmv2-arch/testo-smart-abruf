@@ -1,5 +1,5 @@
 @echo off
-REM Self-elevating Launcher fuer setup.ps1 — NUR fuer interaktiven Doppelklick/Aufruf.
+REM Self-elevating Launcher fuer setup.ps1 - NUR fuer interaktiven Doppelklick/Aufruf.
 REM Fuer Automatisierung stattdessen setup.ps1 direkt via -File aufrufen und %ERRORLEVEL%/$LASTEXITCODE pruefen.
 REM Unterstuetzt einfache Flags (-WhatIf, -SkipNpm); kein komplexes Quoting.
 setlocal

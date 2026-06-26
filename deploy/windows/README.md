@@ -196,8 +196,8 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 ### Versionscheck
 
-- `GET /api/system/status` → Feld `appVersion` lautet `0.14.2`.
-- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.14.2` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
+- `GET /api/system/status` → Feld `appVersion` lautet `0.14.3`.
+- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.14.3` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
 
 ### Bundle-Installation (ab v0.14.0)
 
