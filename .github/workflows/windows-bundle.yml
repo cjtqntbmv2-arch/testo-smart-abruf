@@ -110,8 +110,12 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
+          # Verzeichnis statt fertiger ZIP: upload-artifact packt immer selbst
+          # noch einmal ein. Reicht man ihm die ZIP, liegt beim Download eine
+          # ZIP in der ZIP. Das Release-Asset unten bleibt die gepackte Datei,
+          # weil action-gh-release NICHT neu packt.
           name: windows-bundle
-          path: testo-smart-abruf-*-win-x64.zip
+          path: bundle/testo-smart-abruf/*
           overwrite: true
 
       - name: Attach to release
