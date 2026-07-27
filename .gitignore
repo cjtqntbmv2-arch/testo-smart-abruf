@@ -1,5 +1,3 @@
-.DS_Store
-
 node_modules/
 klima.db
 klima.db-shm
@@ -13,6 +11,3 @@ klima.backup-*.db
 backups/
 
 node_modules
-
-# Superpowers brainstorming visual-companion mockups (transient)
-.superpowers/
