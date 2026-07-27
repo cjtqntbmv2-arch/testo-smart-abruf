@@ -116,6 +116,10 @@ jobs:
           # weil action-gh-release NICHT neu packt.
           name: windows-bundle
           path: bundle/testo-smart-abruf/*
+          # Ohne dies ueberspringt der Glob jeden Eintrag mit fuehrendem Punkt
+          # samt Teilbaum — hier konkret node_modules/.bin — lautlos, und
+          # if-no-files-found schlaegt dabei nicht an.
+          include-hidden-files: true
           overwrite: true
 
       - name: Attach to release
