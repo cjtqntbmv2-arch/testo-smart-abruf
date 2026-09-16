@@ -290,6 +290,43 @@ test('GET /api/system/status includes appVersion string', async () => {
   assert.ok(body.appVersion.length > 0, 'appVersion must not be empty');
 });
 
+// ── Update-Hinweis: Ordner als Einstellung, Ergebnis im Systemstatus ──────
+test('GET /api/system/status carries the update check result; empty update_dir means disabled', async () => {
+  saveSetting('update_dir', '');
+  const res = await fetch('http://localhost:3001/api/system/status');
+  const body = await res.json();
+  assert.ok(body.hasOwnProperty('update'), 'response must include update');
+  assert.strictEqual(body.update.enabled, false, 'no update_dir configured -> check disabled');
+  assert.strictEqual(body.update.updateAvailable, false);
+});
+
+test('POST /api/settings stores update_dir and re-runs the check without a restart', async () => {
+  const os = require('node:os'), fsx = require('node:fs'), pathx = require('node:path');
+  const dir = fsx.mkdtempSync(pathx.join(os.tmpdir(), 'updsrv-'));
+  fsx.writeFileSync(pathx.join(dir, 'testo-smart-abruf-99.0.0-win-x64.zip'), 'PKstub');
+
+  const post = await fetch('http://localhost:3001/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ update_dir: dir })
+  });
+  assert.strictEqual(post.status, 200);
+  assert.strictEqual((await (await fetch('http://localhost:3001/api/settings')).json()).update_dir, dir);
+
+  // runUpdateCheck läuft asynchron an — kurz auf das Ergebnis warten.
+  let body;
+  for (let i = 0; i < 20; i++) {
+    body = await (await fetch('http://localhost:3001/api/system/status')).json();
+    if (body.update.updateAvailable) break;
+    await new Promise(r => setTimeout(r, 25));
+  }
+  assert.strictEqual(body.update.enabled, true);
+  assert.strictEqual(body.update.updateAvailable, true, 'newer zip in the folder must be reported');
+  assert.strictEqual(body.update.latestVersion, '99.0.0');
+
+  saveSetting('update_dir', '');
+  fsx.rmSync(dir, { recursive: true, force: true });
+});
+
 // ── K3: storage returns null on statfs error (checked by :memory: path) ───
 test('GET /api/system/status returns null storage fields for :memory: DB', async () => {
   const res = await fetch('http://localhost:3001/api/system/status');

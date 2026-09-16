@@ -152,6 +152,43 @@ zugleich bumpen, nicht nur eins. Der Server sendet keine Cache-Header → der
 `?v=`-Bump ist der einzige Invalidierungs-Hebel; im Browser des Bedieners
 zusaetzlich einmal hart neu laden (Strg+F5).
 
+### Update-Hinweis (Ablageordner, ab v0.15.0)
+
+Der Dienst sieht beim Start und danach alle 6 Stunden in einem Ablageordner nach,
+ob dort eine neuere Release-ZIP liegt. Gesucht wird genau der Name, den die CI
+baut: `testo-smart-abruf-<version>-win-x64.zip`. Gemeldet wird nur eine echt
+hoehere SemVer-Version - die ZIP des vorigen Rollouts darf also liegen bleiben.
+
+**Der Start wird nie gesperrt.** Das ist eine bewusste Abweichung von der sonst
+ueblichen Startsperre: eine gesperrte Klimaueberwachung waere schlimmer als eine
+alte Fassung, und unter `NT AUTHORITY\NetworkService` (BootTrigger) sitzt niemand
+davor, der eine Sperre wegklicken koennte. Der Dienst meldet nur.
+
+Der Ordner ist eine Einstellung (`update_dir`), kein fester Pfad. **Leer =
+Pruefung aus, das ist der Standard** - ohne diesen Eintrag entsteht kein
+Netzzugriff. Einmalig auf der Zielmaschine setzen:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/settings `
+  -ContentType 'application/json' `
+  -Body '{"update_dir":"\\\\fileserver\\Software\\TestoSmartAbruf"}'
+```
+
+Die Pruefung laeuft direkt nach dem Speichern erneut; ein Dienstneustart ist nicht
+noetig. Ergebnis: Einstellungen -> Erweitert -> Ueber, Zeile `Update`
+(`Pruefung aus (kein Ablageordner)` / `Aktuell` / `Update verfuegbar: <Version>`).
+Maschinenlesbar unter `GET /api/system/status` im Feld `update`.
+
+Der Ordner wird nur gelesen, nie beschrieben; es wird nichts heruntergeladen und
+nichts installiert. Das Update bleibt das erneute `install.cmd` aus dem Abschnitt
+darueber. Nicht erreichbare Freigabe, fehlende Rechte, halb kopierte Datei
+(0 Byte): alles ergibt "kein Update bekannt", nie einen Fehler im Dienst.
+
+**Bestehende Installationen erfahren davon nichts.** Eine Fassung vor v0.15.0 hat
+die Pruefung noch nicht; sie muss einmalig ueber einen Kanal ausserhalb des
+Programms aktualisiert werden (Mail an die IT, Wartungstermin). Erst ab dann
+traegt der Hinweis sich selbst.
+
 ## Troubleshooting
 
 - **`EADDRINUSE` im Log:** Port belegt → in `.env` Datei `PORT` aendern oder den
@@ -211,6 +248,28 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 - `GET /api/system/status` → Feld `appVersion` lautet `0.14.3`.
 - Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.14.3` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
+
+### Update-Hinweis (ab v0.15.0)
+
+- **Alt-ZIP-Probe:** In den leeren Ablageordner NUR die ZIP einer **aelteren**
+  Fassung legen (z. B. `testo-smart-abruf-0.9.0-win-x64.zip` bei laufender
+  0.15.0), `update_dir` setzen (Befehl im Abschnitt "Update-Hinweis") und
+  Einstellungen -> Erweitert -> Ueber oeffnen: die Zeile `Update` muss `Aktuell`
+  zeigen. Erst wenn zusaetzlich eine ZIP mit hoeherer Version im Ordner liegt
+  (`testo-smart-abruf-0.16.0-win-x64.zip`) und `update_dir` erneut gespeichert
+  wird, muss dort `Update verfuegbar: 0.16.0` stehen.
+  *Warum dieser Punkt unterscheidet:* Die naheliegende Probe "neue ZIP hinlegen,
+  Hinweis erscheint" bestehen auch zwei kaputte Umsetzungen - die, die nur
+  "gefundene Version ungleich laufender Version" prueft, und die, die Versionen
+  als Text vergleicht (`"0.9.0" > "0.15.0"` ist als Zeichenkette wahr). Beide
+  melden beim Kunden dauerhaft "Update verfuegbar" auf die liegengebliebene ZIP
+  des vorigen Rollouts. Nur die Alt-ZIP-Probe faengt diesen Dauerfehlalarm.
+- **Standard ist aus:** solange `update_dir` leer ist, liefert
+  `GET /api/system/status` `update.enabled = false`, und es entsteht kein
+  Netzzugriff.
+- **Dienst hat Vorrang:** `update_dir` auf eine nicht erreichbare Freigabe setzen
+  (`\\kein-server\freigabe`), Dienst neu starten - Dashboard ist weiterhin
+  erreichbar, Sync laeuft, `update.updateAvailable` ist `false`.
 
 ### Keine externen Laufzeit-Abhaengigkeiten
 

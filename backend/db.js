@@ -126,6 +126,7 @@ function initDb() {
       stmt.run('retention_days', process.env.RETENTION_DAYS || '365');
       stmt.run('backup_enabled', '1');
       stmt.run('backup_dir', '');
+      stmt.run('update_dir', ''); // leer = Update-Pruefung aus (Standard)
       stmt.run('csv_format', 'de');
     }
 
