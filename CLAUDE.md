@@ -43,3 +43,7 @@ The `spec/` directory is a generated reverse-documentation snapshot (reconstruct
 - [testo-smart-connect-api/_assets/glossary.md](testo-smart-connect-api/_assets/glossary.md) is the single source of truth for terminology (endpoint names, async status enum, header casing). A cross-consistency reviewer greps for violations — match its spellings exactly.
 - **Do not invent** endpoint paths, status enum values, header names, or schema fields. If a fact is not in an existing snapshot file with a `source_chunks` reference, re-fetch from upstream rather than writing it from memory.
 
+## Running the app
+
+Start command: `npm start` (runs `node backend/server.js`), serves on `http://localhost:3000` (default `PORT=3000`, overridable via env). **Claude Code sessions: don't re-derive this** — `.claude/launch.json` already defines the server config `dashboard`; start the app via `preview_start` with that name.
+
