@@ -125,6 +125,16 @@ function systemAlarmText(systemType) {
 // German metric labels for measurement-alarm headlines. Keyed by the metric values
 // mapPhysicalProperty produces. A metric that maps to null (e.g. an unmapped CO₂ channel)
 // has no entry and falls back to direction-only wording below.
+//
+// ABSICHTLICH abweichend von METRIC_LABELS in csv-export.js ('Rel. Luftfeuchte',
+// 'Luftdruck', 'Abs. Luftfeuchte') — das ist kein vergessener Abgleich, bitte nicht
+// "aufräumen": diese Labels landen über measurementAlarmText() als message/detail in der
+// events-Tabelle. Eine Umbenennung schreibt die Historie nicht mit; das Ereignisprotokoll
+// zeigte danach dauerhaft beide Schreibweisen nebeneinander. Nur über
+// scripts/migrate-measurement-alarm-text.js zu ändern, das gespeicherte Überschriften
+// hieraus neu ableitet und jede abweichende Zeile umschreibt (auf der Produktiv-DB
+// gemessen: 184 betroffene Alarmzeilen). Bildschirm- und CSV-Namen sind frei änderbar,
+// diese hier nicht.
 const METRIC_LABELS_DE = {
   temperature: 'Temperatur',
   humidity: 'Luftfeuchte',

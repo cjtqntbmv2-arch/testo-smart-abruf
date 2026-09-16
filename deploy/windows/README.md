@@ -106,7 +106,12 @@ Die manuelle Schritt-für-Schritt-Anleitung unten bleibt als Fallback/Transparen
    cd C:\Apps\TestoSmartAbruf
    npm ci --omit=dev
    ```
-3. Bei Bedarf Umgebungsvariablen anpassen: Lege dazu eine Datei `.env` in `C:\Apps\TestoSmartAbruf\` an und setze dort `PORT` oder `HOST` (Default `HOST=127.0.0.1` = nur lokal erreichbar).
+3. Bei Bedarf Umgebungsvariablen anpassen: Vorlage `deploy\windows\env.example`
+   nach `C:\Apps\TestoSmartAbruf\.env` kopieren und die gewuenschten Zeilen
+   entkommentieren. Die Vorlage listet jede Variable mit ihrem Standardwert;
+   relevant sind vor allem `PORT` und `HOST` (Default `HOST=127.0.0.1` = nur
+   lokal erreichbar, alles andere braucht IT-Freigabe und Firewall-Regel).
+   `DB_PATH` setzt `start.cmd` bereits selbst und gewinnt gegen die `.env`.
 4. Task registrieren (Admin-PowerShell), optional vorab mit `-WhatIf`:
    ```powershell
    powershell -ExecutionPolicy Bypass -File deploy\windows\install-task.ps1 -WhatIf
@@ -119,6 +124,10 @@ Die manuelle Schritt-für-Schritt-Anleitung unten bleibt als Fallback/Transparen
    ```
 6. API-Key im Dashboard unter Einstellungen hinterlegen (wird in der DB
    gespeichert) — oder vor dem ersten Start via `.env`/`TESTO_API_KEY` seeden.
+   Achtung: `TESTO_API_KEY`, `TESTO_API_REGION`, `POLL_INTERVAL_SEC` und
+   `RETENTION_DAYS` liest der Server nur, solange die Datenbank noch keine
+   Einstellungen enthaelt. Ab dem zweiten Start bleibt eine Aenderung in der
+   `.env` wirkungslos; dann gilt nur noch das Dashboard.
 
 ## Verifikation
 
@@ -188,6 +197,25 @@ darueber. Nicht erreichbare Freigabe, fehlende Rechte, halb kopierte Datei
 die Pruefung noch nicht; sie muss einmalig ueber einen Kanal ausserhalb des
 Programms aktualisiert werden (Mail an die IT, Wartungstermin). Erst ab dann
 traegt der Hinweis sich selbst.
+
+### Geaenderte CSV-Spaltennamen (ab v0.15.0)
+
+**Ab v0.15.0 heissen drei Spalten im CSV-Export anders**, damit CSV und Dashboard
+dieselbe Messgroesse gleich benennen: `Feuchte` -> `Rel. Luftfeuchte`, `Druck` ->
+`Luftdruck`, `Absolute Feuchte` -> `Abs. Luftfeuchte`. Betroffen sind die
+Spaltenkoepfe und die Zeile `Kanaele` der Messwert-CSV sowie die Spalte
+`Messgroesse` der Meldungs-CSV - in der manuellen Ausgabe wie im monatlichen
+Backup. `Temperatur` und `Taupunkt` bleiben unveraendert.
+
+Bereits geschriebene Monats-ZIPs werden **nicht** neu erzeugt (vorhandene Dateien
+werden uebersprungen). Wer zwei Monate von vor und nach dem Update in Excel
+untereinanderlegt, sieht deshalb zwei Spaltennamen fuer dieselbe Messgroesse und
+muss sie beim Zusammenfuehren von Hand angleichen. Aeltere ZIPs zu loeschen, damit
+sie neu geschrieben werden, ist **nicht** noetig und nicht empfohlen.
+
+Der Meldungstext eines Alarms behaelt absichtlich die alte Schreibweise
+(`Luftfeuchte zu hoch`, `Druck zu niedrig`): diese Texte sind in der Datenbank
+gespeichert, eine Umbenennung wuerde die Historie nicht mitziehen.
 
 ## Troubleshooting
 

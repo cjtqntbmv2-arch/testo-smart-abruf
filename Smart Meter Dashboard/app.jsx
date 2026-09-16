@@ -102,7 +102,9 @@ function App() {
 
   aEff(() => {
     if (!gridRef.current) return;
-    const ro = new ResizeObserver(() => setGridW(gridRef.current.clientWidth));
+    // Null-Pruefung: beim Wechsel in die Einstellungen wird das Grid abgebaut,
+    // der Observer feuert aber noch einmal -> gridRef.current ist dann null.
+    const ro = new ResizeObserver(() => { if (gridRef.current) setGridW(gridRef.current.clientWidth); });
     ro.observe(gridRef.current);
     setGridW(gridRef.current.clientWidth);
     return () => ro.disconnect();

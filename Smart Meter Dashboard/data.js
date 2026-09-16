@@ -6,7 +6,9 @@
   const STEP_MS = 10 * 60 * 1000;
   const POLL_EVENT_LIMIT = 50; // bound the 5s poll's per-station history fetch
 
-  // Metric metadata definition (identical to static prototype)
+  // Metric metadata definition (identical to static prototype).
+  // label ist wortgleich mit METRIC_LABELS in backend/csv-export.js (CSV-Spaltenköpfe) —
+  // beide nur gemeinsam ändern. Die Alarmtexte (device-bridge.js) weichen bewusst ab.
   const META = {
     temperature: { id: "temperature", label: "Temperatur",      short: "Temp.",         unit: "°C",   color: "oklch(0.70 0.13 55)",  colorSoft: "oklch(0.70 0.13 55 / 0.18)",  decimals: 1, icon: "thermo" },
     humidity:    { id: "humidity",    label: "Rel. Luftfeuchte", short: "rel. Feuchte",  unit: "%",    color: "oklch(0.62 0.12 230)", colorSoft: "oklch(0.62 0.12 230 / 0.18)", decimals: 0, icon: "drop" },

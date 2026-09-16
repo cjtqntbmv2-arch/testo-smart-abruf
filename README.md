@@ -41,7 +41,19 @@ npm test       # backend tests (node --test)
 ```
 
 Configure credentials by copying `.env.example` to `.env` and filling in your testo Smart Connect
-API key.
+API key. The commented reference for **every** variable the app reads — defaults included — is
+[`deploy/windows/env.example`](deploy/windows/env.example); it applies to a source checkout too,
+only the paths differ.
+
+Two things that file spells out and are easy to miss: `HOST` defaults to `127.0.0.1` (loopback
+only) and anything else exposes the dashboard, settings page included, to the network — that needs
+IT approval plus a firewall rule. And `NODE_ENV` should stay unset outside the test run.
+
+Note that `TESTO_API_KEY`, `TESTO_API_REGION`, `POLL_INTERVAL_SEC` and `RETENTION_DAYS` are read
+**only while the database has no settings yet** (first start). Afterwards editing them in `.env`
+has no effect; change them in the dashboard under Settings. `PORT`, `DB_PATH` and `HOST` are read
+on every start. For the Windows service the equivalent template is
+[`deploy/windows/env.example`](deploy/windows/env.example).
 
 ## Key API concepts at a glance
 

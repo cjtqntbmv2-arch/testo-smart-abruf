@@ -16,6 +16,8 @@ test('pivotMeasurements: groups by timestamp, one column per metric, blanks for 
   ];
   const { columns, data } = pivotMeasurements(rows, ['temperature', 'humidity']);
   assert.deepStrictEqual(columns.map(c => c.key), ['temperature', 'humidity']);
+  // Spaltenköpfe wortgleich mit den Bildschirmnamen (data.js META[*].label)
+  assert.deepStrictEqual(columns.map(c => c.label), ['Temperatur', 'Rel. Luftfeuchte']);
   assert.strictEqual(data.length, 2);
   assert.strictEqual(data[0].ts, 1000);
   assert.strictEqual(data[0].values.get('humidity'), 45.0);

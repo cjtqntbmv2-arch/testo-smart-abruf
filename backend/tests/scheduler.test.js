@@ -3,6 +3,16 @@ const assert = require('node:assert');
 
 process.env.DB_PATH = ':memory:';
 const { initDb, getDb, saveSetting, closeDb } = require('../db');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+// Jeder runSyncCycle stoesst den monatlichen Backup-Scan an. Ohne gesetztes backup_dir faellt
+// backup-runner.js auf path.dirname(DB_PATH)/backups zurueck — und weil DB_PATH hier ':memory:'
+// ist, landet das bei <repo>/backups, also echten ZIPs im Arbeitsverzeichnis des Entwicklers.
+// Darum initialisiert jeder Test ueber initTestDb() und bekommt ein Wegwerf-Verzeichnis.
+const TMP_BACKUP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'sch-bkp-'));
+function initTestDb() { initDb(); saveSetting('backup_dir', TMP_BACKUP_DIR); }
 
 // Fixture timestamps MUST stay relative to "now". Step 4 of the same sync cycle prunes
 // by retention_days (default 365, '30' in the retention tests) and deletes measurements
@@ -41,7 +51,7 @@ class MockTestoClient {
 const schedulerModule = require('../scheduler');
 
 test('Sync resolves devices via bridge, distributes measurements, links alarms, and cleans up', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   saveSetting('api_region', 'eu');
   saveSetting('retention_days', '30');
@@ -107,7 +117,7 @@ test('Sync resolves devices via bridge, distributes measurements, links alarms, 
 });
 
 test('Sync ingests a testo connection-timeout system alarm as an active system event', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   saveSetting('api_region', 'eu');
 
@@ -143,7 +153,7 @@ test('Sync ingests a testo connection-timeout system alarm as an active system e
 });
 
 test('Sync reconciles violated/adhered transitions so only the latest unresolved alarm stays active', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   saveSetting('api_region', 'eu');
 
@@ -184,7 +194,7 @@ test('Sync reconciles violated/adhered transitions so only the latest unresolved
 });
 
 test('Sync completes without throwing when device properties fail', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('s1', 'S1', 'dev-x');
@@ -204,7 +214,7 @@ test('Sync completes without throwing when device properties fail', async () => 
 });
 
 test('Multi-sensor device: OR filter covers all sensors and both metrics are distributed', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
@@ -246,7 +256,7 @@ test('Multi-sensor device: OR filter covers all sensors and both metrics are dis
 });
 
 test('Measurement fetch is bounded with date_time_until (~now) so the Testo report returns the full range, not its default page cap', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
@@ -274,7 +284,7 @@ test('Measurement fetch is bounded with date_time_until (~now) so the Testo repo
 });
 
 test('Unmatched alarm is counted and not inserted', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
@@ -301,7 +311,7 @@ test('Unmatched alarm is counted and not inserted', async () => {
 });
 
 test('Device status sync derives online state and opens/closes system events', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
@@ -357,7 +367,7 @@ test('Device status sync derives online state and opens/closes system events', a
 
 // ── M5: Retention must not delete active events ───────────────────────────
 test('Retention deletes old inactive events but preserves old active events', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   saveSetting('retention_days', '30');
   const db = getDb();
@@ -394,7 +404,7 @@ test('Retention deletes old inactive events but preserves old active events', as
 
 // ── M8: Alarm insert must not churn rowid ─────────────────────────────────
 test('Alarm re-fetch preserves rowid (ON CONFLICT DO UPDATE, not INSERT OR REPLACE)', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('rowid-st', 'Rowid Test', 'dev-1');
@@ -422,7 +432,7 @@ test('Alarm re-fetch preserves rowid (ON CONFLICT DO UPDATE, not INSERT OR REPLA
 });
 
 test('Device status sync opens a connection system event when offline and closes it on recovery', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('hall', 'Flur', 'dev-2');
@@ -495,7 +505,7 @@ function makeLiveMoRows() {
 }
 
 test('Sync with live-shaped MO rows stores 8 limits and populates threshold on alarm insert', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
@@ -526,7 +536,7 @@ test('Sync with live-shaped MO rows stores 8 limits and populates threshold on a
 });
 
 test('Backfill fills threshold for existing alarm rows that had null threshold before limits were synced', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`).run('living', 'Wohnzimmer', 'dev-1');
@@ -556,7 +566,7 @@ test('Backfill fills threshold for existing alarm rows that had null threshold b
 
 // ── A1: Mapping fix — physical_property_name + physical_extension, not physical_value ──
 test('Alarm with live-API shape stores correct metric via physical_property_name / physical_extension', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
@@ -588,7 +598,7 @@ test('Alarm with live-API shape stores correct metric via physical_property_name
 
 // ── A2: serial_no stored on alarm rows ────────────────────────────────────
 test('Alarm insert stores serial_no from the live API row', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
@@ -615,7 +625,7 @@ test('Alarm insert stores serial_no from the live API row', async () => {
 
 // ── A3a: Reconciliation partition — severity must be part of the group key ─
 test('A3a: Warning violation and later Alarm-severity recovery share NO group — warning stays active', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
@@ -662,7 +672,7 @@ test('A3a: Warning violation and later Alarm-severity recovery share NO group �
 
 // ── A3b: Reconciliation partition — serial_no must be part of the group key ─
 test('A3b: Two sensors same station/metric/direction — one recovery must not close the other sensor', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
@@ -751,7 +761,7 @@ class WindowAwareAlarmClient extends MockTestoClient {
 }
 
 test('A4: late recovery whose alarm_time precedes the watermark is re-fetched via window overlap and clears the violation', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   const db = getDb();
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
@@ -799,7 +809,7 @@ test('A4: late recovery whose alarm_time precedes the watermark is re-fetched vi
 });
 
 test('Measurement alarm with a non-numeric value gets a generic detail, never "Wert von null"', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   saveSetting('api_region', 'eu');
 
@@ -831,7 +841,7 @@ test('Measurement alarm with a non-numeric value gets a generic detail, never "W
 });
 
 test('Measurement alarm headline is German (metric + direction), not the raw English alarm_reason', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   saveSetting('api_region', 'eu');
 
@@ -872,7 +882,7 @@ test('Measurement alarm headline is German (metric + direction), not the raw Eng
 });
 
 test('Sync ingests a non-connection/non-battery system alarm with the maintenance fallback text', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   saveSetting('api_region', 'eu');
 
@@ -903,7 +913,7 @@ test('Sync ingests a non-connection/non-battery system alarm with the maintenanc
 });
 
 test('Sync derives episode end_ts from the next transition in the same group', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   saveSetting('api_region', 'eu');
 
@@ -943,7 +953,7 @@ test('Sync derives episode end_ts from the next transition in the same group', a
 });
 
 test('end_ts pairs only within a group — interleaved groups do not cross-pair', async () => {
-  initDb();
+  initTestDb();
   saveSetting('api_key', 'mock-key');
   saveSetting('api_region', 'eu');
 
@@ -976,9 +986,6 @@ test('end_ts pairs only within a group — interleaved groups do not cross-pair'
 });
 
 // ── Task 7: retention prune clamped by backup floor ───────────────────────────
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 
 test('retention prune protects an un-backed-up month, deletes a backed-up one', () => {
   process.env.DB_PATH = ':memory:';

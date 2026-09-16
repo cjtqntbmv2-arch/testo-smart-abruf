@@ -2,9 +2,14 @@
 // Pure CSV table builders (measurements wide-pivot + events). No DB access.
 const { formatNumber, escapeField, joinRow, formatTimestamps, BOM } = require('./csv-format');
 
+// Spaltenköpfe der Messwert-CSV, die Kanalliste ("Kanäle") und die Spalte "Messgröße"
+// der Ereignis-CSV. Wortgleich mit den Bildschirmnamen in `Smart Meter Dashboard/data.js`
+// (META[*].label) — wer eine CSV neben das Dashboard legt, soll dieselbe Messgröße auch
+// gleich benannt sehen. Änderungen hier und dort nur gemeinsam.
+// Bewusst NICHT abgeglichen: METRIC_LABELS_DE in device-bridge.js (gespeicherte Alarmtexte).
 const METRIC_LABELS = {
-  temperature: 'Temperatur', humidity: 'Feuchte', pressure: 'Druck',
-  dewpoint: 'Taupunkt', abshumid: 'Absolute Feuchte',
+  temperature: 'Temperatur', humidity: 'Rel. Luftfeuchte', pressure: 'Luftdruck',
+  dewpoint: 'Taupunkt', abshumid: 'Abs. Luftfeuchte',
 };
 const METRIC_ORDER = ['temperature', 'humidity', 'pressure', 'dewpoint', 'abshumid'];
 const MEASURED_METRICS = new Set(METRIC_ORDER);
