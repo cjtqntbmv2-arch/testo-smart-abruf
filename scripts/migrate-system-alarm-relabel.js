@@ -18,9 +18,10 @@
 //   - alarm_condition_type -> normalized subtype 'connection' | 'battery' (matching the
 //     synthetic sys-* rows and what the frontend reads to pick its icon)
 // then reconciles the active flag the same way the scheduler now does: per
-// (station, condition, metric) only the most recent transition is live, and only when it
-// is a violation ('Alarm'); a later 'Ok' recovery closes the group. Synthetic system
-// rows (alarm_status IS NULL, owned by applySystemEvents) are left untouched.
+// (station, serial_no, condition, severity, metric) only the most recent transition is
+// live, and only when it is a violation ('Alarm'); a later 'Ok' recovery closes the
+// group. Synthetic system rows (alarm_status IS NULL, owned by applySystemEvents) are
+// left untouched.
 //
 // It is SELF-VALIDATING: a candidate must be a feed row (alarm_status IS NOT NULL) whose
 // alarm_condition_type clearly names a connection or battery condition. Anything else is
@@ -83,15 +84,18 @@ if (apply) {
   const tx = db.transaction((rows) => {
     for (const r of rows) relabeled += relabel.run(r.subtype, r.uuid).changes;
 
-    // Reconcile active flags exactly like the scheduler: newest transition per
-    // (station, condition, metric) wins; only a trailing 'Alarm' is active.
+    // Reconcile active flags exactly like the scheduler (scheduler.js, "Reconcile the
+    // transition-log feed"): newest transition per partition wins; only a trailing
+    // 'Alarm' is active. The partition key must stay WORD-FOR-WORD identical to the
+    // scheduler's — serial_no so multi-sensor devices don't cross-close each other,
+    // severity so a Warning violation isn't extinguished by an Alarm-severity recovery.
     db.prepare("UPDATE events SET active = 0 WHERE alarm_status IS NOT NULL").run();
     db.prepare(`
       UPDATE events SET active = 1 WHERE uuid IN (
         SELECT uuid FROM (
           SELECT uuid,
             ROW_NUMBER() OVER (
-              PARTITION BY station_id, alarm_condition_type, COALESCE(metric, '')
+              PARTITION BY station_id, COALESCE(serial_no,''), alarm_condition_type, severity, COALESCE(metric,'')
               ORDER BY start_ts DESC, rowid DESC
             ) AS rn,
             alarm_status
