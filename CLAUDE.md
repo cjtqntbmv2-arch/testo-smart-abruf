@@ -35,10 +35,6 @@ The application is deployed as a **login-independent background service on a cor
 - **Server binding:** configure via `PORT` / `HOST` env; `HOST` defaults to localhost. LAN access is opt-in (a firewall rule), never the default.
 - **On release / when the deployment story changes:** keep `VERSION`, the README badge, `package.json` version, and all `?v=` cache-busters in `Klima Dashboard.html` (every app script tag — the `vendor/` tags deliberately carry none) in sync; update `deploy/windows/` and re-run the Windows acceptance.
 
-## Ignore: `spec/`
-
-The `spec/` directory is a generated reverse-documentation snapshot (reconstruction spec of the application code), produced as a one-off deliverable. **Ignore it during normal work in this project** — do not read, edit, search, index, or treat it as a source of truth. It is not maintained in lockstep with the code and may go stale. Work from the actual source instead.
-
 ## Editing safety rails
 
 - Every `.md` file (except the inner index and `_assets/glossary.md`) carries YAML frontmatter with `source_url`, `snapshot_date`, and `source_chunks`. This frontmatter is load-bearing for re-snapshotting — preserve it on every edit. Mechanics are described in the inner index's "How this directory was built" section.

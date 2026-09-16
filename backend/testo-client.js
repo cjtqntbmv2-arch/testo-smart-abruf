@@ -35,8 +35,34 @@ class TestoClient {
     throw wrapped;
   }
 
+  // Mock mode returns fabricated fixture data instead of calling the real
+  // testo cloud. It exists for two reasons: the test suite drives this class
+  // through a real instance with no network access (see
+  // backend/tests/testo-client.test.js and, indirectly, server.test.js's
+  // POST /api/sync -> scheduler.js -> new TestoClient(...)), and it lets a
+  // developer run the app normally and see a populated dashboard without a
+  // real testo API key.
+  //
+  // The trigger is a literal string in the apiKey field, so it must never
+  // fire just because someone typed or pasted 'mock-api-key' into a live
+  // deployment's Settings screen -- that would silently replace real
+  // measurements with plausible-looking fabricated ones. Outside the
+  // automated test run (NODE_ENV=test, set only by npm test / cross-env --
+  // deploy/windows/env.example tells operators never to set NODE_ENV) mock
+  // mode additionally requires the explicit opt-in TESTO_MOCK=1, and logs
+  // loudly whenever that opt-in is what activated it.
+  _mockModeActive() {
+    if (this.apiKey !== 'mock-api-key') return false;
+    if (process.env.NODE_ENV === 'test') return true;
+    if (process.env.TESTO_MOCK === '1') {
+      console.warn('[testo-client] TESTO_MOCK=1 is set: returning fabricated mock data instead of real testo cloud data.');
+      return true;
+    }
+    return false;
+  }
+
   async _request(path, method = 'GET', body = null) {
-    if (this.apiKey === 'mock-api-key') {
+    if (this._mockModeActive()) {
       if (path === '/v3/devices/status' && method === 'POST') return { request_uuid: 'mock-status-req' };
       if (path === '/v3/devices/status/mock-status-req') return { status: 'Completed', data_urls: ['mock://status'] };
       if (path === '/v1/measuring-objects' && method === 'POST') return { request_uuid: 'mock-mo-req' };
@@ -107,7 +133,7 @@ class TestoClient {
     let allRecords = [];
     const list = urls || [];
     for (const url of list) {
-      if (url.startsWith('mock://')) {
+      if (url.startsWith('mock://') && this._mockModeActive()) {
         if (url === 'mock://status') {
           allRecords = allRecords.concat([
             { device_uuid: 'mock-device-uuid', serial_no: 'MOCK123', battery_level_percent: 85, radio_level_percent: 90, connection_type: 'wifi', is_powersupply_on: true, fw_version: '1.0.0', model_code: 'testo-160', last_communication: new Date().toISOString(), last_measurement_time: new Date().toISOString(), next_communication: new Date(Date.now() + 900000).toISOString() }

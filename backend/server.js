@@ -198,8 +198,20 @@ app.post('/api/stations', (req, res) => {
 });
 
 // DELETE /api/stations/:id
+// The only destructive route in the API — foreign_keys=ON plus ON DELETE CASCADE on
+// measurements/events.station_id (db.js) means this wipes the station's entire history.
+// That cascade is intentional; what was unguarded is silently reporting success when
+// nothing existed to delete. 404 (not 200) on a miss: settings.jsx's deleteStation()
+// already branches on res.ok and shows body.error — the same {error} shape every other
+// route here uses for a problem — so this needs no frontend change and no new response
+// shape for the frontend to learn. A bare id (no format check): any id that couldn't
+// have passed POST's validation can never match a row either, so "not found" already
+// covers it — a separate 400 would be dead code.
 app.delete('/api/stations/:id', (req, res) => {
-  getDb().prepare("DELETE FROM stations WHERE id = ?").run(req.params.id);
+  const result = getDb().prepare("DELETE FROM stations WHERE id = ?").run(req.params.id);
+  if (result.changes === 0) {
+    return res.status(404).json({ error: 'station not found' });
+  }
   res.json({ success: true });
 });
 
