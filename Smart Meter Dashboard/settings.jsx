@@ -218,7 +218,7 @@ function SettingsPage({ onClose }) {
   if (section === "api")           body = <ApiSection settings={settings} update={update} systemStatus={systemStatus} apiKeyConfigured={apiKeyConfigured} />;
   if (section === "database")      body = <DatabaseSection settings={settings} update={update} systemStatus={systemStatus} />;
   if (section === "stations")  body = <StationsSection />;
-  if (section === "advanced")  body = <AdvancedSection {...ctx} systemStatus={systemStatus} onReset={() => setSettings(DEFAULT_SETTINGS)} />;
+  if (section === "advanced")  body = <AdvancedSection {...ctx} systemStatus={systemStatus} onRefresh={loadStatus} onReset={() => setSettings(DEFAULT_SETTINGS)} />;
   if (section === "export")    body = <ExportPanel />;
 
   return (
@@ -871,7 +871,68 @@ function StationsSection() {
   );
 }
 
-function AdvancedSection({ settings, update, onReset, systemStatus }) {
+// Update-Hinweis aus /api/system/status. Der Dienst wird davon nie gesperrt —
+// eine gesperrte Klimaüberwachung wäre schlimmer als eine alte Fassung.
+function updateText(u) {
+  if (!u) return '—';
+  if (!u.enabled) return 'Prüfung aus (kein Ablageordner)';
+  if (u.updateAvailable) return `Update verfügbar: ${u.latestVersion}`;
+  return 'Aktuell';
+}
+
+// Ablageordner für den Update-Hinweis. Eigene Karte direkt über der Über-Karte,
+// damit Einstellung und Zustand (Zeile „Update") untereinander stehen.
+// Hook-Aliase: sState/sEff aus dem Kopf dieser Datei — blanke useState/useEffect
+// kollidieren mit den globalen Namen aus charts.jsx und machen die Seite weiß.
+function UpdateCard({ onRefresh }) {
+  const [dir, setDir] = sState('');
+  const [busy, setBusy] = sState(false);
+  const [savedFlash, setSavedFlash] = sState(false);
+  const [err, setErr] = sState(null);
+
+  sEff(() => {
+    DASH_DATA.fetchSettings().then(s => setDir(s.update_dir || '')).catch(() => {});
+  }, []);
+
+  async function save() {
+    setErr(null); setBusy(true);
+    try {
+      await DASH_DATA.saveSettings({ update_dir: dir });
+      setSavedFlash(true); setTimeout(() => setSavedFlash(false), 2000);
+      // Das Backend startet die Prüfung nach dem Speichern selbst; sie läuft
+      // asynchron an (Netzfreigabe), deshalb den Status kurz danach nachladen.
+      if (onRefresh) setTimeout(onRefresh, 600);
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <Card>
+      <div className="card-title">Update-Hinweis</div>
+      <div className="card-sub" style={{ marginBottom: 12 }}>
+        Ablageordner, in dem neue Fassungen bereitgelegt werden (z. B. eine Netzfreigabe).
+        Der Ordner wird nur gelesen; installiert wird weiterhin von Hand. Leer = Prüfung aus.
+      </div>
+      <Field label="Ablageordner" hint="Gesucht wird testo-smart-abruf-&lt;Version&gt;-win-x64.zip. Leer lassen schaltet die Prüfung ab.">
+        <div className="backup-path">
+          <input
+            type="text"
+            className="backup-path-input"
+            value={dir}
+            placeholder="z. B. \\fileserver\Software\TestoSmartAbruf"
+            onChange={e => { setDir(e.target.value); setErr(null); }}
+          />
+          <button className="btn" disabled={busy} onClick={save}>
+            {busy ? <Spinner /> : (savedFlash ? 'Gespeichert ✓' : 'Speichern')}
+          </button>
+        </div>
+        {err && <div className="export-error"><span>{err}</span></div>}
+      </Field>
+    </Card>
+  );
+}
+
+function AdvancedSection({ settings, update, onReset, systemStatus, onRefresh }) {
   return (
     <>
       <SectionHead title="Erweitert" sub="Zurücksetzen und Über das System." />
@@ -886,10 +947,13 @@ function AdvancedSection({ settings, update, onReset, systemStatus }) {
         </button>
       </Card>
 
+      <UpdateCard onRefresh={onRefresh} />
+
       <Card>
         <div className="card-title">Über</div>
         <div className="kv-grid two-col">
           <KV label="Version"    value={`Klima Dashboard ${systemStatus?.appVersion || '—'}`} />
+          <KV label="Update"     value={updateText(systemStatus?.update)} />
           <KV label="API"        value="v3 · Testo Smart Connect" />
           <KV label="Datenbank"  value="SQLite 3" />
           <KV label="Lizenz"     value="Open Source" />

@@ -9,6 +9,7 @@ const TestoClient = require('./testo-client');
 const { handleListenError } = require('./listen-error');
 const { getExportMetadata, exportStations } = require('./export-service');
 const { resolveBackupDir } = require('./backup-runner');
+const { startUpdateCheck, runUpdateCheck, getUpdateStatus } = require('./update-check');
 
 // Read application version from VERSION file; fall back to package.json
 const fs = require('fs');
@@ -23,6 +24,7 @@ try {
 
 initDb();
 startScheduler();
+startUpdateCheck(appVersion);
 
 const app = express();
 app.use(express.json());
@@ -61,6 +63,7 @@ app.get('/api/settings', (req, res) => {
     retention_days: parseInt(getSetting('retention_days') || '365', 10),
     backup_enabled: (getSetting('backup_enabled') || '1') === '1',
     backup_dir: getSetting('backup_dir') || '',
+    update_dir: getSetting('update_dir') || '',
     csv_format: getSetting('csv_format') || 'de'
   });
 });
@@ -121,6 +124,15 @@ app.post('/api/settings', (req, res) => {
       }
     }
     saveSetting('backup_dir', dir);
+  }
+  // Ablageordner fuer den Update-Hinweis. Bewusst OHNE mkdir/Schreibtest: das ist eine
+  // fremde, oft nur lesbare Netzfreigabe. Leer = Pruefung aus. Ein nicht erreichbarer
+  // Pfad wird angenommen und fuehrt nur zu "kein Update bekannt" — er darf das
+  // Speichern der uebrigen Einstellungen nicht scheitern lassen.
+  if (req.body.update_dir !== undefined) {
+    saveSetting('update_dir', String(req.body.update_dir || '').trim());
+    // Sofort neu pruefen, damit die Aenderung ohne Dienstneustart sichtbar wird.
+    runUpdateCheck(appVersion);
   }
 
   // Restart scheduler with new interval
@@ -419,6 +431,9 @@ app.get('/api/system/status', (req, res) => {
 
   res.json({
     appVersion,
+    // Zwischengespeichertes Ergebnis der Update-Pruefung — hier wird NICHT auf die
+    // Netzfreigabe zugegriffen (dieser Endpunkt wird alle 10 s abgefragt).
+    update: getUpdateStatus(),
     database: {
       status: "ok",
       sizeBytes: dbSize,
