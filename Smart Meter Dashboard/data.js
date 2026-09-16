@@ -26,6 +26,9 @@
   let connectionError = null;
   let lastUpdated = null;
   let isRefreshing = false;
+  // Teilausfall-Erkennung: Fehlversuche je Abrufgruppe, Logik in partial-failure-logic.js.
+  let failCounts = {};
+  let partialFailure = null;
   const listeners = new Set();
 
   function emit() {
@@ -89,23 +92,36 @@
       const stationsList = await resStations.json();
 
       // 2. Fetch totals
-      const resTotals = await fetch('/api/totals');
-      if (resTotals.ok) {
-        totals = await resTotals.json();
+      let totalsOk = false;
+      try {
+        const resTotals = await fetch('/api/totals');
+        if (resTotals.ok) {
+          totals = await resTotals.json();
+          totalsOk = true;
+        }
+      } catch (e) {
+        console.error('Error fetching totals:', e);
       }
+      failCounts = recordOutcome(failCounts, 'totals', totalsOk);
 
       // 3. Fetch alarm limits (B5: threshold units for event display)
+      let limitsOk = false;
       try {
         const resLimits = await fetch('/api/limits');
         if (resLimits.ok) {
           limits = await resLimits.json();
+          limitsOk = true;
         }
       } catch (e) {
         console.error('Error fetching limits:', e);
       }
+      failCounts = recordOutcome(failCounts, 'limits', limitsOk);
 
       const tempOrder = [];
       const nextStations = {};
+      // Je Gruppe gilt der Zyklus als gescheitert, sobald EINE Messstelle nicht lädt.
+      let metricsOk = true;
+      let eventsOk = true;
 
       for (const s of stationsList) {
         tempOrder.push(s.id);
@@ -122,6 +138,7 @@
 
         try {
           const resMetrics = await fetch(`/api/stations/${s.id}/metrics`);
+          if (!resMetrics.ok) metricsOk = false;
           if (resMetrics.ok) {
             const data = await resMetrics.json();
             stationTimestamps = data.timestamps || [];
@@ -134,6 +151,7 @@
             }
           }
         } catch (e) {
+          metricsOk = false;
           console.error(`Error fetching metrics for ${s.id}:`, e);
         }
 
@@ -218,11 +236,13 @@
         let backendEvents = [];
         try {
           const resEvents = await fetch(`/api/stations/${s.id}/events?limit=${POLL_EVENT_LIMIT}`);
+          if (!resEvents.ok) eventsOk = false;
           if (resEvents.ok) {
             const rawEvents = await resEvents.json();
             backendEvents = rawEvents.map(mapBackendEvent);
           }
         } catch (e) {
+          eventsOk = false;
           console.error(`Error fetching events for ${s.id}:`, e);
         }
 
@@ -254,6 +274,10 @@
 
       STATIONS = nextStations;
       STATION_ORDER = tempOrder;
+
+      failCounts = recordOutcome(failCounts, 'metrics', metricsOk);
+      failCounts = recordOutcome(failCounts, 'events', eventsOk);
+      partialFailure = partialFailureNotice(failCounts);
 
       // Handle active station tracking
       if (STATION_ORDER.length > 0) {
@@ -295,6 +319,8 @@
     // Connection state (K2)
     get connectionError() { return connectionError; },
     get lastUpdated()     { return lastUpdated; },
+    // Dauerhafter Teilausfall einzelner Endpunkte — null, solange alles läuft.
+    get partialFailure()  { return partialFailure; },
 
     // Stations
     get stations() { return STATIONS; },
