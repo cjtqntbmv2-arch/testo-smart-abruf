@@ -15,15 +15,14 @@
 // left untouched.
 //
 // Usage:
-//   node scripts/migrate-dewpoint-relabel.js [--apply] [--db <path>]
-// Default is a dry run (no writes). Pass --apply to write changes.
+//   node scripts/migrate-dewpoint-relabel.js --db <path> [--apply]
+// --db is required (no guessed default). Default is a dry run (no writes); pass
+// --apply to write changes.
 
-const path = require('path');
 const Database = require('better-sqlite3');
+const { parseArgs } = require('./args');
 
-const apply = process.argv.includes('--apply');
-const dbArgIdx = process.argv.indexOf('--db');
-const dbPath = dbArgIdx !== -1 ? process.argv[dbArgIdx + 1] : path.join(__dirname, '..', 'klima.db');
+const { apply, dbPath } = parseArgs();
 
 const TOLERANCE_C = 0.2; // mean |channel - computedDewpoint| must be below this to relabel
 
@@ -37,6 +36,10 @@ const db = new Database(dbPath);
 const stations = db.prepare('SELECT id FROM stations').all().map((r) => r.id);
 
 let totalRelabeled = 0;
+// Every write is collected first and applied in ONE transaction after the scan. A
+// SQLITE_BUSY (or any other error) halfway through a per-station write loop would leave
+// one channel relabeled and the next one not — a half-migrated database that looks fine.
+const pending = [];
 
 for (const stationId of stations) {
   const rows = db
@@ -89,15 +92,10 @@ for (const stationId of stations) {
         isDewpoint ? 'DEWPOINT (relabel)' : 'temperature (keep)'
       }`
     );
-    if (isDewpoint && apply) {
-      const res = db
-        .prepare(
-          `UPDATE measurements SET physical_property = 'dewpoint'
-           WHERE station_id = ? AND channel_no = ? AND physical_property = 'temperature'`
-        )
-        .run(stationId, ch);
-      totalRelabeled += res.changes;
-    } else if (isDewpoint) {
+    if (!isDewpoint) continue;
+    if (apply) {
+      pending.push({ stationId, ch });
+    } else {
       const cnt = db
         .prepare(
           `SELECT count(*) c FROM measurements
@@ -107,6 +105,17 @@ for (const stationId of stations) {
       totalRelabeled += cnt;
     }
   }
+}
+
+if (apply && pending.length > 0) {
+  const relabel = db.prepare(
+    `UPDATE measurements SET physical_property = 'dewpoint'
+     WHERE station_id = ? AND channel_no = ? AND physical_property = 'temperature'`
+  );
+  const tx = db.transaction((rows) => {
+    for (const r of rows) totalRelabeled += relabel.run(r.stationId, r.ch).changes;
+  });
+  tx(pending);
 }
 
 console.log(

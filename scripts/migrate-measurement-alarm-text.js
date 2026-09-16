@@ -15,17 +15,20 @@
 // uses) and is left untouched. System rows (severity 'system') are owned by
 // migrate-system-alarm-text.js and are skipped here.
 //
+// Runs AFTER migrate-system-alarm-relabel.js: this script claims every feed row that is
+// NOT severity 'system', and relabel is what moves the connection/battery rows out of that
+// set. Run it first, or those rows get a measurement headline here. See scripts/README.md.
+//
 // Usage:
-//   node scripts/migrate-measurement-alarm-text.js [--apply] [--db <path>]
-// Default is a dry run (no writes). Pass --apply to write changes.
+//   node scripts/migrate-measurement-alarm-text.js --db <path> [--apply]
+// --db is required (no guessed default). Default is a dry run (no writes); pass
+// --apply to write changes.
 
-const path = require('path');
 const Database = require('better-sqlite3');
 const { measurementAlarmText, alarmConditionDirection } = require('../backend/device-bridge');
+const { parseArgs } = require('./args');
 
-const apply = process.argv.includes('--apply');
-const dbArgIdx = process.argv.indexOf('--db');
-const dbPath = dbArgIdx !== -1 ? process.argv[dbArgIdx + 1] : path.join(__dirname, '..', 'klima.db');
+const { apply, dbPath } = parseArgs();
 
 const db = new Database(dbPath);
 

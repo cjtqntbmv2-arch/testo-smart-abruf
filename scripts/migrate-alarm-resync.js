@@ -24,27 +24,14 @@
 //   - No timestamp arithmetic needed; idempotent on repeated runs.
 //
 // Usage:
-//   node scripts/migrate-alarm-resync.js [--apply] [--db <path>]
-// Default is a dry run (no writes). Pass --apply to write changes.
+//   node scripts/migrate-alarm-resync.js --db <path> [--apply]
+// --db is required (no guessed default). Default is a dry run (no writes); pass
+// --apply to write changes.
 
-const path = require('path');
 const Database = require('better-sqlite3');
+const { parseArgs } = require('./args');
 
-const apply = process.argv.includes('--apply');
-const dbArgIdx = process.argv.indexOf('--db');
-let dbPath;
-
-if (dbArgIdx !== -1) {
-  const providedPath = process.argv[dbArgIdx + 1];
-  // Guard: --db requires a path argument (not another flag or undefined).
-  if (!providedPath || providedPath.startsWith('--')) {
-    console.error('--db requires a path argument');
-    process.exit(1);
-  }
-  dbPath = providedPath;
-} else {
-  dbPath = path.join(__dirname, '..', 'klima.db');
-}
+const { apply, dbPath } = parseArgs();
 
 const db = new Database(dbPath);
 
