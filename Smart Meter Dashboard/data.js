@@ -54,13 +54,39 @@
     return { min, max, avg: sum / nums.length, last: nums[nums.length - 1], first: nums[0] };
   }
 
-  // Alarm direction helper — case-insensitive, covers English + German terms (M2)
+  // Alarm direction helper — case-insensitive, covers English + German terms (M2).
+  //
+  // Fallback intentionally differs from the backend's alarmConditionDirection() in
+  // backend/device-bridge.js, which returns null for an unrecognized condition string
+  // instead of defaulting to 'high'. Not an oversight — the two can't share code (no
+  // bundler; that one runs in Node, this one as a <script> in the browser) and each
+  // fallback is right for its own layer:
+  //   - The backend's null skips its threshold lookup, so an unrecognized direction
+  //     never gets a fabricated limit value written to the stored/exported event.
+  //   - Every UI consumer of this result (LimitFlag, EventRow's arrow + wording in
+  //     tiles.jsx, metricAlertState in metrics-logic.js) is a binary high/low ternary
+  //     with no "unknown" rendering state, so this must resolve to something displayable.
+  // Because the backend leaves `threshold` null exactly when direction was unrecognized,
+  // this fallback only ever produces a cosmetic wrong arrow/wording guess (the
+  // `e.threshold == null` branch of tiles.jsx EventRow's headline) — never a fabricated
+  // number. That lower stake is why 'high' here is fine even though null is right there.
   function alarmDirection(conditionType) {
     if (!conditionType) return 'high';
     const c = conditionType.toLowerCase();
     if (c.includes('upper') || c.includes('high') || c.includes('max') || c.includes('ober') || c.includes('hoch')) return 'high';
     if (c.includes('lower') || c.includes('low')  || c.includes('min') || c.includes('unter') || c.includes('niedrig')) return 'low';
     return 'high';
+  }
+
+  // Value-only half of formatValue() below: "—" for null/NaN, else toFixed(decimals),
+  // WITHOUT the unit suffix. Factored out because every current duplicate of
+  // formatValue's logic (tiles.jsx KpiBody/MetricValue/StatsBody/EventRow, app.jsx's
+  // two metric-pick steps) renders the unit in its own adjacent span for separate
+  // styling — reusing formatValue there would merge value+unit into one string and
+  // change that layout. Exposed on DASH_DATA as formatNumber for exactly that reuse.
+  function formatNumber(metric, v) {
+    if (v == null || Number.isNaN(v)) return "—";
+    return v.toFixed(metric.decimals);
   }
 
   // Map one backend events-row to the frontend event shape. Single source of truth
@@ -338,9 +364,10 @@
     get metrics()    { return STATIONS[activeStationId]?.metrics; },
     get events()     { return STATIONS[activeStationId]?.events; },
 
+    formatNumber(metric, v) { return formatNumber(metric, v); },
     formatValue(metric, v) {
-      if (v == null || Number.isNaN(v)) return "—";
-      return v.toFixed(metric.decimals) + " " + metric.unit;
+      const n = formatNumber(metric, v);
+      return n === "—" ? n : n + " " + metric.unit;
     },
     formatTime(ts) {
       const d = new Date(ts);

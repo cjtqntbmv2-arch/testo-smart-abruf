@@ -145,7 +145,7 @@ function LineChart({ metricIds, stationId, timestamps, showGrid = true, showAxes
     while (t < first) t += stepH * 3600000;
     while (t <= last) {
       const frac = (t - first) / (last - first);
-      out.push({ x: padL + frac * plotW, label: new Date(t).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) });
+      out.push({ x: padL + frac * plotW, label: window.DASH_DATA.formatTime(t) });
       t += stepH * 3600000;
     }
     return out;

@@ -59,6 +59,11 @@ const TILE_TYPES = {
 // Whether a tile shows the limit-status treatment. Default on; undefined => on.
 function tileLimitFlagsOn(tile) { return tile.limitFlags !== false; }
 
+// Severity -> CSS modifier class for value styling. Shared by Kpi/Chart/Stats tile bodies.
+function severityClass(severity) {
+  return severity === "alarm" ? "is-alarm" : severity === "warning" ? "is-warning" : "";
+}
+
 // ---------- Layout math ----------
 function rectsOverlap(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -179,7 +184,7 @@ function KpiBody({ tile }) {
   const state = tileLimitFlagsOn(tile)
     ? D.metricAlertState(station.events, tile.metrics[0])
     : { severity: null, direction: null };
-  const numClass = state.severity === "alarm" ? "is-alarm" : state.severity === "warning" ? "is-warning" : "";
+  const numClass = severityClass(state.severity);
   const trend = s.last - s.first;
   const trendPct = (trend / (s.first || 1)) * 100;
   const trendUp = trend > 0;
@@ -190,7 +195,7 @@ function KpiBody({ tile }) {
         <span className="kpi-dot" style={{ background: M.color }} />
       </div>
       <div className="kpi-value">
-        <span className={`num ${numClass}`}>{Number.isNaN(s.last) || s.last == null ? "—" : s.last.toFixed(M.decimals)}</span>
+        <span className={`num ${numClass}`}>{D.formatNumber(M, s.last)}</span>
         <span className="unit">{M.unit}</span>
         <LimitFlag severity={state.severity} direction={state.direction} />
       </div>
@@ -236,10 +241,10 @@ function LimitFlag({ severity, direction }) {
 
 function MetricValue({ metric, state, trend, hidePct, hideTrend }) {
   const last = trend.last;
-  const valStr = (last == null || Number.isNaN(last)) ? "—" : last.toFixed(metric.decimals);
+  const valStr = window.DASH_DATA.formatNumber(metric, last);
   const up = trend.delta > 0;
   const sev = state.severity;
-  const valClass = sev === "alarm" ? "is-alarm" : sev === "warning" ? "is-warning" : "";
+  const valClass = severityClass(sev);
   return (
     <div className="cv-item">
       <span className="cv-label">
@@ -333,9 +338,9 @@ function StatsBody({ tile }) {
           const M = station.metrics[id];
           if (!M) return null;
           const s = D.stats(M.series);
-          const fmt = (v) => (v == null || Number.isNaN(v)) ? "—" : v.toFixed(M.decimals);
+          const fmt = (v) => D.formatNumber(M, v);
           const state = showFlags ? D.metricAlertState(station.events, id) : { severity: null, direction: null };
-          const curClass = state.severity === "alarm" ? "is-alarm" : state.severity === "warning" ? "is-warning" : "";
+          const curClass = severityClass(state.severity);
           return (
             <div className="stats-row" key={id}>
               <span className="srow-name"><span className="legend-dot" style={{ background: M.color }} />{M.short}</span>
@@ -524,7 +529,7 @@ function EventRow({ event: e, compact, station }) {
   const M = metricEntry || { color: "var(--text-faint)", label: e.metric || "—", short: e.metric || "—", unit: fallbackUnit, decimals: 1 };
   const dir = e.condition === "high" ? "über" : "unter";
   const arrow = e.condition === "high" ? "▲" : "▼";
-  const fmtExtreme = (e.extreme == null || Number.isNaN(e.extreme)) ? "—" : e.extreme.toFixed(M.decimals);
+  const fmtExtreme = D.formatNumber(M, e.extreme);
 
   return (
     <div className={`evrow sev-${e.severity} ${e.active ? "active" : ""}`}>

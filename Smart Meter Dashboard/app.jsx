@@ -518,7 +518,7 @@ function AddTileDialog({ onClose, onAdd, onGoToSettings }) {
                     <span className="mc-dot" style={{ background: M.color }} />
                     <span className="mc-label">{M.label}</span>
                     <span className="mc-unit">{M.unit}</span>
-                    <span className="mc-val">{Number.isNaN(M.series[M.series.length - 1]) || M.series[M.series.length - 1] == null ? "—" : M.series[M.series.length - 1].toFixed(M.decimals)}</span>
+                    <span className="mc-val">{D.formatNumber(M, M.series[M.series.length - 1])}</span>
                   </button>
                 );
               })}
@@ -671,7 +671,7 @@ function EditTileDialog({ tile, onClose, onSave }) {
                     <span className="mc-dot" style={{ background: M.color }} />
                     <span className="mc-label">{M.label}</span>
                     <span className="mc-unit">{M.unit}</span>
-                    <span className="mc-val">{Number.isNaN(M.series[M.series.length - 1]) || M.series[M.series.length - 1] == null ? "—" : M.series[M.series.length - 1].toFixed(M.decimals)}</span>
+                    <span className="mc-val">{D.formatNumber(M, M.series[M.series.length - 1])}</span>
                   </button>
                 );
               })}
