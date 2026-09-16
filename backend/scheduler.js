@@ -205,7 +205,7 @@ async function runSyncCycle(customClient = null) {
     // (don't wipe the table on transient API errors or parse failures).
     try {
       const moRows = await client.fetchMeasuringObjects();
-      const limits = parseAlarmConfiguration(moRows);
+      const { limits, conflicts } = parseAlarmConfiguration(moRows);
       if (limits.length > 0) {
         db.transaction(() => {
           db.prepare("DELETE FROM limits").run();
@@ -222,6 +222,17 @@ async function runSyncCycle(customClient = null) {
       // If limits.length === 0 (parse returned nothing / all keys conflicted) we keep
       // whatever was already in the table — an empty result from the parser is not a
       // reliable signal that no limits are configured on the tenant.
+
+      // #10: persist which metrics currently have a conflicting threshold configuration
+      // across measuring objects, so the operator can see WHY a metric shows no limit
+      // line/colouring instead of the drop staying silent. Written unconditionally every
+      // time this step completes (even when limits.length === 0, e.g. all keys
+      // conflicted) so a later-fixed conflict clears the flag on the next successful
+      // cycle too — same overwrite-every-run shape as backup_health (backup-runner.js).
+      saveSetting('limits_conflict', JSON.stringify({
+        metrics: [...new Set(conflicts.map((c) => c.metric))],
+        updatedAt: new Date().toISOString()
+      }));
     } catch (e) {
       console.error('Error syncing measuring-object limits:', e.message);
       hasError = true; errorMsg = e.message;

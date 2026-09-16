@@ -239,15 +239,21 @@ function alarmConditionDirection(conditionType) {
 }
 
 // Parse the measurement_alarm_configuration JSON strings from measuring-object rows
-// returned by client.fetchMeasuringObjects(), and return a flat deduplicated array of
-// limit entries ready for INSERT into the `limits` table.
+// returned by client.fetchMeasuringObjects(), and return the deduplicated limit entries
+// ready for INSERT into the `limits` table, plus any keys that had to be dropped.
 //
-// Shape per entry: { metric, direction, severity, limitValue, hysteresis, delayMs, unit }
+// Returns { limits, conflicts }:
+//   limits    - array of { metric, direction, severity, limitValue, hysteresis, delayMs, unit }
+//   conflicts - array of { metric, direction, severity } — keys dropped from `limits`
+//               because two MOs disagreed (see below); empty when nothing conflicted.
 //
 // The live API embeds configuration as a JSON-encoded STRING inside each MO row. A tenant
 // may have multiple MOs with the same configuration — this is expected and fine. If two
 // MOs DISAGREE on the limitValue for the same (metric, direction, severity) key we DROP
-// that key entirely: a missing threshold is safer than a wrong one.
+// that key from `limits`: a missing threshold is safer than a wrong one. This function
+// stays pure (no logging, no DB access) — it only REPORTS the conflict via `conflicts`;
+// the caller (scheduler.js) decides what to do with it, e.g. persist + surface to the
+// operator so the dropped threshold isn't just silently missing (#10).
 //
 // Mapping notes:
 //   physicalValueId: "Temperature" / "Humidity" — run through mapPhysicalProperty
@@ -316,13 +322,17 @@ function parseAlarmConfiguration(moRows) {
     }
   }
 
-  const results = [];
+  const limits = [];
+  const conflicts = [];
   for (const [key, entry] of byKey) {
-    if (entry === 'conflict') continue; // drop conflicted keys
     const [metric, direction, severity] = key.split(':');
-    results.push({ metric, direction, severity, ...entry });
+    if (entry === 'conflict') {
+      conflicts.push({ metric, direction, severity }); // report, don't just drop (#10)
+      continue;
+    }
+    limits.push({ metric, direction, severity, ...entry });
   }
-  return results;
+  return { limits, conflicts };
 }
 
 module.exports = { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText, measurementAlarmText };

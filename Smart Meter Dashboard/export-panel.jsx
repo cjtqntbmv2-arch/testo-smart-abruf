@@ -151,6 +151,7 @@ function BackupSettings() {
   const [savedFlash, setSavedFlash] = useStateE(false);
   const [busy, setBusy] = useStateE(false);
   const [pollSec, setPollSec] = useStateE(900); // Poll-Intervall für den „erster Lauf"-Hinweis
+  const [loaded, setLoaded] = useStateE(false); // erst true nach echtem fetchSettings-Erfolg
 
   function reloadStatus() {
     DASH_DATA.fetchBackupStatus()
@@ -160,15 +161,18 @@ function BackupSettings() {
 
   useEffectE(() => {
     // Scheitert das Laden, zeigten Schalter und Pfad vorher stumm die Standardwerte
-    // (Ein, leerer Pfad) statt des echten Zustands — das muss sichtbar sein.
+    // (Ein, leerer Pfad) statt des echten Zustands — das muss sichtbar sein. Zusätzlich
+    // zur Fehleranzeige bleiben Schalter und Speichern-Knopf gesperrt (loaded bleibt
+    // false), sonst schreibt ein Klick genau diese Standardwerte über den echten,
+    // bereits gespeicherten Zustand (Pfad geleert bzw. Backup unbeabsichtigt umgeschaltet).
     DASH_DATA.fetchSettings()
-      .then(s => { setEnabled(s.backup_enabled !== false); setDir(s.backup_dir || ''); setPollSec(s.poll_interval_sec || 900); setSettingsErr(null); })
-      .catch(() => setSettingsErr('Backup-Einstellungen konnten nicht geladen werden — Schalter und Pfad zeigen nur Standardwerte, nicht den echten Zustand.'));
+      .then(s => { setEnabled(s.backup_enabled !== false); setDir(s.backup_dir || ''); setPollSec(s.poll_interval_sec || 900); setSettingsErr(null); setLoaded(true); })
+      .catch(() => setSettingsErr('Backup-Einstellungen konnten nicht geladen werden — Schalter und Pfad zeigen nur Standardwerte, nicht den echten Zustand. Bedienung ist deshalb gesperrt (Seite neu laden zum erneuten Versuch).'));
     reloadStatus();
   }, []);
 
   async function toggleEnabled(next) {
-    if (busy) return;                  // Doppelklick/Race-Schutz: ein In-Flight-Save zur Zeit
+    if (busy || !loaded) return;       // Doppelklick/Race-Schutz + gesperrt, bis der echte Zustand geladen ist
     setBusy(true);
     setEnabled(next);                  // optimistisch
     try { await DASH_DATA.saveSettings({ backup_enabled: next }); }
@@ -205,7 +209,11 @@ function BackupSettings() {
 
       <Card>
         <Field label="Automatisches Backup" hint="Monatliche ZIP-Sicherung ein- oder ausschalten.">
-          <Toggle checked={enabled} onChange={toggleEnabled} labelOn="Ein" labelOff="Aus" />
+          {/* Toggle (ui-kit.jsx) kennt kein disabled-Prop — die Sperre sitzt im Klick-Handler
+              selbst (toggleEnabled), pointerEvents hier macht sie zusätzlich sichtbar/prüfbar. */}
+          <span style={loaded ? undefined : { opacity: 0.5, pointerEvents: 'none' }}>
+            <Toggle checked={enabled} onChange={toggleEnabled} labelOn="Ein" labelOff="Aus" />
+          </span>
         </Field>
         <Field label="Speicherpfad" hint="Zielordner für die Backup-ZIPs. Leer = Standardordner.">
           <div className="backup-path">
@@ -216,7 +224,7 @@ function BackupSettings() {
               placeholder="Leer lassen für Standardordner"
               onChange={e => { setDir(e.target.value); setPathErr(null); }}
             />
-            <button className="btn" disabled={busy} onClick={savePath}>
+            <button className="btn" disabled={busy || !loaded} onClick={savePath}>
               {busy ? <Spinner /> : (savedFlash ? 'Gespeichert ✓' : 'Speichern')}
             </button>
           </div>
