@@ -31,37 +31,57 @@ function loadLayout() {
   return DEFAULT_LAYOUT;
 }
 
-// Per-tile error boundary: one failing tile degrades to an inline error card
-// while the rest of the dashboard keeps working. Class components are the only
-// way to catch render-phase errors — function components cannot do this.
-class TileErrorBoundary extends React.Component {
+// Fehlergrenze: ein Wurf ersetzt NUR den umschlossenen Bereich, der Rest der
+// Anwendung bleibt stehen und bedienbar. Klassenkomponenten sind der einzige
+// Weg, Fehler aus der Render-Phase abzufangen — Funktionskomponenten können das
+// nicht. Sie fängt ausschliesslich Würfe ihrer KINDER: JSX, das im Render der
+// umgebenden Komponente selbst ausgewertet wird, liegt ausserhalb.
+//
+// Eine Klasse, zwei Erscheinungsbilder — der Mechanismus (getDerivedStateFromError,
+// componentDidCatch, Reset) ist in beiden Fällen identisch, nur die Fehlerkarte
+// unterscheidet sich, also reicht ein Parameter statt einer zweiten Klasse:
+//   Standard  — kompakte Karte in Kachelgrösse, ohne Knöpfe (Kachelverhalten unverändert)
+//   block     — ganzflächig für Einstellungen und Dialoge, mit "Erneut versuchen"
+//               und optionalem Ausweg (actionLabel/onAction), damit niemand in
+//               einer Fehlermeldung ohne Rückweg festsitzt.
+// Der Fehler wird IMMER auf die Konsole geloggt — verschluckt wird nichts.
+class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { hasError: false, error: null };
+    // Reset: rendert die Kinder neu (sie wurden ausgehängt, mounten also frisch).
+    // Bei einem dauerhaften Fehler fängt die Grenze sofort wieder — unschädlich.
+    this.retry = () => this.setState({ hasError: false, error: null });
   }
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
   componentDidCatch(error, info) {
-    console.error("[TileErrorBoundary] Tile render error:", error, info);
+    console.error(`[ErrorBoundary] ${this.props.label || "Bereich"}:`, error, info);
   }
   render() {
-    if (this.state.hasError) {
-      const title = this.props.tileTitle || "Kachel";
-      return (
-        <div className="tile-error-card" title={this.state.error?.message}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--alarm)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-          </svg>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: "0.8rem" }}>{title}</div>
-            <div style={{ fontSize: "0.75rem", opacity: 0.75 }}>Diese Kachel konnte nicht angezeigt werden.</div>
+    if (!this.state.hasError) return this.props.children;
+    const { label, message, block, actionLabel, onAction } = this.props;
+    return (
+      <div className={`tile-error-card ${block ? "block" : ""}`} title={this.state.error?.message}>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--alarm)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: "0.8rem" }}>{label || "Kachel"}</div>
+          <div style={{ fontSize: "0.75rem", opacity: 0.75 }}>
+            {message || "Dieser Bereich konnte nicht angezeigt werden."}
           </div>
+          {block && (
+            <div className="error-card-actions">
+              <button className="btn" onClick={this.retry}>Erneut versuchen</button>
+              {onAction && <button className="btn primary" onClick={onAction}>{actionLabel}</button>}
+            </div>
+          )}
         </div>
-      );
-    }
-    return this.props.children;
+      </div>
+    );
   }
 }
 
@@ -200,16 +220,22 @@ function App() {
 
   return (
     <div className={`app ${editMode ? "edit-mode" : ""} ${view === "settings" ? "in-settings" : ""}`}>
-      <Header
-        editMode={editMode}
-        onToggleEdit={() => setEditMode((v) => !v)}
-        onAdd={() => setAddOpen(true)}
-        onReset={resetLayout}
-        tileCount={layout.length}
-        view={view}
-        onOpenSettings={() => setView("settings")}
-        onLeaveSettings={() => setView("dashboard")}
-      />
+      {/* Die Kopfzeile trägt die gesamte Navigation — ohne Grenze reisst ein Wurf
+          dort die ganze Seite mit. Die Meldungsübersicht darin hat eine eigene,
+          engere Grenze (header.jsx), damit ein Fehler im Aufklapp-Panel nicht
+          die Knöpfe daneben mitnimmt. */}
+      <ErrorBoundary label="Kopfzeile" message="Die Kopfzeile konnte nicht angezeigt werden." block>
+        <Header
+          editMode={editMode}
+          onToggleEdit={() => setEditMode((v) => !v)}
+          onAdd={() => setAddOpen(true)}
+          onReset={resetLayout}
+          tileCount={layout.length}
+          view={view}
+          onOpenSettings={() => setView("settings")}
+          onLeaveSettings={() => setView("dashboard")}
+        />
+      </ErrorBoundary>
 
       {/* K2: offline / stale-data banner — only shown in dashboard view */}
       {view !== "settings" && window.DASH_DATA.connectionError && (
@@ -227,8 +253,29 @@ function App() {
         </div>
       )}
 
+      {/* Dauerhafter Teilausfall einzelner Endpunkte — nur, wenn das Backend
+          grundsätzlich erreichbar ist; sonst gilt das Offline-Banner darüber. */}
+      {view !== "settings" && !window.DASH_DATA.connectionError && window.DASH_DATA.partialFailure && (
+        <div className="offline-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span>{window.DASH_DATA.partialFailure}</span>
+        </div>
+      )}
+
       {view === "settings" ? (
-        <SettingsPage onClose={() => setView("dashboard")} />
+        /* Grösste ungeschützte Fläche. Der Ausweg ist Pflicht: ohne ihn säße der
+           Nutzer in einer Fehlermeldung fest. Die einzelnen Sektionen haben
+           zusätzlich eine eigene Grenze (settings.jsx), damit die Seitenleiste
+           einen Sektionsfehler überlebt. */
+        <ErrorBoundary label="Einstellungen"
+                       message="Die Einstellungen konnten nicht angezeigt werden."
+                       block actionLabel="Zurück zum Dashboard"
+                       onAction={() => setView("dashboard")}>
+          <SettingsPage onClose={() => setView("dashboard")} />
+        </ErrorBoundary>
       ) : layout.length === 0 ? (
         <div className="grid-shell">
           <div className="empty-dash">
@@ -273,20 +320,27 @@ function App() {
             const bodyProps = { tile: t };
             return (
               <div className="tile-pos" key={t.id} style={pos}>
-                <TileFrame
-                  tile={t}
-                  editMode={editMode}
-                  dragging={isDragging}
-                  resizing={isResizing}
-                  onMouseDownDrag={(e) => startDrag(e, t)}
-                  onMouseDownResize={(e) => startResize(e, t)}
-                  onRemove={() => removeTile(t.id)}
-                  onEdit={() => setEditing(t.id)}
-                >
-                  <TileErrorBoundary tileTitle={t.title}>
-                    <Body {...bodyProps} />
-                  </TileErrorBoundary>
-                </TileFrame>
+                {/* Zwei Grenzen, verschiedene Zuständigkeiten: die innere fängt den
+                    Kachelinhalt und lässt Rahmen samt Bearbeiten/Entfernen stehen
+                    (unverändertes Verhalten). Die äussere fängt das Rahmen-Chrome
+                    selbst — sonst risse ein Wurf in Titel oder Stationsanzeige das
+                    ganze Raster mit. */}
+                <ErrorBoundary label={t.title || "Kachel"} message="Diese Kachel konnte nicht angezeigt werden.">
+                  <TileFrame
+                    tile={t}
+                    editMode={editMode}
+                    dragging={isDragging}
+                    resizing={isResizing}
+                    onMouseDownDrag={(e) => startDrag(e, t)}
+                    onMouseDownResize={(e) => startResize(e, t)}
+                    onRemove={() => removeTile(t.id)}
+                    onEdit={() => setEditing(t.id)}
+                  >
+                    <ErrorBoundary label={t.title || "Kachel"} message="Diese Kachel konnte nicht angezeigt werden.">
+                      <Body {...bodyProps} />
+                    </ErrorBoundary>
+                  </TileFrame>
+                </ErrorBoundary>
               </div>
             );
           })}
@@ -294,19 +348,28 @@ function App() {
       </div>
       )}
 
+      {/* Die Grenze liegt AUSSERHALB des Dialogs, nicht im Modal: die Dialoge werfen
+          schon vor dem Modal (z. B. beim Auflösen von TILE_TYPES), das fängt eine
+          Grenze im Modal nicht mehr. Der Ausweg schliesst den Dialog. */}
       {addOpen && (
-        <AddTileDialog
-          onClose={() => setAddOpen(false)}
-          onAdd={addTile}
-          onGoToSettings={() => { setAddOpen(false); setView("settings"); }}
-        />
+        <ErrorBoundary label="Neue Kachel" message="Der Dialog konnte nicht angezeigt werden."
+                       block actionLabel="Schließen" onAction={() => setAddOpen(false)}>
+          <AddTileDialog
+            onClose={() => setAddOpen(false)}
+            onAdd={addTile}
+            onGoToSettings={() => { setAddOpen(false); setView("settings"); }}
+          />
+        </ErrorBoundary>
       )}
       {editing && (
-        <EditTileDialog
-          tile={layout.find((t) => t.id === editing)}
-          onClose={() => setEditing(null)}
-          onSave={(patch) => { updateTile(editing, patch); setEditing(null); }}
-        />
+        <ErrorBoundary label="Kachel bearbeiten" message="Der Dialog konnte nicht angezeigt werden."
+                       block actionLabel="Schließen" onAction={() => setEditing(null)}>
+          <EditTileDialog
+            tile={layout.find((t) => t.id === editing)}
+            onClose={() => setEditing(null)}
+            onSave={(patch) => { updateTile(editing, patch); setEditing(null); }}
+          />
+        </ErrorBoundary>
       )}
     </div>
   );
@@ -491,7 +554,12 @@ function AddTileDialog({ onClose, onAdd, onGoToSettings }) {
                   </div>
                 </div>
                 <div className="tile-body">
-                  {React.createElement(TILE_BODIES[type], { tile: { type, stationId, metrics, title: title || suggestTitle(), limitFlags } })}
+                  {/* Eigene Grenze: die Vorschau rendert denselben Kachel-Body roh.
+                      Ohne sie nähme ein Wurf hier den ganzen Dialog mit — samt der
+                      vier Schritte, die der Nutzer gerade ausgefüllt hat. */}
+                  <ErrorBoundary label="Vorschau" message="Vorschau nicht verfügbar.">
+                    {React.createElement(TILE_BODIES[type], { tile: { type, stationId, metrics, title: title || suggestTitle(), limitFlags } })}
+                  </ErrorBoundary>
                 </div>
               </div>
             </div>

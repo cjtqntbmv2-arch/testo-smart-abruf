@@ -147,7 +147,7 @@ Standard ist nur-lokal. Fuer Zugriff von Tablets/anderen PCs:
 
 Nach jedem App-Update **VERSION**, README-Badge und die `?v=`-Cache-Buster im
 `Klima Dashboard.html` synchron halten (gleicher SemVer). Achtung: `?v=` kommt
-**mehrfach** vor — in jedem `<script src="...?v=...">`-Tag (aktuell 12) — alle
+**mehrfach** vor — in jedem `<script src="...?v=...">`-Tag (aktuell 13) — alle
 zugleich bumpen, nicht nur eins. Der Server sendet keine Cache-Header → der
 `?v=`-Bump ist der einzige Invalidierungs-Hebel; im Browser des Bedieners
 zusaetzlich einmal hart neu laden (Strg+F5).
@@ -247,7 +247,7 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 ### Versionscheck
 
 - `GET /api/system/status` → Feld `appVersion` lautet `0.14.3`.
-- Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.14.3` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
+- Alle 13 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen dieselbe Version wie `appVersion` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen). Die drei `vendor/`-Tags tragen bewusst keinen Cache-Buster.
 
 ### Update-Hinweis (ab v0.15.0)
 

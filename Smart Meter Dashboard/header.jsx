@@ -33,7 +33,16 @@ function Header({ editMode, onToggleEdit, onAdd, onReset, tileCount, view, onOpe
           </div>
         </div>
       </div>
-      {!inSettings && <SystemSummaryTrigger totals={totals} />}
+      {/* Engere Grenze um die Meldungsübersicht: das Aufklapp-Panel lädt Historie
+          nach und rendert Backend-Daten — wirft es, soll nur die Pille ausfallen,
+          nicht die Navigation daneben. ErrorBoundary stammt aus app.jsx, das erst
+          danach geladen wird; zur Renderzeit ist es definiert (gleiches Muster wie
+          SystemSummaryTrigger aus summary-panel.jsx hier). */}
+      {!inSettings && (
+        <ErrorBoundary label="Meldungsübersicht" message="Meldungsübersicht nicht verfügbar.">
+          <SystemSummaryTrigger totals={totals} />
+        </ErrorBoundary>
+      )}
       <div className="top-actions">
         {!inSettings && <>
           <span className="tile-count">{tileCount} Kacheln</span>

@@ -23,8 +23,12 @@ function ExportPanel() {
     const r = window.presetRange('lastMonth', Date.now());
     setFromStr(new Date(r.fromTs).toISOString().slice(0, 10));
     setToStr(new Date(r.toTs).toISOString().slice(0, 10));
-    // default dialect from settings
-    fetch('/api/settings').then(r => r.json()).then(s => setDialect(s.csv_format || 'de')).catch(() => {});
+    // Voreingestelltes CSV-Format. Scheitert das Laden, bleibt 'de' stehen — das darf
+    // NICHT still passieren, sonst bekommt ein Nutzer mit RFC-Einstellung kommentarlos
+    // das falsche Format angeboten.
+    DASH_DATA.fetchSettings()
+      .then(s => setDialect(s.csv_format || 'de'))
+      .catch(() => setError('CSV-Format konnte nicht geladen werden — es ist Deutsch (Semikolon) vorausgewählt, bitte vor dem Export prüfen.'));
   }, []);
 
   const availMetrics = useMemoE(() => window.unionMetrics(meta, stationIds), [meta, stationIds]);
@@ -143,6 +147,7 @@ function BackupSettings() {
   const [status, setStatus] = useStateE(null);   // backup-Block aus /api/system/status, oder null
   const [statusErr, setStatusErr] = useStateE(false);
   const [pathErr, setPathErr] = useStateE(null);
+  const [settingsErr, setSettingsErr] = useStateE(null);
   const [savedFlash, setSavedFlash] = useStateE(false);
   const [busy, setBusy] = useStateE(false);
   const [pollSec, setPollSec] = useStateE(900); // Poll-Intervall für den „erster Lauf"-Hinweis
@@ -154,9 +159,11 @@ function BackupSettings() {
   }
 
   useEffectE(() => {
+    // Scheitert das Laden, zeigten Schalter und Pfad vorher stumm die Standardwerte
+    // (Ein, leerer Pfad) statt des echten Zustands — das muss sichtbar sein.
     DASH_DATA.fetchSettings()
-      .then(s => { setEnabled(s.backup_enabled !== false); setDir(s.backup_dir || ''); setPollSec(s.poll_interval_sec || 900); })
-      .catch(() => {});
+      .then(s => { setEnabled(s.backup_enabled !== false); setDir(s.backup_dir || ''); setPollSec(s.poll_interval_sec || 900); setSettingsErr(null); })
+      .catch(() => setSettingsErr('Backup-Einstellungen konnten nicht geladen werden — Schalter und Pfad zeigen nur Standardwerte, nicht den echten Zustand.'));
     reloadStatus();
   }, []);
 
@@ -188,6 +195,13 @@ function BackupSettings() {
         title="Automatisches Monats-Backup"
         sub="Sichert je Messstelle Messwerte und Meldungen eines Monats als ZIP. Läuft selbsttätig, höchstens einmal pro Tag."
       />
+
+      {settingsErr && (
+        <div className="export-error">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>{settingsErr}</span>
+        </div>
+      )}
 
       <Card>
         <Field label="Automatisches Backup" hint="Monatliche ZIP-Sicherung ein- oder ausschalten.">

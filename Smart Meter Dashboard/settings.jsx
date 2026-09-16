@@ -250,7 +250,18 @@ function SettingsPage({ onClose }) {
         </div>
       </aside>
       <main className="settings-main">
-        <div className="settings-content">{body}</div>
+        {/* Grenze um die Sektion, nicht um die Seite: wirft eine Sektion (auch das
+            ExportPanel, das hier als body läuft), bleibt die Seitenleiste bedienbar
+            und der Nutzer wechselt einfach weiter. key={section} setzt die Grenze
+            beim Wechsel zurück — sonst klebte die Fehlerkarte an der nächsten,
+            heilen Sektion. */}
+        <div className="settings-content">
+          <ErrorBoundary key={section} block
+                         label={SETTINGS_SECTIONS.find((s) => s.id === section)?.label || "Bereich"}
+                         message="Dieser Bereich konnte nicht angezeigt werden.">
+            {body}
+          </ErrorBoundary>
+        </div>
       </main>
     </div>
   );
