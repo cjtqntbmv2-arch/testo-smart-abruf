@@ -4,6 +4,15 @@ const assert = require('node:assert');
 process.env.DB_PATH = ':memory:';
 const { initDb, getDb, saveSetting, closeDb } = require('../db');
 
+// Fixture timestamps MUST stay relative to "now". Step 4 of the same sync cycle prunes
+// by retention_days (default 365, '30' in the retention tests) and deletes measurements
+// plus INACTIVE events older than the cutoff — so a hardcoded calendar date quietly
+// starts deleting its own test data once it ages past that window (that is how this
+// file turned red ~30 days after it was written). Absolute dates on rows that stay
+// active=1 are immune, since retention never deletes active events.
+const minutesAgo = (min) => Date.now() - min * 60000;
+const isoMinutesAgo = (min) => new Date(minutesAgo(min)).toISOString();
+
 // Mock client consistent with the device-bridge model: device 'dev-1' (serial SN123)
 // owns sensor 'sensor-1' (serial SN123-S1, Temperature).
 class MockTestoClient {
@@ -23,7 +32,7 @@ class MockTestoClient {
   }
   async fetchMeasurements(params) {
     this.lastMeasurementParams = params;
-    return [{ uuid: 'meas-123', sensor_uuid: 'sensor-1', timestamp: '2026-05-29T06:00:00Z', measurement: 22.4, physical_property_name: 'Temperature', physical_unit: 'CELSIUS', serial_no: 'SN123-S1' }];
+    return [{ uuid: 'meas-123', sensor_uuid: 'sensor-1', timestamp: isoMinutesAgo(60), measurement: 22.4, physical_property_name: 'Temperature', physical_unit: 'CELSIUS', serial_no: 'SN123-S1' }];
   }
   async fetchMeasuringObjects() { return this.moRows; }
   async fetchAlarms() { return this.alarms; }
@@ -145,7 +154,7 @@ test('Sync reconciles violated/adhered transitions so only the latest unresolved
   // testo's alarm feed is a transition log: a connection loss is one 'Alarm' row,
   // its recovery a separate 'Ok' row with a later timestamp. Per (station, condition)
   // the newest transition wins — a recovery must close the matching violated alarm.
-  const base = Date.parse('2026-05-29T06:00:00Z');
+  const base = minutesAgo(120);
   const mk = (uuid, status, reason, offsetMin) => ({
     uuid, serial_no: 'SN123', alarm_source_uuid: 'dev-1',
     alarm_type: 'device system alarm', alarm_severity: 'Warning', alarm_status: status,
@@ -213,8 +222,8 @@ test('Multi-sensor device: OR filter covers all sensors and both metrics are dis
     async fetchMeasurements(params) {
       this.lastMeasurementParams = params;
       return [
-        { uuid: 'm-t', sensor_uuid: 's-temp', timestamp: '2026-05-29T06:00:00Z', measurement: 21.0, physical_property_name: 'Temperature', physical_unit: '°C' },
-        { uuid: 'm-h', sensor_uuid: 's-hum',  timestamp: '2026-05-29T06:00:00Z', measurement: 48.0, physical_property_name: 'Humidity', physical_unit: '%' }
+        { uuid: 'm-t', sensor_uuid: 's-temp', timestamp: isoMinutesAgo(60), measurement: 21.0, physical_property_name: 'Temperature', physical_unit: '°C' },
+        { uuid: 'm-h', sensor_uuid: 's-hum',  timestamp: isoMinutesAgo(60), measurement: 48.0, physical_property_name: 'Humidity', physical_unit: '%' }
       ];
     },
     async fetchAlarms() { return []; }
@@ -612,7 +621,7 @@ test('A3a: Warning violation and later Alarm-severity recovery share NO group �
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
     .run('a3-st', 'A3 Station', 'dev-1');
 
-  const base = Date.parse('2026-06-10T08:00:00Z');
+  const base = minutesAgo(180);
   // Same station, same sensor, same metric, same direction — but DIFFERENT severity.
   // Under the old partition (no severity), the 'Alarm' recovery would mark the
   // 'Warning' violation inactive.  They must be treated as separate groups.
@@ -659,7 +668,7 @@ test('A3b: Two sensors same station/metric/direction — one recovery must not c
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
     .run('a3b-st', 'A3b Station', 'dev-1');
 
-  const base = Date.parse('2026-06-10T09:00:00Z');
+  const base = minutesAgo(180);
   // Sensor 1 goes into alarm; sensor 2 recovers later.
   // Under the old partition (no serial_no), sensor 2's recovery would close sensor 1's alarm.
   // Two sensors: MockTestoClient routes via serial_no; we need sensor-2 also routable.
@@ -838,14 +847,14 @@ test('Measurement alarm headline is German (metric + direction), not the raw Eng
       alarm_type: 'measurement alarm', alarm_severity: 'Warning', alarm_status: 'Alarm',
       alarm_reason: 'Alarm condition is violated', alarm_condition_type: 'Upper limit',
       alarm_value: '28.5', physical_property_name: 'Temperature', physical_extension: 'Air Temperature',
-      alarm_time: '2026-05-29T06:10:00Z', last_status_change_time: '2026-05-29T06:10:00Z'
+      alarm_time: isoMinutesAgo(180), last_status_change_time: isoMinutesAgo(180)
     },
     {
       uuid: 'meas-rec-1', serial_no: 'SN123', alarm_source_uuid: 'sensor-1',
       alarm_type: 'measurement alarm', alarm_severity: 'Warning', alarm_status: 'Ok',
       alarm_reason: 'Alarm condition is adhered', alarm_condition_type: 'Upper limit',
       alarm_value: '24.1', physical_property_name: 'Temperature', physical_extension: 'Air Temperature',
-      alarm_time: '2026-05-29T07:10:00Z', last_status_change_time: '2026-05-29T07:10:00Z'
+      alarm_time: isoMinutesAgo(120), last_status_change_time: isoMinutesAgo(120)
     },
   ];
 
@@ -902,7 +911,7 @@ test('Sync derives episode end_ts from the next transition in the same group', a
   db.prepare(`INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)`)
     .run('emc', 'EMC', 'dev-1');
 
-  const base = Date.parse('2026-05-29T06:00:00Z');
+  const base = minutesAgo(180);
   const mk = (uuid, status, offsetMin) => ({
     uuid, serial_no: 'SN123', alarm_source_uuid: 'dev-1',
     alarm_type: 'device system alarm', alarm_severity: 'Warning', alarm_status: status,
@@ -944,7 +953,7 @@ test('end_ts pairs only within a group — interleaved groups do not cross-pair'
 
   // Insert two logical groups directly, timestamps interleaved across groups.
   // group A: alarm_condition_type 'connection', group B: 'battery' (distinct partitions).
-  const base = Date.parse('2026-05-29T06:00:00Z');
+  const base = minutesAgo(180);
   const ins = db.prepare(`INSERT INTO events
     (uuid, station_id, severity, alarm_status, alarm_condition_type, serial_no, metric, start_ts, end_ts, active)
     VALUES (?, 'emc', 'system', ?, ?, 'SN123', NULL, ?, ?, 0)`);

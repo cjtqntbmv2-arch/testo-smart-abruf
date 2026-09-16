@@ -1,0 +1,34 @@
+name: Tests
+
+# Eigene Datei statt einer Ergaenzung von windows-bundle.yml: "on:" gilt dort
+# workflow-weit, nicht je Job. Ein push/pull_request-Trigger wuerde den
+# Windows-Bundle-Job (node.exe kopieren, E2E-Smoke, ~70-MB-Artefakt) bei jedem
+# Push mitlaufen lassen - nur der Release-Schritt ist gegated, der Job nicht.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest   # better-sqlite3 hat linux-x64-Prebuilds, und der Lauf ist hier am guenstigsten
+    env:
+      # puppeteer steht noch in den devDependencies und laedt sonst bei jedem
+      # Lauf Chromium herunter. Zeile kann weg, sobald puppeteer entfernt ist.
+      PUPPETEER_SKIP_DOWNLOAD: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Aus .nvmrc (24) statt fest eingetragen: eine Versionsangabe weniger,
+          # die driften kann. engines erlaubt 22.x || 24.x || 26.x.
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      # Bewusst OHNE --omit=dev: cross-env (devDependency) startet beide Testlaeufe.
+      - run: npm ci
+
+      - run: npm test
