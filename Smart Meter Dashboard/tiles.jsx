@@ -530,6 +530,12 @@ function EventRow({ event: e, compact, station }) {
   const dir = e.condition === "high" ? "über" : "unter";
   const arrow = e.condition === "high" ? "▲" : "▼";
   const fmtExtreme = D.formatNumber(M, e.extreme);
+  // `condition` is never null (data.js's alarmDirection defaults to 'high'), so the arrow
+  // and the "zu hoch/niedrig" wording below are a guess whenever the backend itself could
+  // not resolve a direction — and that is exactly when it leaves `threshold` null
+  // (alarmConditionDirection → null ⇒ scheduler skips the limit lookup). So treat a missing
+  // threshold like eventTitle() does and prefer the backend's own message over the guess.
+  const hasThreshold = e.threshold != null && !Number.isNaN(e.threshold);
 
   return (
     <div className={`evrow sev-${e.severity} ${e.active ? "active" : ""}`}>
@@ -543,22 +549,29 @@ function EventRow({ event: e, compact, station }) {
         <div className="ev-title">
           <span className="ev-sev-tag">{e.severity === "alarm" ? "Alarm" : "Warnung"}</span>
           <span className="ev-headline">
-            {M.label} <span className="ev-arrow">{arrow}</span>{" "}
-            {(e.threshold != null && !Number.isNaN(e.threshold))
-              ? <>{dir} {e.threshold}<span className="ev-unit">{M.unit}</span></>
-              : (e.condition === "high" ? "zu hoch" : "zu niedrig")}
+            {hasThreshold ? (
+              <>{M.label} <span className="ev-arrow">{arrow}</span>{" "}{dir} {e.threshold}<span className="ev-unit">{M.unit}</span></>
+            ) : e.message ? (
+              // The message replaces the whole headline instead of following {M.label}:
+              // measurementAlarmText() already names the metric ("Luftfeuchte zu hoch"), and
+              // its METRIC_LABELS_DE deliberately differ from the frontend labels here
+              // ("Rel. Luftfeuchte"), so prefixing would read "Rel. Luftfeuchte Luftfeuchte
+              // zu hoch" and stripping the prefix would only work for temperature/dewpoint.
+              e.message
+            ) : (
+              <>{M.label} <span className="ev-arrow">{arrow}</span>{" "}{e.condition === "high" ? "zu hoch" : "zu niedrig"}</>
+            )}
           </span>
           {e.active && <span className="ev-active-tag">aktiv<span className="pulse-dot small"/></span>}
         </div>
         {!compact && (
           <div className="ev-sub">
             {fmtExtreme !== "—" && <>Auslösewert {fmtExtreme} {M.unit}</>}
-            {(e.threshold != null && !Number.isNaN(e.threshold)) && (
+            {hasThreshold && (
               <>{fmtExtreme !== "—" ? " · " : ""}Schwelle {e.threshold} {M.unit}</>
             )}
-            {e.message && fmtExtreme === "—" && (e.threshold == null || Number.isNaN(e.threshold)) && (
-              <>{e.message}</>
-            )}
+            {/* The e.message fallback that used to sit here is gone: without a threshold the
+                headline above now shows that same message, so it only printed it twice. */}
           </div>
         )}
       </div>
