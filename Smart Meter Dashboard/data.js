@@ -89,6 +89,39 @@
     return v.toFixed(metric.decimals);
   }
 
+  // Normalises an error caught around fetch()/res.json() into one the UI can show
+  // directly, without losing the technical cause (err.cause — visible in devtools,
+  // not rendered). fetch() itself rejects with a plain TypeError on a network abort
+  // (offline, DNS, CORS — the browser's own wording, always English); res.json()
+  // rejects with a SyntaxError when the body isn't valid JSON. Both would otherwise
+  // reach the UI unmodified (M9 / #17). An Error we threw ourselves (the `!res.ok`
+  // branches below) already carries a German message, so it passes through unchanged.
+  function friendlyError(err, fallbackMsg) {
+    // .name (not instanceof TypeError/SyntaxError): dashboard-load.test.js statically
+    // whitelists which bare globals every dashboard file may reference, and SyntaxError
+    // isn't on that list — a name check reaches the same native errors without adding
+    // a free identifier to this file.
+    const kind = err && err.name;
+    if (kind === 'TypeError') return new Error('Server nicht erreichbar (Netzwerkfehler).', { cause: err });
+    if (kind === 'SyntaxError') return new Error('Antwort vom Server konnte nicht gelesen werden.', { cause: err });
+    if (err instanceof Error) return err;
+    return new Error(fallbackMsg, { cause: err });
+  }
+
+  // Shared GET+parse helper for the simple read endpoints below: fetch, reject with
+  // a German message on a non-2xx status (status/statusText kept as cause), parse
+  // JSON. Every failure path funnels through friendlyError() so callers always catch
+  // a German Error with the original cause attached.
+  async function fetchJson(url, errorMsg) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(errorMsg, { cause: { status: res.status, statusText: res.statusText } });
+      return await res.json();
+    } catch (e) {
+      throw friendlyError(e, errorMsg);
+    }
+  }
+
   // Map one backend events-row to the frontend event shape. Single source of truth
   // for both the 5s poll and on-demand history fetches.
   function mapBackendEvent(e) {
@@ -330,13 +363,8 @@
     }
   }
 
-  // Initialize — empty state; first refresh() populates STATIONS
-  // Trigger immediate refresh and spin up polling interval
-  refresh();
-  setInterval(refresh, 5000);
-
   // Expose the global API client object
-  window.DASH_DATA = {
+  const DASH_DATA = {
     POINTS,
     STEP_MS,
     get timestamps() { return timestamps; },
@@ -429,27 +457,28 @@
       let url = `/api/stations/${stationId}/events?active=0&limit=${limit}`;
       if (opts && opts.beforeTs != null) url += `&before_ts=${opts.beforeTs}`;
       if (opts && opts.beforeRowid != null) url += `&before_rowid=${opts.beforeRowid}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('Historie konnte nicht geladen werden');
-      const rows = await res.json();
+      const rows = await fetchJson(url, 'Historie konnte nicht geladen werden');
       return rows.map(mapBackendEvent);
     },
 
     async fetchExportMetadata() {
-      const res = await fetch('/api/export/metadata');
-      if (!res.ok) throw new Error('Export-Metadaten konnten nicht geladen werden');
-      return res.json();
+      return fetchJson('/api/export/metadata', 'Export-Metadaten konnten nicht geladen werden');
     },
 
     async postExport(payload) {
-      const res = await fetch('/api/export', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      let res;
+      try {
+        res = await fetch('/api/export', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (e) {
+        throw friendlyError(e, 'Export fehlgeschlagen');
+      }
       if (!res.ok) {
         let msg = 'Export fehlgeschlagen';
         try { msg = (await res.json()).error || msg; } catch (_) {}
-        throw new Error(msg);
+        throw new Error(msg, { cause: { status: res.status, statusText: res.statusText } });
       }
       const cd = res.headers.get('content-disposition');
       const name = (typeof window.parseFilename === 'function' && window.parseFilename(cd)) || 'export.csv';
@@ -462,28 +491,29 @@
     },
 
     async fetchSettings() {
-      const res = await fetch('/api/settings');
-      if (!res.ok) throw new Error('Einstellungen konnten nicht geladen werden');
-      return res.json();
+      return fetchJson('/api/settings', 'Einstellungen konnten nicht geladen werden');
     },
 
     async saveSettings(patch) {
-      const res = await fetch('/api/settings', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
+      let res;
+      try {
+        res = await fetch('/api/settings', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+      } catch (e) {
+        throw friendlyError(e, 'Speichern fehlgeschlagen');
+      }
       if (!res.ok) {
         let msg = 'Speichern fehlgeschlagen';
         try { msg = (await res.json()).error || msg; } catch (_) {}
-        throw new Error(msg);
+        throw new Error(msg, { cause: { status: res.status, statusText: res.statusText } });
       }
       return res.json().catch(() => ({}));
     },
 
     async fetchBackupStatus() {
-      const res = await fetch('/api/system/status');
-      if (!res.ok) throw new Error('Status konnte nicht geladen werden');
-      const s = await res.json();
+      const s = await fetchJson('/api/system/status', 'Status konnte nicht geladen werden');
       return s.backup || {};
     },
 
@@ -492,4 +522,31 @@
       await refresh();
     }
   };
+
+  // Browser: publish the global and start polling — refresh() immediately, then every
+  // 5s, exactly as before. Node (tests, via require('../data.js')): neither must
+  // happen — there is no window to publish to, and a live fetch()/setInterval would
+  // fire a real network request and leave a timer running that `node --test` never
+  // exits. `typeof window` is the standard cross-environment check (same one
+  // metrics-logic.js etc. use); nothing else in this file touches window before this
+  // point, so this is the only guard the module needs.
+  if (typeof module !== 'undefined' && module.exports) {
+    // Pure helpers for Node tests (see tests/data.test.js). Everything else on
+    // DASH_DATA touches fetch/DOM/timers and is deliberately left untested here.
+    module.exports = {
+      alarmDirection,
+      mapBackendEvent,
+      friendlyError,
+      formatNumber,
+      stats,
+      formatValue: DASH_DATA.formatValue,
+      formatTime: DASH_DATA.formatTime,
+      formatDuration: DASH_DATA.formatDuration,
+    };
+  }
+  if (typeof window !== 'undefined') {
+    window.DASH_DATA = DASH_DATA;
+    refresh();
+    setInterval(refresh, 5000);
+  }
 })();

@@ -51,14 +51,24 @@ class TestoClient {
   // deploy/windows/env.example tells operators never to set NODE_ENV) mock
   // mode additionally requires the explicit opt-in TESTO_MOCK=1, and logs
   // loudly whenever that opt-in is what activated it.
+
+  // #16: pure condition, no side effect (no logging) -- shared with GET /api/system/status
+  // (backend/server.js) so the dashboard's "showing fabricated data" indicator can never
+  // drift from the condition that actually fabricates the data. Kept side-effect-free on
+  // purpose: that status endpoint is polled every few seconds by the frontend, and running
+  // _mockModeActive()'s console.warn on every poll would flood the log for no reason -- the
+  // warn below already fires on every faked API call while mock mode is active.
+  static isMockCondition(apiKey) {
+    if (apiKey !== 'mock-api-key') return false;
+    return process.env.NODE_ENV === 'test' || process.env.TESTO_MOCK === '1';
+  }
+
   _mockModeActive() {
-    if (this.apiKey !== 'mock-api-key') return false;
-    if (process.env.NODE_ENV === 'test') return true;
-    if (process.env.TESTO_MOCK === '1') {
+    if (!TestoClient.isMockCondition(this.apiKey)) return false;
+    if (process.env.NODE_ENV !== 'test' && process.env.TESTO_MOCK === '1') {
       console.warn('[testo-client] TESTO_MOCK=1 is set: returning fabricated mock data instead of real testo cloud data.');
-      return true;
     }
-    return false;
+    return true;
   }
 
   async _request(path, method = 'GET', body = null) {
