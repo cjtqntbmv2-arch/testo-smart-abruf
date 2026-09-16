@@ -27,6 +27,21 @@ startScheduler();
 const app = express();
 app.use(express.json());
 
+// app.log wird nur beim Dienststart rotiert, der Dienst läuft monatelang durch.
+// Fehler auf Request-Pfaden wiederholen sich mit dem Poll des Dashboards (alle 5 s,
+// 3 + 2×Messstellen Requests; die Systemansicht zusätzlich alle 10 s) — derselbe
+// Eintrag käme sonst zehntausendfach. Erstes Auftreten je Signatur: volle Ausgabe,
+// danach nur bei 10, 100, 1000, … Vorkommnissen eine Zählzeile. Das Log wächst
+// damit logarithmisch statt linear, ohne den Informationsgehalt zu verlieren.
+const logCounts = new Map(); // Signatur -> Anzahl
+function logThrottled(signature, firstLine = signature) {
+  if (logCounts.size > 200) logCounts.clear(); // Obergrenze für den Dauerbetrieb
+  const count = (logCounts.get(signature) || 0) + 1;
+  logCounts.set(signature, count);
+  if (count === 1) console.error(firstLine);
+  else if (/^10*$/.test(String(count))) console.error(`${signature} (${count}x)`);
+}
+
 // Serve static frontend files
 app.use(express.static(path.join(__dirname, '../Smart Meter Dashboard')));
 
@@ -339,7 +354,7 @@ app.get('/api/system/status', (req, res) => {
       dbSize = fs.statSync(dbPath).size;
     }
   } catch (e) {
-    console.error("Error reading database file size:", e);
+    logThrottled(`Error reading database file size: ${e.message}`);
   }
 
   let tables = {
@@ -374,7 +389,7 @@ app.get('/api/system/status', (req, res) => {
     if (newestEvent && newestEvent.max_ts != null) writeTimes.push(newestEvent.max_ts);
     if (writeTimes.length > 0) lastWrite = Math.max(...writeTimes);
   } catch (e) {
-    console.error("Error querying database stats:", e);
+    logThrottled(`Error querying database stats: ${e.message}`);
   }
 
   // Get disk storage partition statistics using fs.statfsSync.
@@ -394,7 +409,7 @@ app.get('/api/system/status', (req, res) => {
       storageStats.usedGb = Math.round((totalGb - freeGb) * 10) / 10;
       storageStats.status = freeGb < 1.0 ? 'warn' : 'ok';
     } catch (e) {
-      console.error("Error retrieving partition storage statistics:", e);
+      logThrottled(`Error retrieving partition storage statistics: ${e.message}`);
       // storageStats stays null/unknown — do not fabricate values
     }
   }
@@ -477,15 +492,24 @@ app.post('/api/sync', (req, res) => {
 // Test-only route: lets the test suite prove the 4-arg error middleware works.
 // Guarded by NODE_ENV so it is unreachable in production.
 if (process.env.NODE_ENV === 'test') {
-  app.get('/api/_test/throw', () => { throw new Error('test-boom'); });
+  // ?msg=… erlaubt dem Test mehrere unterschiedliche Fehlersignaturen.
+  app.get('/api/_test/throw', (req) => { throw new Error(req.query.msg || 'test-boom'); });
 }
 
 // Central error-handling middleware (4-arg form) — catches thrown errors from
 // route handlers and returns a JSON 500 instead of hanging or leaking stack traces.
 // Must be registered AFTER all routes.
+//
+// Beim ersten Auftreten den vollen Stack — ohne ihn ist ein Fehler auf einer
+// Kundenmaschine nicht diagnostizierbar. Jede Wiederholung derselben Signatur
+// läuft über logThrottled() und erzeugt keine erneute volle Ausgabe.
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
-  console.error('Unhandled route error:', err);
+  // `|| err` fängt geworfene Nicht-Error-Werte (String, Objekt) ab.
+  logThrottled(
+    `Unhandled route error: ${err.name || 'Error'}: ${err.message || err}`,
+    `Unhandled route error: ${err.stack || err}`
+  );
   res.status(500).json({ error: err.message || 'Internal server error' });
 });
 

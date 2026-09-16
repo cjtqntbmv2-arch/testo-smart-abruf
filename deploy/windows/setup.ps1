@@ -24,6 +24,21 @@ function Fail($msg) {
 }
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 
+# Liest einen Schluessel aus einer .env-Datei so, wie dotenv ihn sieht:
+# fuehrende Leerzeichen erlaubt, '#'-Kommentarzeilen ignoriert (matchen '^\s*KEY' nicht),
+# Quotes um den Wert abgestreift, Inline-Kommentar nur bei unquotiertem Wert,
+# letzter Treffer gewinnt (wie dotenv bei doppeltem Schluessel). Leerer Wert -> $null.
+function Get-EnvValue($file, $key) {
+  if (-not (Test-Path $file)) { return $null }
+  $m = Select-String -Path $file -Pattern ('^\s*' + $key + '\s*=\s*(.*)$') | Select-Object -Last 1
+  if (-not $m) { return $null }
+  $v = $m.Matches[0].Groups[1].Value.Trim()
+  if ($v -notmatch '^["'']') { $v = ($v -split '\s+#')[0].Trim() }
+  $v = $v -replace '^(["''])(.*)\1$', '$2'
+  if ($v -eq '') { return $null }
+  return $v
+}
+
 # Node-Kommando: im Bundle das mitgelieferte node.exe, sonst System-node (PATH).
 $nodeCmd = if ($Bundled) { Join-Path $AppRoot 'node.exe' } else { 'node' }
 
@@ -135,15 +150,27 @@ try { & $installScript @installArgs } catch { Fail "install-task.ps1 fehlgeschla
 Step 'Phase 5/5: Start & Smoke-Check'
 if ($WhatIfPreference) { Write-Host '  -WhatIf: Start & Smoke-Check uebersprungen.'; return }
 
-$port = 3000
-if (Test-Path $startCmd) {
-  $pm = Select-String -Path $startCmd -Pattern 'set\s+"PORT=(\d+)"'
-  if ($pm) { $port = [int]$pm.Matches[0].Groups[1].Value }
-}
+# Port/Host so bestimmen, wie der Server sie sieht: backend/server.js liest
+# process.env.PORT/HOST (Defaults 3000 / 127.0.0.1), gespeist aus <AppRoot>\.env
+# (dotenv, expliziter Pfad). start.cmd setzt PORT/HOST bewusst NICHT, damit die
+# .env ein Bundle-Update ueberlebt - also ist allein die .env massgeblich.
+$envFile  = Join-Path $AppRoot '.env'
+$port     = 3000
+$hostAddr = '127.0.0.1'
+$pv = Get-EnvValue $envFile 'PORT'
+if ($pv -match '^\d+$') { $port = [int]$pv }
+$hv = Get-EnvValue $envFile 'HOST'
+if ($hv) { $hostAddr = $hv }
+# 0.0.0.0 / :: heisst "alle Interfaces" - dorthin verbindet man nicht, Loopback nehmen.
+if ($hostAddr -in '0.0.0.0', '*', '::', '::0') { $hostAddr = '127.0.0.1' }
+# IPv6-Literale muessen in der URL geklammert werden.
+$urlHost = if ($hostAddr -match ':') { "[$hostAddr]" } else { $hostAddr }
+$baseUrl = "http://${urlHost}:$port"
+Write-Host "  Erwartete Adresse: $baseUrl  (Quelle: $(if (Test-Path $envFile) { '.env + Defaults' } else { 'Defaults, keine .env' }))"
 
 Start-ScheduledTask -TaskName $TaskName
 
-$statusUrl = "http://127.0.0.1:$port/api/system/status"
+$statusUrl = "$baseUrl/api/system/status"
 $resp = $null
 for ($i = 0; $i -lt 30; $i++) {
   Start-Sleep -Seconds 2
@@ -156,8 +183,8 @@ if ($resp) {
   Write-Host "  Scheduler: $($resp.scheduler.lastSyncStatus)   Storage: $($resp.storage.status)"
   if ($resp.api.apiKeyConfigured) { Write-Host "  API-Key  : konfiguriert" }
   else { Write-Host "  API-Key  : NOCH NICHT konfiguriert -> im Dashboard unter Einstellungen eintragen" -ForegroundColor Yellow }
-  Write-Host "  Dashboard: http://localhost:$port"
-  try { Start-Process "http://localhost:$port" } catch {}
+  Write-Host "  Dashboard: $baseUrl"
+  try { Start-Process $baseUrl } catch {}
   Write-Host "  DB-Datei : $DataDir\klima.db    Log: $DataDir\logs\app.log"
   try { Stop-Transcript | Out-Null } catch {}
 } else {
