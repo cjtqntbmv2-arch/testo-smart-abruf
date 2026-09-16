@@ -3,7 +3,7 @@ const assert = require('node:assert');
 
 process.env.DB_PATH = ':memory:';
 process.env.PORT = '3001';
-const { initDb, saveSetting, closeDb, getDb } = require('../db');
+const { initDb, saveSetting, getSetting, closeDb, getDb } = require('../db');
 const { stopScheduler } = require('../scheduler');
 
 initDb();
@@ -411,6 +411,23 @@ test('GET /api/system/status returns null storage fields for :memory: DB', async
   assert.strictEqual(body.storage.usedGb, null, 'usedGb must be null for :memory:');
   assert.strictEqual(body.storage.totalGb, null, 'totalGb must be null for :memory:');
   assert.strictEqual(body.storage.status, 'unknown', 'storage status must be unknown for :memory:');
+});
+
+// ── #10: GET /api/system/status exposes limit-configuration conflicts ─────
+test('GET /api/system/status reports conflicting limit metrics from limits_conflict', async () => {
+  saveSetting('limits_conflict', JSON.stringify({ metrics: ['temperature'], updatedAt: '2026-01-01T00:00:00.000Z' }));
+  const res = await fetch('http://localhost:3001/api/system/status');
+  const body = await res.json();
+  assert.ok(body.hasOwnProperty('limitsConflict'), 'response must include limitsConflict');
+  assert.deepStrictEqual(body.limitsConflict.metrics, ['temperature']);
+  assert.strictEqual(body.limitsConflict.updatedAt, '2026-01-01T00:00:00.000Z');
+});
+
+test('GET /api/system/status reports an empty limitsConflict once resolved', async () => {
+  saveSetting('limits_conflict', JSON.stringify({ metrics: [], updatedAt: '2026-01-02T00:00:00.000Z' }));
+  const res = await fetch('http://localhost:3001/api/system/status');
+  const body = await res.json();
+  assert.deepStrictEqual(body.limitsConflict.metrics, [], 'resolved conflict must report an empty metrics list');
 });
 
 // ── B4: GET /api/limits ────────────────────────────────────────────────────

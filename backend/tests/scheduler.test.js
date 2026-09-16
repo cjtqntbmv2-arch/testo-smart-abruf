@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 process.env.DB_PATH = ':memory:';
-const { initDb, getDb, saveSetting, closeDb } = require('../db');
+const { initDb, getDb, getSetting, saveSetting, closeDb } = require('../db');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -525,12 +525,56 @@ test('Sync with live-shaped MO rows stores 8 limits and populates threshold on a
   const limitCount = db.prepare("SELECT count(*) as cnt FROM limits").get().cnt;
   assert.strictEqual(limitCount, 8, 'limits table must have exactly 8 rows after sync');
 
+  // #10: agreeing MOs -> no conflicts reported.
+  assert.deepStrictEqual(JSON.parse(getSetting('limits_conflict')).metrics, [], 'agreeing MOs -> no conflicts reported');
+
   // The stored alarm must carry the correct threshold from the limits table
   const event = db.prepare("SELECT metric, threshold, severity FROM events WHERE uuid = 'alarm-thresh-1'").get();
   assert.ok(event, 'alarm must be stored');
   assert.strictEqual(event.metric, 'temperature');
   assert.strictEqual(event.severity, 'alarm');
   assert.strictEqual(event.threshold, 28, 'threshold must be 28 (from limits: temperature:high:alarm)');
+
+  closeDb();
+});
+
+// ── #10: conflicting limits must be reported, not just silently dropped ─────
+// Builds two MOs that disagree on temperature:low:alarm (18 vs 16), same fixture
+// shape as device-bridge.test.js's parseAlarmConfiguration conflict coverage.
+function makeConflictingMoRows() {
+  const config2 = JSON.parse(makeLiveMoRows()[0].measurement_alarm_configuration);
+  config2.measurementAlarmConditionSet[0].measurementAlarmConditions
+    .find(c => c.measurementAlarmConditionTypeId === 'Lower limit' && c.alarmSeverityId === 'Alarm' && c.physicalProperty.physicalValueId === 'Temperature')
+    .limitValue = 16;
+  return [
+    ...makeLiveMoRows(),
+    { measuring_object_uuid: 'mo-2', measurement_alarm_configuration: JSON.stringify(config2), channel_assignments: null }
+  ];
+}
+
+test('Sync reports a conflicting metric in the limits_conflict setting instead of dropping it silently', async () => {
+  initTestDb();
+  saveSetting('api_key', 'mock-key');
+
+  await schedulerModule.runSyncCycle(new MockTestoClient([], makeConflictingMoRows()));
+
+  const conflict = JSON.parse(getSetting('limits_conflict'));
+  assert.deepStrictEqual(conflict.metrics, ['temperature'], 'the conflicting metric must be named, not just dropped');
+  assert.strictEqual(typeof conflict.updatedAt, 'string');
+
+  closeDb();
+});
+
+test('Sync clears limits_conflict once the disagreeing MOs are fixed', async () => {
+  initTestDb();
+  saveSetting('api_key', 'mock-key');
+
+  await schedulerModule.runSyncCycle(new MockTestoClient([], makeConflictingMoRows()));
+  assert.deepStrictEqual(JSON.parse(getSetting('limits_conflict')).metrics, ['temperature'], 'precondition: conflict present after first cycle');
+
+  // Second cycle: the MOs now agree — the operator fixed the outlier measuring object.
+  await schedulerModule.runSyncCycle(new MockTestoClient([], makeLiveMoRows()));
+  assert.deepStrictEqual(JSON.parse(getSetting('limits_conflict')).metrics, [], 'resolved conflict must clear the setting, not linger');
 
   closeDb();
 });

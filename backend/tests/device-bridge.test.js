@@ -176,8 +176,9 @@ function makeMoRow(overrides = {}) {
 }
 
 test('parseAlarmConfiguration returns 8 entries for a single live-shaped MO row', () => {
-  const result = parseAlarmConfiguration([makeMoRow()]);
+  const { limits: result, conflicts } = parseAlarmConfiguration([makeMoRow()]);
   assert.strictEqual(result.length, 8, 'one row with 8 conditions -> 8 entries');
+  assert.deepStrictEqual(conflicts, [], 'no disagreement between MOs -> no conflicts (#10)');
 
   // Check a few specific entries for correct field mapping
   const tempLowAlarm = result.find(e => e.metric === 'temperature' && e.direction === 'low' && e.severity === 'alarm');
@@ -196,22 +197,27 @@ test('parseAlarmConfiguration returns 8 entries for a single live-shaped MO row'
 test('parseAlarmConfiguration deduplicates identical MOs — returns 8 entries (not 16)', () => {
   // The real tenant has 5 MOs with identical configuration; deduplication keeps 8.
   const rows = [makeMoRow({ measuring_object_uuid: 'mo-1' }), makeMoRow({ measuring_object_uuid: 'mo-2' })];
-  const result = parseAlarmConfiguration(rows);
+  const { limits: result } = parseAlarmConfiguration(rows);
   assert.strictEqual(result.length, 8, 'identical duplicate MOs must not multiply entries');
 });
 
-test('parseAlarmConfiguration drops a key when two MOs disagree on limitValue', () => {
+test('parseAlarmConfiguration drops a key when two MOs disagree on limitValue, and reports it in conflicts', () => {
   // mo-1: temp low alarm = 18, mo-2: temp low alarm = 16 -> conflict -> key dropped
   const config2 = JSON.parse(makeMoRow().measurement_alarm_configuration);
   const conds2 = config2.measurementAlarmConditionSet[0].measurementAlarmConditions;
   conds2.find(c => c.measurementAlarmConditionTypeId === 'Lower limit' && c.alarmSeverityId === 'Alarm' && c.physicalProperty.physicalValueId === 'Temperature').limitValue = 16;
   const mo2 = makeMoRow({ measuring_object_uuid: 'mo-2', measurement_alarm_configuration: JSON.stringify(config2) });
 
-  const result = parseAlarmConfiguration([makeMoRow(), mo2]);
+  const { limits: result, conflicts } = parseAlarmConfiguration([makeMoRow(), mo2]);
   // temperature:low:alarm is dropped; remaining 7 entries survive
   assert.strictEqual(result.length, 7, 'conflicting key must be dropped');
   const conflicted = result.find(e => e.metric === 'temperature' && e.direction === 'low' && e.severity === 'alarm');
   assert.strictEqual(conflicted, undefined, 'conflicted key must not appear in output');
+
+  // #10: a dropped key must be reported, not just silently discarded, so the caller
+  // (scheduler.js) can surface WHICH metric lost its threshold display and why.
+  assert.strictEqual(conflicts.length, 1, 'exactly one key conflicted');
+  assert.deepStrictEqual(conflicts[0], { metric: 'temperature', direction: 'low', severity: 'alarm' });
 });
 
 test('parseAlarmConfiguration skips rows with malformed or missing configuration', () => {
@@ -221,7 +227,7 @@ test('parseAlarmConfiguration skips rows with malformed or missing configuration
     { measuring_object_uuid: 'mo-bad', measurement_alarm_configuration: '{not valid json' },
     makeMoRow({ measuring_object_uuid: 'mo-good' })
   ];
-  const result = parseAlarmConfiguration(rows);
+  const { limits: result } = parseAlarmConfiguration(rows);
   assert.strictEqual(result.length, 8, 'bad rows are skipped; the good MO produces 8 entries');
 });
 
@@ -230,7 +236,7 @@ test('parseAlarmConfiguration skips conditions with unknown physicalValueId', ()
   // Replace one condition's physicalValueId with an unknown metric (e.g. CO2)
   config.measurementAlarmConditionSet[0].measurementAlarmConditions[0].physicalProperty.physicalValueId = 'CO2';
   const row = makeMoRow({ measurement_alarm_configuration: JSON.stringify(config) });
-  const result = parseAlarmConfiguration([row]);
+  const { limits: result } = parseAlarmConfiguration([row]);
   // 8 conditions -> 1 with CO2 (null metric) is skipped -> 7
   assert.strictEqual(result.length, 7);
 });

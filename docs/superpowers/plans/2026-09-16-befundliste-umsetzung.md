@@ -26,9 +26,24 @@ anfassen**. Zwischen den Wellen: volle Testsuite ohne Sandbox, dann Merge nach `
 | 0 | #3 Branches/Worktree | — (direkt auf main) | **erledigt** |
 | 1 | #1 Region · #2 §9-Doku · #13 foreign_keys · #6 Löschungen | `fix/befunde-welle-1` | **erledigt** — 265 Tests grün |
 | 2 | #4 UpdateCard · #5 DELETE-Test · #7 uninstall-Doku · #12 Mock-Riegel · #14 spec/ | `fix/befunde-welle-2` | **erledigt** — 272 Tests grün |
-| 3 | #8 Abhängigkeiten · #10 Schwellwert-Konflikt | `fix/befunde-welle-3` | offen |
+| 3 | #8 Abhängigkeiten · #10 Schwellwert-Konflikt · #15 BackupSettings | `fix/befunde-welle-3` | **erledigt** — 276 Tests grün |
 | 4 | #11 Vereinheitlichung | `refactor/befunde-welle-4` | offen |
-| 5 | #9 data.js-Tests | `test/befunde-welle-5` | offen |
+| 5 | #9 data.js-Tests (+ #17) · #16 Mock-Status | `test/befunde-welle-5` | offen |
+
+## Nachträglich aufgenommen (Folgefunde aus Welle 2, vom Nutzer freigegeben)
+
+Drei Punkte, die nicht in der ursprünglichen Liste standen. Sie entstanden aus den
+Agentenberichten der Welle 2 und wurden dem Nutzer einzeln vorgelegt.
+
+| # | Aufgabe | Ausschliesslich diese Dateien | Welle |
+|---|---|---|---|
+| 15 | `BackupSettings` sperrt Speichern/Umschalten nicht, wenn das Laden scheiterte — gleicher Fehler wie #4, aber mit Umschalter zusätzlich | `Smart Meter Dashboard/export-panel.jsx` | 3 |
+| 16 | Mock-Modus sichtbar machen: Feld in `GET /api/system/status` + Banner im Dashboard, damit ein versehentlich gesetztes `TESTO_MOCK=1` nicht nur als Logzeile erscheint | `backend/server.js`, `backend/tests/server.test.js`, `Smart Meter Dashboard/header.jsx` | 5 |
+| 17 | `fetchSettings` übersetzt nur HTTP-Fehler; Netzwerkabbruch und kaputtes JSON erreichen die Oberfläche als rohe englische Browser-Meldung | `Smart Meter Dashboard/data.js` (an #9 angehängt) | 5 |
+
+#16 kann nicht in Welle 3 laufen: `backend/server.js` und `settings.jsx` gehören dort #10.
+Deshalb Welle 5, und die Anzeige über `header.jsx` statt `settings.jsx`.
+#17 kann nicht vor Welle 5 laufen: `data.js` gehört in Welle 4 dem Punkt #11.
 
 ## Dateizuordnung (verbindlich, verhindert Kollisionen)
 
@@ -73,6 +88,30 @@ anfassen**. Zwischen den Wellen: volle Testsuite ohne Sandbox, dann Merge nach `
 - **Gemeldet, bewusst nicht behoben:** `backend/db.js:124` seedet `api_region` ungeprüft
   aus `TESTO_API_REGION`, `backend/scheduler.js:75` liest sie ungeprüft. Beides ist durch
   die Startup-Migration abgesichert — kein eigener Handlungsbedarf.
+
+## Übertrag aus Welle 3
+
+- **#11 bekommt zusätzlich:** Die deutsche Metrik-Beschriftungstabelle existiert jetzt
+  **dreifach** — in `Smart Meter Dashboard/data.js` (`META`), in `backend/device-bridge.js`
+  und neu in `settings.jsx` (durch #10). Die dritte Kopie entstand nur, weil die
+  Dateisperre das Teilen verhinderte. Sie gehört in die Vereinheitlichung.
+- **Zurückgestellt, nicht vergessen:** `better-sqlite3` 13.0.3 hat belegt
+  win32-x64-Prebuilds für Node 22/24/26 (N-API, eine Binärdatei für alle) — der Bump
+  scheitert aber an `.github/workflows/windows-bundle.yml:46-57`, das noch den alten
+  12.x-Pfad `build/Release/better_sqlite3.node` prüft. Bump und CI-Guard müssen
+  **gemeinsam** geändert werden, sonst bricht der nächste Release-Build. Veraltet sind
+  dadurch auch `deploy/windows/README.md:24,262` und
+  `docs/superpowers/specs/2026-06-22-windows-service-design.md:146` (Proxy-Allowlist für
+  `prebuild-install`, das 13.x nicht mehr braucht).
+- **Beobachtet, nicht behoben:** Ein fehlschlagender `assert` in `scheduler.test.js` oder
+  `server.test.js` überspringt das abschliessende `closeDb()` und lässt den *nächsten*
+  Test kaskadierend mit `SQLITE_CONSTRAINT_PRIMARYKEY` scheitern. Das macht einen
+  einzelnen echten Fehlschlag schwerer lesbar als nötig. Vorbestehend.
+- **`dotenv` 17 schreibt beim Start eine Zeile** (`quiet` defaultet auf `false`):
+  `injected env (N) from .env`. Abstellbar mit `quiet: true` in `backend/server.js` und
+  `backend/db.js`. Bewusst **nicht** abgestellt: Auf einer Kundenmaschine ist „wurde die
+  .env überhaupt gelesen und mit wie vielen Werten" genau die Frage, die im Fehlerfall
+  zuerst gestellt wird — die Zeile ist dort eher Diagnose als Rauschen.
 
 ## Abschluss
 

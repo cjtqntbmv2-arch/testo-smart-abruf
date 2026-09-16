@@ -12,10 +12,10 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
-    "dotenv": "^16.4.5",
+    "dotenv": "^17.4.2",
     "express": "^4.19.2"
   },
   "devDependencies": {
-    "cross-env": "^7.0.3"
+    "cross-env": "^10.1.0"
   }
 }

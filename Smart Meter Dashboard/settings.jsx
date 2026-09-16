@@ -267,6 +267,21 @@ function SettingsPage({ onClose }) {
   );
 }
 
+// #10: deutsche Messgrössen-Labels fuer die Grenzwertkonflikt-Anzeige. parseAlarmConfiguration
+// (backend/device-bridge.js) klassifiziert hier ohne physical_extension, liefert also nie
+// 'dewpoint'/'abshumid' als Konflikt-Metrik — die beiden Eintraege sind nur ein billiges
+// Sicherheitsnetz, falls sich das je aendert. Eigene, kleine Tabelle statt Re-Use von
+// data.js' METRICS (nicht exportiert) oder device-bridge.js' METRIC_LABELS_DE (an die
+// Events-Tabelle gebunden, s. dortiger Kommentar) — genau das Vorgehen, das der Rest des
+// Codebase fuer kontextgebundene Labels bereits etabliert.
+const LIMIT_CONFLICT_METRIC_LABELS = {
+  temperature: 'Temperatur',
+  humidity: 'Luftfeuchte',
+  pressure: 'Druck',
+  dewpoint: 'Taupunkt',
+  abshumid: 'Absolute Feuchte',
+};
+
 // ---------- Sections ----------
 function OverviewSection({ settings, systemStatus, onNavigate, onRefresh }) {
   const [resyncing, setResyncing] = sState(false);
@@ -285,7 +300,7 @@ function OverviewSection({ settings, systemStatus, onNavigate, onRefresh }) {
     );
   }
 
-  const { database, scheduler, storage, api } = systemStatus;
+  const { database, scheduler, storage, api, limitsConflict } = systemStatus;
 
   // Resync-Button → POST /api/sync, danach Diagnose neu laden.
   const handleResync = () => {
@@ -362,6 +377,22 @@ function OverviewSection({ settings, systemStatus, onNavigate, onRefresh }) {
     storageActions = [{ label: 'Aufbewahrung anpassen →', onClick: () => onNavigate('database'), primary: true }];
   }
 
+  // --- Grenzwertkonfiguration (#10) ---
+  // Messstellen mit widersprüchlichen Grenzwerten für dieselbe Messgrösse verlieren ihre
+  // Schwellwertanzeige (Kachel-Färbung, Richtungs-Glyph, Diagrammlinie) — das muss hier
+  // sichtbar werden, statt lautlos zu bleiben. Quelle: scheduler.js schreibt limits_conflict
+  // bei jedem Sync neu (auch leer), damit ein behobener Konflikt die Meldung wieder löscht.
+  const conflictMetrics = (limitsConflict && limitsConflict.metrics) || [];
+  const limitsStatus = conflictMetrics.length === 0 ? "ok" : "warn";
+  const limitsValue = conflictMetrics.length === 0
+    ? "Keine Konflikte"
+    : `${conflictMetrics.length} Konflikt${conflictMetrics.length === 1 ? "" : "e"}`;
+  let limitsCause = null;
+  if (conflictMetrics.length > 0) {
+    const names = conflictMetrics.map((m) => LIMIT_CONFLICT_METRIC_LABELS[m] || m).join(", ");
+    limitsCause = `${names}: Messstellen melden unterschiedliche Grenzwerte — keine Schwellwertanzeige, bis behoben.`;
+  }
+
   return (
     <>
       <SectionHead title="Systemübersicht" sub="Zustand aller verbundenen Dienste und Komponenten." />
@@ -417,6 +448,14 @@ function OverviewSection({ settings, systemStatus, onNavigate, onRefresh }) {
           value={`${settings.database.retentionDays} Tage`}
           sub={`Ältester Messwert: ${database.oldestRecord ? new Date(database.oldestRecord).toLocaleDateString("de-DE") : 'Keine Daten'}`}
           icon="archive"
+        />
+        <HealthCard
+          status={limitsStatus}
+          label="Grenzwertkonfiguration"
+          value={limitsValue}
+          sub="Schwellwerte aus den Messobjekten der testo-Cloud."
+          icon="bell"
+          cause={limitsCause}
         />
       </div>
 

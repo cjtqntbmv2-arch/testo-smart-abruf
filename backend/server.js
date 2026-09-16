@@ -488,6 +488,14 @@ app.get('/api/system/status', (req, res) => {
         lastScanDate: getSetting('last_backup_scan_date') || null,
         health
       };
+    })(),
+    // #10: which metrics currently have a conflicting threshold configuration across
+    // measuring objects (dropped from `limits`, see parseAlarmConfiguration) — empty
+    // metrics array once resolved. Same getSetting/JSON.parse shape as `backup.health`.
+    limitsConflict: (() => {
+      let info = {};
+      try { info = JSON.parse(getSetting('limits_conflict') || '{}'); } catch (_) {}
+      return { metrics: info.metrics || [], updatedAt: info.updatedAt || null };
     })()
   });
 });
