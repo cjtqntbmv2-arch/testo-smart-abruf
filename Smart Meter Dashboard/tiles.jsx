@@ -2,7 +2,7 @@
 // Layout: COLS columns, variable rows. Each tile has {id, type, metrics, x, y, w, h}.
 // Collision-on-drop: if dropped tile would overlap others, push them down.
 
-const { useRef: tRef, useEffect: tEff, useState: tState, useCallback } = React;
+const { useRef: tRef, useEffect: tEff, useState: tState } = React;
 
 const COLS = 12;
 const ROW_H = 72;

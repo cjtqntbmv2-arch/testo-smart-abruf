@@ -957,7 +957,7 @@ function AdvancedSection({ settings, update, onReset, systemStatus, onRefresh })
           <KV label="API"        value="v3 · Testo Smart Connect" />
           <KV label="Datenbank"  value="SQLite 3" />
           <KV label="Lizenz"     value="Open Source" />
-          <KV label="Support"    value="https://github.com/dniehof/testo-smart-abruf" />
+          <KV label="Support"    value="https://github.com/cjtqntbmv2-arch/testo-smart-abruf" />
         </div>
       </Card>
     </>

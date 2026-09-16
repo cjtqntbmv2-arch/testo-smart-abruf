@@ -7,6 +7,11 @@ const { initDb, saveSetting, closeDb, getDb } = require('../db');
 const { stopScheduler } = require('../scheduler');
 
 initDb();
+// Backup-Ziel auf ein Wegwerf-Verzeichnis: ohne das faellt resolveBackupDir bei
+// DB_PATH=':memory:' auf <repo>/backups zurueck, und ein ueber POST /api/sync
+// angestossener Zyklus legt das Verzeichnis im Arbeitsbaum an.
+saveSetting('backup_dir', require('node:fs').mkdtempSync(
+  require('node:path').join(require('node:os').tmpdir(), 'srv-bkp-')));
 const server = require('../server');
 
 test('Core REST endpoints respond with expected shape', async () => {
