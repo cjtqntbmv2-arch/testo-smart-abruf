@@ -904,9 +904,17 @@ function UpdateCard({ onRefresh }) {
   const [busy, setBusy] = sState(false);
   const [savedFlash, setSavedFlash] = sState(false);
   const [err, setErr] = sState(null);
+  const [dirLoaded, setDirLoaded] = sState(false);
 
   sEff(() => {
-    DASH_DATA.fetchSettings().then(s => setDir(s.update_dir || '')).catch(() => {});
+    DASH_DATA.fetchSettings()
+      .then(s => { setDir(s.update_dir || ''); setDirLoaded(true); })
+      // Scheitert das Laden, bleibt dir auf '' stehen. Das darf nicht still passieren:
+      // "Speichern" würde den leeren String senden und einen bestehenden Ablageordner
+      // löschen — die Update-Prüfung schaltet sich dabei selbst ab (siehe updateText()).
+      // Deshalb zusätzlich zur Fehleranzeige: Speichern bleibt gesperrt, bis das Laden
+      // einmal erfolgreich war (Neuladen der Seite versucht es erneut).
+      .catch(() => setErr('Ablageordner konnte nicht geladen werden — das Feld zeigt nicht den echten Wert. Speichern ist deshalb gesperrt (Seite neu laden zum erneuten Versuch), sonst würde eine bestehende Einstellung stumm überschrieben.'));
   }, []);
 
   async function save() {
@@ -935,9 +943,9 @@ function UpdateCard({ onRefresh }) {
             className="backup-path-input"
             value={dir}
             placeholder="z. B. \\fileserver\Software\TestoSmartAbruf"
-            onChange={e => { setDir(e.target.value); setErr(null); }}
+            onChange={e => { setDir(e.target.value); if (dirLoaded) setErr(null); }}
           />
-          <button className="btn" disabled={busy} onClick={save}>
+          <button className="btn" disabled={busy || !dirLoaded} onClick={save}>
             {busy ? <Spinner /> : (savedFlash ? 'Gespeichert ✓' : 'Speichern')}
           </button>
         </div>

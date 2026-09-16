@@ -160,6 +160,51 @@ test('POST /api/stations accepts valid id and name (optional fields null)', asyn
   assert.strictEqual(station.name, 'Valid Station');
 });
 
+// ── DELETE /api/stations/:id (destructive route, was untested) ────────────
+test('DELETE /api/stations/:id removes the station and cascades its measurements and events', async () => {
+  const db = getDb();
+  db.prepare("INSERT INTO stations (id, name) VALUES ('deltest', 'Delete Me')").run();
+  db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('m-del-1','deltest',1000,21.5,'temperature','°C')").run();
+  db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('m-del-2','deltest',2000,22.0,'temperature','°C')").run();
+  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, active) VALUES ('ev-del-1','deltest','alarm',1000,1)").run();
+
+  // Vorbedingung: die Zeilen, deren Verschwinden wir gleich nachweisen, existieren wirklich.
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE station_id = 'deltest'").get().c, 2);
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM events WHERE station_id = 'deltest'").get().c, 1);
+
+  const res = await fetch('http://localhost:3001/api/stations/deltest', { method: 'DELETE' });
+  assert.strictEqual(res.status, 200);
+  const body = await res.json();
+  assert.strictEqual(body.success, true);
+
+  assert.strictEqual(db.prepare("SELECT * FROM stations WHERE id = 'deltest'").get(), undefined, 'Station muss entfernt sein');
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE station_id = 'deltest'").get().c, 0, 'Messwerte müssen kaskadiert gelöscht sein');
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM events WHERE station_id = 'deltest'").get().c, 0, 'Meldungen müssen kaskadiert gelöscht sein');
+});
+
+test('DELETE /api/stations/:id on a non-existent id returns 404 with an error message', async () => {
+  const res = await fetch('http://localhost:3001/api/stations/does-not-exist', { method: 'DELETE' });
+  assert.strictEqual(res.status, 404);
+  const body = await res.json();
+  assert.ok(body.error, 'response must contain an error message');
+});
+
+test('DELETE /api/stations/:id does not cascade into another station\'s data', async () => {
+  const db = getDb();
+  db.prepare("INSERT INTO stations (id, name) VALUES ('delvictim', 'Delete Me Too')").run();
+  db.prepare("INSERT INTO stations (id, name) VALUES ('delkeep', 'Keep Me')").run();
+  db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('m-delv-1','delvictim',1000,20.0,'temperature','°C')").run();
+  db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('m-keep-1','delkeep',1000,19.0,'temperature','°C')").run();
+  db.prepare("INSERT INTO events (uuid, station_id, severity, start_ts, active) VALUES ('ev-keep-1','delkeep','warning',1000,1)").run();
+
+  const res = await fetch('http://localhost:3001/api/stations/delvictim', { method: 'DELETE' });
+  assert.strictEqual(res.status, 200);
+
+  assert.ok(db.prepare("SELECT * FROM stations WHERE id = 'delkeep'").get(), 'andere Station darf nicht verschwinden');
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE station_id = 'delkeep'").get().c, 1, 'Messwerte der anderen Station bleiben erhalten');
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM events WHERE station_id = 'delkeep'").get().c, 1, 'Meldungen der anderen Station bleiben erhalten');
+});
+
 // ── H1: POST /api/settings input validation ────────────────────────────────
 test('POST /api/settings rejects non-positive poll_interval_sec with 400', async () => {
   const res = await fetch('http://localhost:3001/api/settings', {
@@ -615,6 +660,72 @@ test('Error middleware logs a stack once per signature, not per occurrence', asy
   const bStacks = captured.filter((l) => l.includes('flood-b') && STACK_FRAME.test(l));
   assert.strictEqual(bStacks.length, 1,
     'ein anderer Fehler muss trotzdem seinen eigenen Stacktrace bekommen');
+});
+
+// ── Startup migration: legacy stored api_region self-heals to eu ──────────
+// This file requires ../server exactly once, at module load (top of this file) — a value
+// seeded into ITS database after that point can never reach the migration in server.js,
+// it already ran. The only way to exercise it is a fresh process: seed a throwaway DB with
+// the no-longer-valid 'us', boot backend/server.js as a child process against that
+// DB_PATH, and check the row once the migration has had a chance to run. PORT=0 lets the
+// OS pick a free port so this can never collide with the 3001 this file itself binds.
+test('server.js startup: invalid stored api_region (legacy "us") is reset to eu', async () => {
+  const { spawn } = require('node:child_process');
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const Database = require('better-sqlite3');
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'testo-region-'));
+  const dbPath = path.join(tmpDir, 'klima.db');
+
+  // Seed a throwaway DB mimicking an existing install stuck on the retired 'us' region.
+  const seedDb = new Database(dbPath);
+  seedDb.exec("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)");
+  seedDb.prepare("INSERT INTO settings (key, value) VALUES ('api_region', 'us')").run();
+  seedDb.close();
+
+  const childEnv = { ...process.env, DB_PATH: dbPath, PORT: '0' };
+  delete childEnv._KLIMA_SHUTDOWN_REGISTERED; // let the child register its own graceful shutdown
+
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: childEnv });
+
+  let stdout = '', stderr = '';
+  let exited = false;
+  const exitPromise = new Promise((resolve) => {
+    child.on('exit', (code, signal) => { exited = true; resolve({ code, signal }); });
+  });
+  child.stdout.on('data', (d) => { stdout += d.toString(); });
+  child.stderr.on('data', (d) => { stderr += d.toString(); });
+
+  try {
+    await Promise.race([
+      new Promise((resolve) => {
+        const check = () => { if (/running on http/.test(stdout)) resolve(); };
+        child.stdout.on('data', check);
+        check();
+      }),
+      exitPromise.then(({ code, signal }) => {
+        throw new Error(`Server-Kindprozess beendete sich vorzeitig (code=${code}, signal=${signal}).\nstdout=${stdout}\nstderr=${stderr}`);
+      }),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error(`Timeout beim Warten auf Serverstart.\nstdout=${stdout}\nstderr=${stderr}`)), 8000)),
+    ]);
+  } finally {
+    if (!exited) {
+      child.kill('SIGTERM');
+      const killTimer = setTimeout(() => { if (!exited) child.kill('SIGKILL'); }, 3000);
+      await exitPromise;
+      clearTimeout(killTimer);
+    }
+  }
+
+  const checkDb = new Database(dbPath, { readonly: true });
+  const row = checkDb.prepare("SELECT value FROM settings WHERE key = 'api_region'").get();
+  checkDb.close();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+
+  assert.strictEqual(row.value, 'eu', 'ungültig gespeicherte Region muss beim Start auf eu zurückgesetzt werden');
 });
 
 after(() => {

@@ -170,6 +170,62 @@ test('_downloadFiles retries a transient failure on the download URL', async () 
   }
 });
 
+// --- Mock mode must not activate outside tests without an explicit opt-in ---
+
+test('_request: mock-api-key does not short-circuit outside test mode or explicit opt-in', async () => {
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevTestoMock = process.env.TESTO_MOCK;
+  process.env.NODE_ENV = 'production';
+  delete process.env.TESTO_MOCK;
+  try {
+    const client = new TestoClient('mock-api-key', 'eu', { retryBaseMs: 0 });
+    await assert.rejects(
+      client._request('/v3/devices/status', 'POST'),
+      /Fetch not mocked/,
+      'production conditions must attempt a real request instead of returning fabricated data'
+    );
+  } finally {
+    process.env.NODE_ENV = prevNodeEnv;
+    if (prevTestoMock === undefined) delete process.env.TESTO_MOCK;
+    else process.env.TESTO_MOCK = prevTestoMock;
+  }
+});
+
+test('_downloadFiles: mock:// URL does not return fabricated data outside test mode or explicit opt-in', async () => {
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevTestoMock = process.env.TESTO_MOCK;
+  process.env.NODE_ENV = 'production';
+  delete process.env.TESTO_MOCK;
+  try {
+    const client = new TestoClient('mock-api-key', 'eu', { retryBaseMs: 0 });
+    await assert.rejects(
+      client._downloadFiles(['mock://meas']),
+      /Fetch not mocked/,
+      'production conditions must attempt a real download instead of returning fabricated measurements'
+    );
+  } finally {
+    process.env.NODE_ENV = prevNodeEnv;
+    if (prevTestoMock === undefined) delete process.env.TESTO_MOCK;
+    else process.env.TESTO_MOCK = prevTestoMock;
+  }
+});
+
+test('_request: TESTO_MOCK=1 keeps mock mode available outside NODE_ENV=test', async () => {
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevTestoMock = process.env.TESTO_MOCK;
+  process.env.NODE_ENV = 'production';
+  process.env.TESTO_MOCK = '1';
+  try {
+    const client = new TestoClient('mock-api-key', 'eu', { retryBaseMs: 0 });
+    const res = await client._request('/v3/devices/status', 'POST');
+    assert.deepStrictEqual(res, { request_uuid: 'mock-status-req' });
+  } finally {
+    process.env.NODE_ENV = prevNodeEnv;
+    if (prevTestoMock === undefined) delete process.env.TESTO_MOCK;
+    else process.env.TESTO_MOCK = prevTestoMock;
+  }
+});
+
 after(() => {
   global.fetch = originalFetch;
 });

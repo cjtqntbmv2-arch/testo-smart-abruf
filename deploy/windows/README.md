@@ -217,6 +217,41 @@ Der Meldungstext eines Alarms behaelt absichtlich die alte Schreibweise
 (`Luftfeuchte zu hoch`, `Druck zu niedrig`): diese Texte sind in der Datenbank
 gespeichert, eine Umbenennung wuerde die Historie nicht mitziehen.
 
+## Deinstallation
+
+`deploy\windows\uninstall-task.ps1` entfernt den geplanten Task wieder (stoppt ihn,
+dann `Unregister-ScheduledTask`). Admin-Rechte noetig, wie bei der Installation.
+Existiert der Task nicht, meldet das Skript das nur und aendert nichts.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File deploy\windows\uninstall-task.ps1 -WhatIf   # Trockenlauf
+powershell -ExecutionPolicy Bypass -File deploy\windows\uninstall-task.ps1
+```
+
+**Was dabei erhalten bleibt** (das Skript fasst ausschliesslich den Scheduled Task an):
+
+- Das Anwendungsverzeichnis (Code, `node_modules`, `.env`), Standardpfad
+  `C:\Apps\TestoSmartAbruf`.
+- Die Datenbank mit allen bisher aufgezeichneten Messwerten:
+  `C:\ProgramData\TestoSmartAbruf\klima.db` (+ `-wal`/`-shm`).
+- Die Logs: `C:\ProgramData\TestoSmartAbruf\logs\app.log` (plus rotierte
+  `.bak`-Dateien) und `logs\setup.log`.
+- Die monatlichen Backup-ZIPs: standardmaessig `C:\ProgramData\TestoSmartAbruf\backups`,
+  abweichend falls unter Einstellungen ein eigener `backup_dir` gesetzt wurde.
+- Eine eingerichtete Firewall-Regel fuer LAN-Zugriff (Abschnitt "LAN-Zugriff",
+  `New-NetFirewallRule -DisplayName "TestoSmartAbruf 3000"`).
+
+Das ist beabsichtigt: die Messdaten liegen bewusst ausserhalb des Anwendungsverzeichnisses,
+genau damit ein Update sie nicht beruehrt (Abschnitt "Update der App") - bei einer reinen
+Deinstallation bleiben sie aus demselben Grund erhalten.
+
+**Alles entfernen (nur wenn wirklich gewuenscht):** nach dem Task-Uninstall zusaetzlich
+von Hand loeschen: `C:\Apps\TestoSmartAbruf` (Anwendungsverzeichnis) sowie
+`C:\ProgramData\TestoSmartAbruf` (Datenbank, Logs, Backups - **enthaelt saemtliche
+Messwerte**, vorher bei Bedarf sichern). Eine LAN-Firewall-Regel zusaetzlich per
+`Remove-NetFirewallRule -DisplayName "TestoSmartAbruf 3000"` (Admin-PowerShell)
+entfernen.
+
 ## Troubleshooting
 
 - **`EADDRINUSE` im Log:** Port belegt → in `.env` Datei `PORT` aendern oder den
