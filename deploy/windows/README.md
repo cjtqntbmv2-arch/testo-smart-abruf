@@ -19,13 +19,13 @@ gestartet bei jedem Systemstart, laufend als `NT AUTHORITY\NetworkService`.
   - **Installation aus dem Bundle: kein Netzzugriff noetig.** Node und
     `node_modules` liegen in der ZIP bei, `install.cmd` laedt nichts nach. Die ZIP
     bringt die IT selbst auf die Maschine (USB / Fileshare / E-Mail).
-  - **Installation aus dem Quellcode (`npm ci`): zusaetzlich npm-Registry und
-    `github.com`** (`objects.githubusercontent.com`): von dort laedt
-    `prebuild-install` das native better-sqlite3-Binary. Nur waehrend der
-    Installation; im spaeteren Betrieb wird keiner der beiden Hosts mehr
-    kontaktiert, die Freigabe kann also temporaer sein. Hinter Proxy:
-    `npm config set proxy <url>` / `https-proxy` setzen; ggf. beide Hosts in der
-    Allowlist freigeben.
+  - **Installation aus dem Quellcode (`npm ci`): zusaetzlich die npm-Registry**
+    (`registry.npmjs.org`). Das native better-sqlite3-Binary liegt seit 13.x im
+    npm-Tarball selbst (`prebuilds/win32-x64.node`) — ein separater Download von
+    `github.com` findet nicht mehr statt, der Host muss nicht freigegeben werden.
+    Nur waehrend der Installation; im spaeteren Betrieb wird die Registry nicht
+    mehr kontaktiert, die Freigabe kann also temporaer sein. Hinter Proxy:
+    `npm config set proxy <url>` / `https-proxy` setzen.
 
 ## Installation aus dem Bundle (empfohlen, fuer Laien)
 
@@ -256,11 +256,13 @@ entfernen.
 
 - **`EADDRINUSE` im Log:** Port belegt → in `.env` Datei `PORT` aendern oder den
   blockierenden Prozess beenden.
-- **`npm ci` schlaegt fehl (Compiler/`node-gyp`):** falsche Node-Version
-  (kein Prebuild) oder `github.com` nicht erreichbar. Node 24 x64 verwenden,
-  Proxy/Allowlist pruefen. Erfolgskontrolle: die better-sqlite3-Ausgabe muss
-  `prebuild-install ... (download)`/`prebuilt binary` zeigen — taucht stattdessen
-  `node-gyp rebuild` auf, fehlt der Prebuild (Guardrail-Bruch: Compiler laeuft).
+- **`npm ci` schlaegt fehl (Compiler/`node-gyp`):** npm-Registry nicht erreichbar
+  oder falsche Node-Version. Node 24 x64 verwenden, Proxy/Allowlist pruefen.
+  Erfolgskontrolle: `node_modules\better-sqlite3\prebuilds\win32-x64.node` muss
+  existieren und `node_modules\better-sqlite3\build\` darf **nicht** existieren —
+  ein `build\`-Ordner bedeutet, dass `node-gyp` kompiliert hat (Guardrail-Bruch:
+  Compiler laeuft). Seit better-sqlite3 13.x bringt der npm-Tarball das Prebuild
+  selbst mit, es wird nichts mehr nachgeladen.
 - **Port-Binding & NetworkService:** der Server bindet Port 3000 ueber Winsock
   (libuv), NICHT ueber HTTP.sys → es ist **kein** `netsh http add urlacl` noetig,
   und NetworkService darf den High-Port ohne Elevation binden.

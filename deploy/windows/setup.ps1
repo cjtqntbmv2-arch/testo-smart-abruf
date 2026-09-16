@@ -119,7 +119,7 @@ if ($Bundled) {
       if ($LASTEXITCODE -ne 0) { throw "npm ci exit $LASTEXITCODE" }
     } catch {
       Pop-Location
-      Fail "npm ci fehlgeschlagen ($($_.Exception.Message)). Ursachen: falsche Node-Version (kein Prebuild); github.com/objects.githubusercontent.com nicht erreichbar (Proxy/Allowlist); oder Datei-Lock durch noch laufenden node.exe (Stop-ScheduledTask -TaskName $TaskName; taskkill /IM node.exe /F)."
+      Fail "npm ci fehlgeschlagen ($($_.Exception.Message)). Ursachen: npm-Registry nicht erreichbar (Proxy/Allowlist); falsche Node-Version; oder Datei-Lock durch noch laufenden node.exe (Stop-ScheduledTask -TaskName $TaskName; taskkill /IM node.exe /F)."
     }
     Pop-Location
   }
@@ -129,8 +129,9 @@ if ($Bundled) {
 
 # Prebuild-Verifikation: IMMER (auch unter -SkipNpm), aber nicht unter -WhatIf
 if (-not $WhatIfPreference) {
-  $nodeFile = Join-Path $AppRoot 'node_modules\better-sqlite3\build\Release\better_sqlite3.node'
-  if (-not (Test-Path $nodeFile)) { Fail "better-sqlite3-Prebuild fehlt ($nodeFile). Falsche Node-Version oder github.com geblockt (node-gyp-Build statt Download). node_modules NIE von macOS/Linux kopieren." }
+  $nodeFile = Join-Path $AppRoot 'node_modules\better-sqlite3\prebuilds\win32-x64.node'
+  if (-not (Test-Path $nodeFile)) { Fail "better-sqlite3-Prebuild fehlt ($nodeFile). npm ci unvollstaendig oder node_modules nachtraeglich veraendert. node_modules NIE von macOS/Linux kopieren." }
+  if (Test-Path (Join-Path $AppRoot 'node_modules\better-sqlite3\build')) { Fail 'node-gyp hat kompiliert (build\ vorhanden) - erwartet wird das mitgelieferte Prebuild aus prebuilds\.' }
   Push-Location $AppRoot
   $loadOk = $true
   try { & $nodeCmd -e "require('better-sqlite3')"; if ($LASTEXITCODE -ne 0) { $loadOk = $false } } catch { $loadOk = $false }

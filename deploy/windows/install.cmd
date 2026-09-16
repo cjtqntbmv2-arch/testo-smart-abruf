@@ -26,7 +26,7 @@ for %%A in ("%~dp0..\..") do set "CAND2=%%~fA"
 if exist "%CAND0%\node.exe" set "ROOT=%CAND0%"
 if not defined ROOT if exist "%CAND2%\node.exe" set "ROOT=%CAND2%"
 if not defined ROOT goto :notextracted
-if not exist "%ROOT%\node_modules\better-sqlite3\build\Release\better_sqlite3.node" goto :notextracted
+if not exist "%ROOT%\node_modules\better-sqlite3\prebuilds\win32-x64.node" goto :notextracted
 
 REM --- Nicht aus dem Zielordner selbst starten (sonst wird der laufende Pfad weggemoved) ---
 if /i "%ROOT%"=="%LIVE%" (

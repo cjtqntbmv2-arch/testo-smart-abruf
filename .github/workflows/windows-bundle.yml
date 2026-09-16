@@ -46,13 +46,15 @@ jobs:
       - name: Assert prebuild (no node-gyp compile)
         shell: pwsh
         run: |
-          # prebuild-install legt das .node in build/Release ohne obj/ ab;
-          # node-gyp hinterliesse build/Release/obj/ -> waere ein Compile (Guardrail-Bruch).
-          if (Test-Path 'node_modules/better-sqlite3/build/Release/obj') {
-            throw 'node-gyp-Compile erkannt (obj/ vorhanden) — erwartet wird ein Prebuild.'
+          # better-sqlite3 >=13 hat kein install-Skript mehr (gypfile:false) und liefert
+          # die .node-Dateien fertig im npm-Tarball unter prebuilds/ aus, aufgeloest rein
+          # ueber process.platform+process.arch. Ein build/-Verzeichnis entsteht dabei gar
+          # nicht -> sein blosses Vorhandensein ist bereits ein node-gyp-Compile.
+          if (Test-Path 'node_modules/better-sqlite3/build') {
+            throw 'node-gyp-Compile erkannt (build/ vorhanden) - erwartet wird das Prebuild aus prebuilds/.'
           }
-          if (-not (Test-Path 'node_modules/better-sqlite3/build/Release/better_sqlite3.node')) {
-            throw 'better_sqlite3.node fehlt.'
+          if (-not (Test-Path 'node_modules/better-sqlite3/prebuilds/win32-x64.node')) {
+            throw 'prebuilds/win32-x64.node fehlt.'
           }
           node -e "require('better-sqlite3'); console.log('prebuild ok')"
 
