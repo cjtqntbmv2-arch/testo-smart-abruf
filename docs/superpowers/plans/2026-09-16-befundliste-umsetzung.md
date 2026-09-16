@@ -113,8 +113,23 @@ Deshalb Welle 5, und die Anzeige über `header.jsx` statt `settings.jsx`.
   .env überhaupt gelesen und mit wie vielen Werten" genau die Frage, die im Fehlerfall
   zuerst gestellt wird — die Zeile ist dort eher Diagnose als Rauschen.
 
-## Abschluss
+## Abschluss — erledigt
 
-Nach Welle 5: Versionsstand nach `versioning`-Skill heben (mehrere Bugfixes +
-entfernte Dateien ⇒ mindestens PATCH, eher MINOR), `VERSION` / `package.json` /
-README-Badge / alle `?v=` in `Klima Dashboard.html` synchron halten.
+Alle 17 Punkte sind in `main`. Version auf **0.16.0** gehoben (MINOR: neue Funktionen
+abwärtskompatibel ergänzt). Tests 256 → **313**.
+
+Achtung für den nächsten Bump: `check_version.py --set` kennt in diesem Projekt nur
+`VERSION` und `package.json`. Der README-Badge und die **14** `?v=`-Cache-Buster in
+`Klima Dashboard.html` müssen von Hand nachgezogen werden — `dashboard-load.test.js`
+schlägt fehl, wenn die `?v=` nicht zur `VERSION` passen, fängt den Badge aber nicht.
+
+### Offen geblieben (bewusst, mit Begründung)
+
+| Thema | Warum offen |
+|---|---|
+| `better-sqlite3` 13 | Prebuilds belegt vorhanden, aber CI-Guard prüft den alten 12.x-Pfad. Bump und `windows-bundle.yml:46-57` müssen gemeinsam geändert werden. |
+| `express` 4 → 5 | Vom Nutzer ausdrücklich aus diesem Lauf ausgenommen. Die 3 offenen `npm audit`-Findings hängen daran. |
+| `EventRow` erfindet Richtung bei `threshold == null` | `eventTitle()` fängt den Fall ab, die sichtbare Kopfzeile nicht. Korrektur ist ein Rendering-Redesign ohne Testbarkeit. |
+| `closeDb()` wird bei fehlschlagendem `assert` übersprungen | Lässt den *nächsten* Test kaskadierend scheitern. Vorbestehend, erschwert Fehlersuche. |
+| `dashboard-load.test.js` kennt `SyntaxError` nicht | Bezeichner-Liste unvollständig; in #17 über `err.name` umgangen statt nachgetragen. |
+| Mock-Banner scrollt weg | Wie das bestehende Offline-Banner nicht `position: sticky`; bräuchte eine Stylesheet-Änderung. |
