@@ -18,15 +18,14 @@
 // without writing rather than guessing.
 //
 // Usage:
-//   node scripts/migrate-pressure-relabel.js [--apply] [--db <path>]
-// Default is a dry run (no writes). Pass --apply to write changes.
+//   node scripts/migrate-pressure-relabel.js --db <path> [--apply]
+// --db is required (no guessed default). Default is a dry run (no writes); pass
+// --apply to write changes.
 
-const path = require('path');
 const Database = require('better-sqlite3');
+const { parseArgs } = require('./args');
 
-const apply = process.argv.includes('--apply');
-const dbArgIdx = process.argv.indexOf('--db');
-const dbPath = dbArgIdx !== -1 ? process.argv[dbArgIdx + 1] : path.join(__dirname, '..', 'klima.db');
+const { apply, dbPath } = parseArgs();
 
 // Plausible barometric pressure band (hPa). Generous enough for high-altitude sites,
 // tight enough to never overlap g/m³ humidity magnitudes (~6-12).
