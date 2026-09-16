@@ -8,11 +8,24 @@ gestartet bei jedem Systemstart, laufend als `NT AUTHORITY\NetworkService`.
 - **Node.js 24 LTS (x64)** installiert (`node -v` → `v24.*`). Erlaubt sind 22/24/26;
   **Node 23 nicht** (kein win32-x64-Prebuild fuer better-sqlite3).
 - Admin-Rechte fuer die einmalige Einrichtung.
-- Netzwerk: ausgehend zu `data-api.<region>.smartconnect.testo.com` (HTTPS).
-  Beim `npm ci`: Zugriff auf die npm-Registry **und** auf `github.com`
-  (`objects.githubusercontent.com`) — von dort laedt `prebuild-install` das
-  native better-sqlite3-Binary. Hinter Proxy: `npm config set proxy <url>` /
-  `https-proxy` setzen; ggf. beide Hosts in der Allowlist freigeben.
+- Netzwerk (alles ausgehend, HTTPS), getrennt nach Betrieb und Installation:
+  - **Laufender Betrieb: genau ein Host**, `data-api.<region>.smartconnect.testo.com`.
+    Mehr braucht die Anwendung im Betrieb nicht. Insbesondere braucht **das Dashboard
+    selbst kein Internet**: React, Babel und die Schriftarten liegen als Dateien im
+    Repo unter `Smart Meter Dashboard\vendor\` und werden vom lokalen Server
+    ausgeliefert: keine CDN-, Font- oder sonstigen Fremdabrufe beim Oeffnen der
+    Seite. Fuer die Freigabeliste der IT ist damit **dieser eine Host die komplette
+    Liste**.
+  - **Installation aus dem Bundle: kein Netzzugriff noetig.** Node und
+    `node_modules` liegen in der ZIP bei, `install.cmd` laedt nichts nach. Die ZIP
+    bringt die IT selbst auf die Maschine (USB / Fileshare / E-Mail).
+  - **Installation aus dem Quellcode (`npm ci`): zusaetzlich npm-Registry und
+    `github.com`** (`objects.githubusercontent.com`): von dort laedt
+    `prebuild-install` das native better-sqlite3-Binary. Nur waehrend der
+    Installation; im spaeteren Betrieb wird keiner der beiden Hosts mehr
+    kontaktiert, die Freigabe kann also temporaer sein. Hinter Proxy:
+    `npm config set proxy <url>` / `https-proxy` setzen; ggf. beide Hosts in der
+    Allowlist freigeben.
 
 ## Installation aus dem Bundle (empfohlen, fuer Laien)
 
@@ -198,6 +211,24 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 - `GET /api/system/status` → Feld `appVersion` lautet `0.14.3`.
 - Alle 12 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen `?v=0.14.3` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen).
+
+### Keine externen Laufzeit-Abhaengigkeiten
+
+- **Offline-Probe:** Netzwerkadapter der Maschine deaktivieren (oder Netzkabel
+  ziehen), dann `http://localhost:3000` in einem **InPrivate-/privaten Fenster**
+  (= leerer Cache) oeffnen. Das Dashboard muss sich **vollstaendig** aufbauen:
+  Kacheln mit Werten, Diagramme, und die Schrift ist Geist, nicht die
+  Systemschrift. Danach Adapter wieder aktivieren (waehrend der Probe synct der
+  Dienst erwartungsgemaess nicht; das ist kein Fehler).
+  *Warum dieser Punkt unterscheidet:* React und Babel werden erst im Browser
+  geladen. Kaeme eine der Dateien noch von einem externen Host, bliebe die Seite
+  ohne Netz **leer** statt sich aufzubauen; eine extern gebliebene Schriftart
+  faellt sofort am Schriftbild auf. Das InPrivate-Fenster schliesst aus, dass ein
+  alter Browser-Cache den Fehler verdeckt.
+- Ergaenzend, falls die Probe fehlschlaegt (zeigt, ob die Dateien ueberhaupt
+  mitgeliefert wurden): `dir "C:\Apps\TestoSmartAbruf\Smart Meter Dashboard\vendor"`
+  listet `react.production.min.js`, `react-dom.production.min.js`, `babel.min.js`
+  und den Unterordner `fonts`.
 
 ### Bundle-Installation (ab v0.14.0)
 
