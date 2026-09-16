@@ -22,7 +22,24 @@ try {
   } catch (_e2) { /* ignore */ }
 }
 
+// testo Smart Connect regions (testo-smart-connect-api/02-authentication.md,
+// testo-smart-connect-api/_assets/glossary.md): eu / am / ap. 'us' was offered in the settings
+// UI through v0.15.x but is not a real region and is rejected by POST /api/settings below.
+const VALID_API_REGIONS = ['eu', 'am', 'ap'];
+
 initDb();
+
+// Legacy migration: an install that already has the no-longer-valid 'us' stored would
+// otherwise be stuck — GET /api/settings would keep returning 'us', the settings-page
+// SegmentedControl highlights nothing for a value outside its options, and the dashboard
+// resends api_region on every autosave, which POST would now 400 on, blocking ALL settings
+// saves (not just the region). Falling back to 'eu' here, before the scheduler's first sync,
+// self-heals existing databases without touching anything outside this process.
+const storedApiRegion = getSetting('api_region');
+if (storedApiRegion && !VALID_API_REGIONS.includes(storedApiRegion)) {
+  saveSetting('api_region', 'eu');
+}
+
 startScheduler();
 startUpdateCheck(appVersion);
 
@@ -89,8 +106,8 @@ app.post('/api/settings', (req, res) => {
   }
 
   // Validate api_region when present
-  if (api_region !== undefined && !['eu', 'us'].includes(api_region)) {
-    return res.status(400).json({ error: "api_region must be 'eu' or 'us'" });
+  if (api_region !== undefined && !VALID_API_REGIONS.includes(api_region)) {
+    return res.status(400).json({ error: `api_region must be one of: ${VALID_API_REGIONS.join(', ')}` });
   }
 
   // Only overwrite the stored api_key when a non-empty string is supplied;

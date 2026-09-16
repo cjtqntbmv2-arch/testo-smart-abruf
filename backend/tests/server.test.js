@@ -193,12 +193,38 @@ test('POST /api/settings rejects invalid api_region with 400', async () => {
   assert.strictEqual(res.status, 400);
 });
 
-test('POST /api/settings accepts valid api_region eu/us', async () => {
+test('POST /api/settings accepts valid api_region eu', async () => {
+  const res = await fetch('http://localhost:3001/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_region: 'eu' })
+  });
+  assert.strictEqual(res.status, 200);
+});
+
+test('POST /api/settings accepts valid api_region am', async () => {
+  const res = await fetch('http://localhost:3001/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_region: 'am' })
+  });
+  assert.strictEqual(res.status, 200);
+});
+
+test('POST /api/settings accepts valid api_region ap', async () => {
+  const res = await fetch('http://localhost:3001/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_region: 'ap' })
+  });
+  assert.strictEqual(res.status, 200);
+});
+
+// testo Smart Connect regions are eu/am/ap only (testo-smart-connect-api/02-authentication.md);
+// 'us' was offered in the UI but never a real region and is now rejected like any other value.
+test('POST /api/settings rejects api_region us (not a real testo region)', async () => {
   const res = await fetch('http://localhost:3001/api/settings', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api_region: 'us' })
   });
-  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.status, 400);
 });
 
 test('POST /api/settings rejects non-positive retention_days with 400', async () => {

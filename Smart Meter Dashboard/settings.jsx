@@ -510,7 +510,11 @@ function ApiSection({ settings, update, systemStatus, apiKeyConfigured }) {
         <Field label="API-Region" hint="Die Region Ihrer Testo Smart Connect Cloud.">
           <SegmentedControl
             value={settings.api.apiRegion || 'eu'}
-            options={[{ value: 'eu', label: 'Europa (EU)' }, { value: 'us', label: 'Amerika (US)' }]}
+            options={[
+              { value: 'eu', label: 'Europa (EU)' },
+              { value: 'am', label: 'Amerika (AM)' },
+              { value: 'ap', label: 'Asien-Pazifik (AP)' },
+            ]}
             onChange={(v) => update("api.apiRegion", v)}
           />
         </Field>

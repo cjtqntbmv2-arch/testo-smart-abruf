@@ -31,6 +31,7 @@ const { parseArgs } = require('./args');
 const { apply, dbPath } = parseArgs();
 
 const db = new Database(dbPath);
+db.pragma('foreign_keys = ON');
 
 // Measurement feed rows whose stored headline differs from the canonical German headline.
 const rows = db

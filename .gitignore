@@ -10,4 +10,9 @@ klima.backup-*.db
 # Monthly CSV/ZIP backup output (default backup_dir = <DB dir>/backups in dev; ProgramData in prod)
 backups/
 
+# Drawing-tool exports swept in by the 2026-06-03 housekeeping commit (cd86b33) — unreferenced by
+# any code (confirmed by repo-wide search 2026-09-16), keep them from coming back
+**/Smart Meter Dashboard/uploads/
+**/Smart Meter Dashboard/.thumbnail
+
 node_modules

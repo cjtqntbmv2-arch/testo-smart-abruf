@@ -34,6 +34,7 @@ const { parseArgs } = require('./args');
 const { apply, dbPath } = parseArgs();
 
 const db = new Database(dbPath);
+db.pragma('foreign_keys = ON');
 
 const before = db.prepare("SELECT value FROM settings WHERE key = 'last_alarm_sync_time'").get();
 const beforeVal = before ? before.value : '(not set)';

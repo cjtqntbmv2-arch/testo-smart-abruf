@@ -33,6 +33,7 @@ const PRESSURE_MIN_HPA = 500;
 const PRESSURE_MAX_HPA = 1100;
 
 const db = new Database(dbPath);
+db.pragma('foreign_keys = ON');
 
 // Misclassified rows: stored as absolute humidity but carrying a pressure unit.
 const candidates = db

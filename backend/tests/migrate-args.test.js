@@ -105,6 +105,32 @@ for (const script of SCRIPTS) {
   });
 }
 
+// SQLite erzwingt Fremdschluessel nur PRO VERBINDUNG (backend/db.js setzt das Pragma
+// beim Oeffnen, aber jedes Migrationsskript oeffnet seine eigene Verbindung). Aktuell
+// schreibt keines der sechs Skripte eine Fremdschluesselspalte (station_id) um und
+// loescht keine Elternzeile aus stations/measurements/events — ein Verhaltenstest
+// (Skript gegen eine DB mit verwaister Zeile laufen lassen) waere deshalb vor UND nach
+// dem Fix gruen und koennte den Fix nicht nachweisen. Die Quelltextpruefung ist die
+// einzige, die rot (Pragma fehlt) von gruen (Pragma gesetzt) unterscheidet.
+for (const script of SCRIPTS) {
+  test(`${script}: aktiviert foreign_keys vor jeder Transaktion`, () => {
+    const src = fs.readFileSync(path.join(REPO, 'scripts', script), 'utf8');
+    assert.match(
+      src,
+      /db\.pragma\(\s*['"]foreign_keys\s*=\s*ON['"]\s*\)/,
+      'Skript muss auf seiner eigenen Verbindung foreign_keys = ON setzen (SQLite: pro Verbindung, nicht pro Datei)'
+    );
+    const pragmaIdx = src.search(/db\.pragma\(\s*['"]foreign_keys\s*=\s*ON['"]\s*\)/);
+    const txIdx = src.indexOf('db.transaction(');
+    if (txIdx !== -1) {
+      assert.ok(
+        pragmaIdx < txIdx,
+        'Pragma muss vor dem ersten db.transaction(...) stehen — SQLite ignoriert PRAGMA foreign_keys innerhalb einer offenen Transaktion'
+      );
+    }
+  });
+}
+
 // --- Trockenlauf mit gueltigem --db ---------------------------------------
 
 const seedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'testo-args-seed-'));
