@@ -27,7 +27,7 @@ anfassen**. Zwischen den Wellen: volle Testsuite ohne Sandbox, dann Merge nach `
 | 1 | #1 Region · #2 §9-Doku · #13 foreign_keys · #6 Löschungen | `fix/befunde-welle-1` | **erledigt** — 265 Tests grün |
 | 2 | #4 UpdateCard · #5 DELETE-Test · #7 uninstall-Doku · #12 Mock-Riegel · #14 spec/ | `fix/befunde-welle-2` | **erledigt** — 272 Tests grün |
 | 3 | #8 Abhängigkeiten · #10 Schwellwert-Konflikt · #15 BackupSettings | `fix/befunde-welle-3` | **erledigt** — 276 Tests grün |
-| 4 | #11 Vereinheitlichung | `refactor/befunde-welle-4` | offen |
+| 4 | #11 Vereinheitlichung | `refactor/befunde-welle-4` | **erledigt** — 276 Tests grün, Verhalten unverändert |
 | 5 | #9 data.js-Tests (+ #17) · #16 Mock-Status | `test/befunde-welle-5` | offen |
 
 ## Nachträglich aufgenommen (Folgefunde aus Welle 2, vom Nutzer freigegeben)

@@ -274,6 +274,14 @@ function SettingsPage({ onClose }) {
 // data.js' METRICS (nicht exportiert) oder device-bridge.js' METRIC_LABELS_DE (an die
 // Events-Tabelle gebunden, s. dortiger Kommentar) — genau das Vorgehen, das der Rest des
 // Codebase fuer kontextgebundene Labels bereits etabliert.
+//
+// Nachtrag (Welle 4, Dopplungs-Check): die Werte hier sind absichtlich WORTGLEICH mit
+// device-bridge.js' METRIC_LABELS_DE, NICHT mit data.js' META.label — 3 von 5 weichen von
+// META.label ab (humidity: "Luftfeuchte" vs. "Rel. Luftfeuchte", pressure: "Druck" vs.
+// "Luftdruck", abshumid: "Absolute Feuchte" vs. "Abs. Luftfeuchte"). Grund: diese Tabelle
+// soll wie der Alarmverlauf-Wortlaut lesen (device-bridge.js), nicht wie die Kachel-
+// Beschriftung. Auch wenn META künftig über DASH_DATA erreichbar wird: NICHT umstellen,
+// sonst ändert sich der Banner-Text in OverviewSection lautlos.
 const LIMIT_CONFLICT_METRIC_LABELS = {
   temperature: 'Temperatur',
   humidity: 'Luftfeuchte',

@@ -224,6 +224,24 @@ function buildSensorFilter(sensorUuids) {
 // "Lower limit"); revisit if the API adds new variants.  The "low" branch is
 // guarded against system-alarm condition strings (e.g. "Battery low") that share
 // the token but describe an operational problem, not a measurement threshold.
+//
+// Fallback intentionally differs from the frontend's alarmDirection() in
+// Smart Meter Dashboard/data.js, which defaults an unrecognized string to 'high'
+// instead of null. Not an oversight — the two can't share code (no bundler; this
+// runs in Node, that one as a <script> in the browser) and each fallback is right
+// for its own layer:
+//   - null here skips the threshold lookup at both call sites in scheduler.js, so
+//     an unrecognized direction never gets a fabricated limit value written into
+//     the stored/exported event — measurementAlarmText() falls back to a generic
+//     message instead of asserting a specific (possibly wrong) number.
+//   - The frontend has no third "unknown direction" state to render (every
+//     consumer is a binary high/low ternary), so it must default to something.
+//     Because `threshold` stays null exactly when direction was unrecognized here,
+//     that frontend guess only ever shows a cosmetic wrong arrow/wording, never a
+//     fabricated number — the stakes that justify null here don't apply there.
+// Both sides only ever see the known "Upper limit"/"Lower limit" (+ German)
+// variants for real measurement alarms today, so this is currently dormant; it
+// only activates if testo sends a novel condition string.
 function alarmConditionDirection(conditionType) {
   const c = (conditionType || '').toLowerCase();
   // Upper-limit tokens (from the known testo condition-type enum)
