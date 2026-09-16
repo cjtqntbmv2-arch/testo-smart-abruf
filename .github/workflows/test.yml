@@ -25,6 +25,8 @@ jobs:
           cache: 'npm'
 
       # Bewusst OHNE --omit=dev: cross-env (devDependency) startet beide Testlaeufe.
-      - run: npm ci
+      # --ignore-scripts: sonst baut npm ci better-sqlite3 per node-gyp aus der
+      # mitgelieferten binding.gyp neu, statt das Prebuild zu nehmen (s. windows-bundle.yml).
+      - run: npm ci --ignore-scripts
 
       - run: npm test

@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 <#
   Windows-Schnellinstallation (Orchestrator).
-  Preflight -> (laufenden Dienst stoppen) -> npm ci --omit=dev -> install-task.ps1 -> Start -> Smoke-Check.
+  Preflight -> (laufenden Dienst stoppen) -> npm ci --omit=dev --ignore-scripts -> install-task.ps1 -> Start -> Smoke-Check.
   Ruft die bestehenden Bausteine; ersetzt install-task.ps1 NICHT.
   Re-run-sicher (zugleich Update-Pfad nach git pull). Trockenlauf via -WhatIf (ebenfalls Admin-Shell noetig).
 #>
@@ -108,14 +108,17 @@ if ($existing -and $existing.State -eq 'Running') {
 }
 
 # ---------- Phase 3/5: Dependencies ----------
-Step 'Phase 3/5: Dependencies (npm ci --omit=dev)'
+Step 'Phase 3/5: Dependencies (npm ci --omit=dev --ignore-scripts)'
 if ($Bundled) {
   Write-Host '  npm ci uebersprungen (Bundle bringt node_modules mit)'
 } elseif (-not $SkipNpm) {
-  if ($PSCmdlet.ShouldProcess($AppRoot, 'npm ci --omit=dev')) {
+  if ($PSCmdlet.ShouldProcess($AppRoot, 'npm ci --omit=dev --ignore-scripts')) {
     Push-Location $AppRoot
     try {
-      & npm ci --omit=dev
+      # --ignore-scripts: better-sqlite3 13.x bringt das Prebuild im Tarball mit,
+      # npm wuerde sonst aus der mitgelieferten binding.gyp ein node-gyp rebuild
+      # ableiten und einen Compiler verlangen, den diese Maschine nicht hat.
+      & npm ci --omit=dev --ignore-scripts
       if ($LASTEXITCODE -ne 0) { throw "npm ci exit $LASTEXITCODE" }
     } catch {
       Pop-Location

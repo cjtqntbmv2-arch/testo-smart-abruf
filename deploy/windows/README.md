@@ -104,8 +104,12 @@ Die manuelle Schritt-für-Schritt-Anleitung unten bleibt als Fallback/Transparen
    macOS/Linux kopieren — falsches ABI):
    ```powershell
    cd C:\Apps\TestoSmartAbruf
-   npm ci --omit=dev
+   npm ci --omit=dev --ignore-scripts
    ```
+   `--ignore-scripts` weglassen heisst: npm leitet aus der von better-sqlite3
+   mitgelieferten `binding.gyp` ein `node-gyp rebuild` ab und verlangt einen
+   C++-Compiler, den diese Maschine nicht hat. Das fertige Binary liegt bereits
+   im npm-Paket.
 3. Bei Bedarf Umgebungsvariablen anpassen: Vorlage `deploy\windows\env.example`
    nach `C:\Apps\TestoSmartAbruf\.env` kopieren und die gewuenschten Zeilen
    entkommentieren. Die Vorlage listet jede Variable mit ihrem Standardwert;
@@ -256,8 +260,10 @@ entfernen.
 
 - **`EADDRINUSE` im Log:** Port belegt → in `.env` Datei `PORT` aendern oder den
   blockierenden Prozess beenden.
-- **`npm ci` schlaegt fehl (Compiler/`node-gyp`):** npm-Registry nicht erreichbar
-  oder falsche Node-Version. Node 24 x64 verwenden, Proxy/Allowlist pruefen.
+- **`npm ci` schlaegt fehl (Compiler/`node-gyp`):** meist fehlt `--ignore-scripts`
+  (dann verlangt npm einen C++-Compiler, s.o.); sonst npm-Registry nicht
+  erreichbar oder falsche Node-Version. Node 24 x64 verwenden, Proxy/Allowlist
+  pruefen.
   Erfolgskontrolle: `node_modules\better-sqlite3\prebuilds\win32-x64.node` muss
   existieren und `node_modules\better-sqlite3\build\` darf **nicht** existieren —
   ein `build\`-Ordner bedeutet, dass `node-gyp` kompiliert hat (Guardrail-Bruch:
