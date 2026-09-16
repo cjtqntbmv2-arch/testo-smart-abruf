@@ -430,6 +430,65 @@ test('GET /api/system/status reports an empty limitsConflict once resolved', asy
   assert.deepStrictEqual(body.limitsConflict.metrics, [], 'resolved conflict must report an empty metrics list');
 });
 
+// ── #16: GET /api/system/status surfaces whether the dashboard is currently showing
+// fabricated mock data. Must mirror TestoClient._mockModeActive() exactly: the stored
+// api_key must be the literal 'mock-api-key' AND (NODE_ENV==='test' OR TESTO_MOCK==='1').
+// This suite itself runs under NODE_ENV=test (see top of file), which alone satisfies the
+// second half of that condition once the key matches -- so testing the TESTO_MOCK/api_key
+// interaction the way it actually behaves in a real deployment (env.example tells operators
+// never to set NODE_ENV there) requires pinning process.env.NODE_ENV to a non-test value for
+// the duration of the assertions below. try/finally restores every env var and the stored
+// api_key so later tests are not poisoned.
+test('GET /api/system/status reports mockActive only when both the mock key and the opt-in env var are set', async () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalTestoMock = process.env.TESTO_MOCK;
+  const originalApiKey = getSetting('api_key');
+  try {
+    process.env.NODE_ENV = 'production'; // field-like: a real deployment never sets NODE_ENV=test
+
+    // Neither condition: real key, no opt-in -> inactive
+    delete process.env.TESTO_MOCK;
+    saveSetting('api_key', 'a-real-testo-key');
+    let body = await (await fetch('http://localhost:3001/api/system/status')).json();
+    assert.strictEqual(body.api.mockActive, false, 'real key + no opt-in must not report mock');
+
+    // Only the env var set, key does not match -> inactive
+    process.env.TESTO_MOCK = '1';
+    body = await (await fetch('http://localhost:3001/api/system/status')).json();
+    assert.strictEqual(body.api.mockActive, false, 'TESTO_MOCK=1 alone with a non-mock key must not report mock');
+
+    // Only the key matches, opt-in not set -> inactive
+    delete process.env.TESTO_MOCK;
+    saveSetting('api_key', 'mock-api-key');
+    body = await (await fetch('http://localhost:3001/api/system/status')).json();
+    assert.strictEqual(body.api.mockActive, false, 'mock key alone without TESTO_MOCK must not report mock');
+
+    // Both conditions -> active. This is the "accidentally left on in production" case.
+    process.env.TESTO_MOCK = '1';
+    body = await (await fetch('http://localhost:3001/api/system/status')).json();
+    assert.strictEqual(body.api.mockActive, true, 'mock key + TESTO_MOCK=1 must report mock active');
+  } finally {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = originalNodeEnv;
+    if (originalTestoMock === undefined) delete process.env.TESTO_MOCK; else process.env.TESTO_MOCK = originalTestoMock;
+    saveSetting('api_key', originalApiKey || '');
+  }
+});
+
+// Documents the NODE_ENV=test shortcut itself (the branch that lets mock mode work during
+// automated runs / local dev without a real key, see testo-client.js) so a future change to
+// that branch fails a test instead of only surfacing as a silently wrong dashboard banner.
+test('GET /api/system/status reports mockActive under the ambient NODE_ENV=test shortcut once the mock key is stored', async () => {
+  const originalApiKey = getSetting('api_key');
+  try {
+    assert.strictEqual(process.env.NODE_ENV, 'test', 'this test only makes sense while the suite runs under NODE_ENV=test');
+    saveSetting('api_key', 'mock-api-key');
+    const body = await (await fetch('http://localhost:3001/api/system/status')).json();
+    assert.strictEqual(body.api.mockActive, true, 'NODE_ENV=test + mock key must report mock active, matching _mockModeActive()');
+  } finally {
+    saveSetting('api_key', originalApiKey || '');
+  }
+});
+
 // ── B4: GET /api/limits ────────────────────────────────────────────────────
 test('GET /api/limits returns empty array when no limits have been synced', async () => {
   const res = await fetch('http://localhost:3001/api/limits');

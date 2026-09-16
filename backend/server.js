@@ -477,7 +477,11 @@ app.get('/api/system/status', (req, res) => {
     api: {
       status: schedulerStatus.lastSyncStatus === 'error' ? 'err' : (apiKey ? 'ok' : 'warn'),
       apiKeyConfigured: !!apiKey,
-      region: getSetting('api_region') || 'eu'
+      region: getSetting('api_region') || 'eu',
+      // #16: is the running instance currently serving fabricated data instead of real testo
+      // measurements? Reuses TestoClient's own condition (see testo-client.js) verbatim so
+      // this can never silently drift from what _mockModeActive() actually decides.
+      mockActive: TestoClient.isMockCondition(apiKey)
     },
     backup: (() => {
       let health = {};
