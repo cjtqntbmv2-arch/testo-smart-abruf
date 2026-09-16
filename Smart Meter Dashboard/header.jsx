@@ -1,16 +1,12 @@
-// Topbar / header cluster: the dashboard top bar plus the station-picker UI.
+// Topbar / header cluster: the dashboard top bar.
 // Extracted from app.jsx to keep the GUI entry file small — no behaviour change.
 // Loaded as a plain <script type="text/babel"> BEFORE summary-panel.jsx and app.jsx
 // (app.jsx mounts the root), so these global function declarations resolve at render time.
 // Header renders SystemSummaryTrigger (summary-panel.jsx) and summary-panel.jsx reuses
 // SummaryDot from here — all cross-file globals, resolved at call time.
-// Unique hook aliases (h*) avoid global const collisions with the other JSX files.
 
-const { useRef: hRef, useEffect: hEff } = React;
-
-function Header({ editMode, onToggleEdit, onAdd, onReset, tileCount, stationPickerOpen, onToggleStationPicker, onCloseStationPicker, view, onOpenSettings, onLeaveSettings }) {
+function Header({ editMode, onToggleEdit, onAdd, onReset, tileCount, view, onOpenSettings, onLeaveSettings }) {
   const D = window.DASH_DATA;
-  const station = D.activeStation;
   const totals = D.totalActive();
   const inSettings = view === "settings";
   return (
@@ -67,98 +63,5 @@ function SummaryDot({ severity, count }) {
     <span className={`top-sum-dot sev-${severity} ${count > 0 ? "has" : ""}`} title={`${count} ${severity}`}>
       <span className="top-sum-count">{count}</span>
     </span>
-  );
-}
-
-function StationSelector({ station, open, onToggle, onClose }) {
-  const D = window.DASH_DATA;
-  const ref = hRef(null);
-  hEff(() => {
-    if (!open) return;
-    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) onClose(); }
-    function onKey(e) { if (e.key === "Escape") onClose(); }
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("mousedown", onDoc); document.removeEventListener("keydown", onKey); };
-  }, [open]);
-
-  const stationActive = countActive(D.stations[station.id]);
-
-  return (
-    <div className="station-wrap" ref={ref}>
-      <button className={`station-trigger ${open ? "open" : ""}`} onClick={onToggle}>
-        <span className={`station-dot ${station.online ? "on" : "off"}`} />
-        <div className="station-meta">
-          <div className="station-name">
-            <span>{station.name}</span>
-            <span className="station-code">{station.code}</span>
-          </div>
-          <div className="station-sub">
-            {station.location} · {station.online
-              ? <>online · Batterie {station.battery} %</>
-              : <>offline · zuletzt {D.formatRelative(station.lastSeen)}</>}
-            {stationActive > 0 && <> · <span className="station-alerts">{stationActive} Meldung{stationActive === 1 ? "" : "en"}</span></>}
-          </div>
-        </div>
-        <svg className="chev" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
-      </button>
-      {open && (
-        <div className="station-pop">
-          <div className="station-pop-head">Messstelle auswählen</div>
-          {D.stationOrder.map((sid) => {
-            const s = D.stations[sid];
-            const active = countActive(s);
-            const isCurrent = sid === station.id;
-            return (
-              <button key={sid} className={`station-item ${isCurrent ? "current" : ""}`}
-                      onClick={() => { D.setActiveStation(sid); onClose(); }}>
-                <span className={`station-dot ${s.online ? "on" : "off"}`} />
-                <div className="si-text">
-                  <div className="si-line">
-                    <span className="si-name">{s.name}</span>
-                    <span className="station-code">{s.code}</span>
-                    {isCurrent && <span className="si-check">✓</span>}
-                  </div>
-                  <div className="si-sub">
-                    {s.location} · {s.online ? "online" : "offline"}
-                    <span className="si-stat"><BatteryIcon level={s.battery} /> {s.battery} %</span>
-                    <span className="si-stat"><SignalIcon level={s.signal} /> {s.online ? `${s.signal} %` : "—"}</span>
-                  </div>
-                </div>
-                {active > 0 && (
-                  <span className="si-count">{active}</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function countActive(s) {
-  return s.events.filter((e) => e.active).length;
-}
-
-function BatteryIcon({ level }) {
-  const low = level <= 20;
-  return (
-    <svg width="14" height="10" viewBox="0 0 14 10" fill="none" style={{ verticalAlign: "-1px" }}>
-      <rect x="0.5" y="0.5" width="11" height="9" rx="1.5" stroke={low ? "var(--alarm)" : "currentColor"} strokeWidth="1"/>
-      <rect x="12" y="3" width="1.5" height="4" fill={low ? "var(--alarm)" : "currentColor"}/>
-      <rect x="2" y="2" width={Math.max(1, (level / 100) * 8)} height="6" fill={low ? "var(--alarm)" : "currentColor"}/>
-    </svg>
-  );
-}
-function SignalIcon({ level }) {
-  const bars = level === 0 ? 0 : level < 30 ? 1 : level < 60 ? 2 : level < 85 ? 3 : 4;
-  return (
-    <svg width="14" height="10" viewBox="0 0 14 10" fill="none" style={{ verticalAlign: "-1px" }}>
-      {[0,1,2,3].map((i) => (
-        <rect key={i} x={0.5 + i * 3.2} y={9 - (i + 1) * 2} width="2.2" height={(i + 1) * 2} rx="0.4"
-              fill={i < bars ? "currentColor" : "var(--border-strong)"}/>
-      ))}
-    </svg>
   );
 }
