@@ -14,10 +14,6 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest   # better-sqlite3 hat linux-x64-Prebuilds, und der Lauf ist hier am guenstigsten
-    env:
-      # puppeteer steht noch in den devDependencies und laedt sonst bei jedem
-      # Lauf Chromium herunter. Zeile kann weg, sobald puppeteer entfernt ist.
-      PUPPETEER_SKIP_DOWNLOAD: 1
     steps:
       - uses: actions/checkout@v4
 

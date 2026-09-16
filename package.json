@@ -1,6 +1,6 @@
 {
   "name": "testo-smart-abruf",
-  "version": "0.14.3",
+  "version": "0.15.0",
   "description": "Local server and dashboard for testo Smart Connect API data sync",
   "main": "backend/server.js",
   "scripts": {
@@ -16,7 +16,6 @@
     "express": "^4.19.2"
   },
   "devDependencies": {
-    "cross-env": "^7.0.3",
-    "puppeteer": "^25.1.0"
+    "cross-env": "^7.0.3"
   }
 }

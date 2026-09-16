@@ -274,7 +274,7 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 ### Versionscheck
 
-- `GET /api/system/status` → Feld `appVersion` lautet `0.14.3`.
+- `GET /api/system/status` → Feld `appVersion` lautet `0.15.0`.
 - Alle 13 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen dieselbe Version wie `appVersion` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen). Die drei `vendor/`-Tags tragen bewusst keinen Cache-Buster.
 
 ### Update-Hinweis (ab v0.15.0)
