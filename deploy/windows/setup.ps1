@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 <#
   Windows-Schnellinstallation (Orchestrator).
-  Preflight -> (laufenden Dienst stoppen) -> npm ci --omit=dev -> install-task.ps1 -> Start -> Smoke-Check.
+  Preflight -> (laufenden Dienst stoppen) -> npm ci --omit=dev --ignore-scripts -> install-task.ps1 -> Start -> Smoke-Check.
   Ruft die bestehenden Bausteine; ersetzt install-task.ps1 NICHT.
   Re-run-sicher (zugleich Update-Pfad nach git pull). Trockenlauf via -WhatIf (ebenfalls Admin-Shell noetig).
 #>
@@ -108,18 +108,21 @@ if ($existing -and $existing.State -eq 'Running') {
 }
 
 # ---------- Phase 3/5: Dependencies ----------
-Step 'Phase 3/5: Dependencies (npm ci --omit=dev)'
+Step 'Phase 3/5: Dependencies (npm ci --omit=dev --ignore-scripts)'
 if ($Bundled) {
   Write-Host '  npm ci uebersprungen (Bundle bringt node_modules mit)'
 } elseif (-not $SkipNpm) {
-  if ($PSCmdlet.ShouldProcess($AppRoot, 'npm ci --omit=dev')) {
+  if ($PSCmdlet.ShouldProcess($AppRoot, 'npm ci --omit=dev --ignore-scripts')) {
     Push-Location $AppRoot
     try {
-      & npm ci --omit=dev
+      # --ignore-scripts: better-sqlite3 13.x bringt das Prebuild im Tarball mit,
+      # npm wuerde sonst aus der mitgelieferten binding.gyp ein node-gyp rebuild
+      # ableiten und einen Compiler verlangen, den diese Maschine nicht hat.
+      & npm ci --omit=dev --ignore-scripts
       if ($LASTEXITCODE -ne 0) { throw "npm ci exit $LASTEXITCODE" }
     } catch {
       Pop-Location
-      Fail "npm ci fehlgeschlagen ($($_.Exception.Message)). Ursachen: falsche Node-Version (kein Prebuild); github.com/objects.githubusercontent.com nicht erreichbar (Proxy/Allowlist); oder Datei-Lock durch noch laufenden node.exe (Stop-ScheduledTask -TaskName $TaskName; taskkill /IM node.exe /F)."
+      Fail "npm ci fehlgeschlagen ($($_.Exception.Message)). Ursachen: npm-Registry nicht erreichbar (Proxy/Allowlist); falsche Node-Version; oder Datei-Lock durch noch laufenden node.exe (Stop-ScheduledTask -TaskName $TaskName; taskkill /IM node.exe /F)."
     }
     Pop-Location
   }
@@ -129,8 +132,9 @@ if ($Bundled) {
 
 # Prebuild-Verifikation: IMMER (auch unter -SkipNpm), aber nicht unter -WhatIf
 if (-not $WhatIfPreference) {
-  $nodeFile = Join-Path $AppRoot 'node_modules\better-sqlite3\build\Release\better_sqlite3.node'
-  if (-not (Test-Path $nodeFile)) { Fail "better-sqlite3-Prebuild fehlt ($nodeFile). Falsche Node-Version oder github.com geblockt (node-gyp-Build statt Download). node_modules NIE von macOS/Linux kopieren." }
+  $nodeFile = Join-Path $AppRoot 'node_modules\better-sqlite3\prebuilds\win32-x64.node'
+  if (-not (Test-Path $nodeFile)) { Fail "better-sqlite3-Prebuild fehlt ($nodeFile). npm ci unvollstaendig oder node_modules nachtraeglich veraendert. node_modules NIE von macOS/Linux kopieren." }
+  if (Test-Path (Join-Path $AppRoot 'node_modules\better-sqlite3\build')) { Fail 'node-gyp hat kompiliert (build\ vorhanden) - erwartet wird das mitgelieferte Prebuild aus prebuilds\.' }
   Push-Location $AppRoot
   $loadOk = $true
   try { & $nodeCmd -e "require('better-sqlite3')"; if ($LASTEXITCODE -ne 0) { $loadOk = $false } } catch { $loadOk = $false }

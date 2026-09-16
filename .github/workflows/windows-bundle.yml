@@ -41,18 +41,27 @@ jobs:
           Write-Host "Node $(node -v) ($arch)"
 
       - name: Install prod dependencies
-        run: npm ci --omit=dev
+        # --ignore-scripts ist Pflicht, nicht Kosmetik: better-sqlite3 13.x liefert
+        # zwar fertige Prebuilds im Tarball mit, legt aber weiterhin eine binding.gyp
+        # im Paketwurzelverzeichnis ab. npm ci synthetisiert daraus trotz
+        # "gypfile": false ein Default-Install-Skript `node-gyp rebuild` und
+        # kompiliert. Auf dem Runner faellt das nicht auf (MSVC ist da) - auf der
+        # Zielmaschine ohne Build-Tools scheitert npm ci hart. Kein Paket im Lock
+        # deklariert hasInstallScript, es geht also nichts Echtes verloren.
+        run: npm ci --omit=dev --ignore-scripts
 
       - name: Assert prebuild (no node-gyp compile)
         shell: pwsh
         run: |
-          # prebuild-install legt das .node in build/Release ohne obj/ ab;
-          # node-gyp hinterliesse build/Release/obj/ -> waere ein Compile (Guardrail-Bruch).
-          if (Test-Path 'node_modules/better-sqlite3/build/Release/obj') {
-            throw 'node-gyp-Compile erkannt (obj/ vorhanden) — erwartet wird ein Prebuild.'
+          # better-sqlite3 >=13 hat kein install-Skript mehr (gypfile:false) und liefert
+          # die .node-Dateien fertig im npm-Tarball unter prebuilds/ aus, aufgeloest rein
+          # ueber process.platform+process.arch. Ein build/-Verzeichnis entsteht dabei gar
+          # nicht -> sein blosses Vorhandensein ist bereits ein node-gyp-Compile.
+          if (Test-Path 'node_modules/better-sqlite3/build') {
+            throw 'node-gyp-Compile erkannt (build/ vorhanden) - erwartet wird das Prebuild aus prebuilds/.'
           }
-          if (-not (Test-Path 'node_modules/better-sqlite3/build/Release/better_sqlite3.node')) {
-            throw 'better_sqlite3.node fehlt.'
+          if (-not (Test-Path 'node_modules/better-sqlite3/prebuilds/win32-x64.node')) {
+            throw 'prebuilds/win32-x64.node fehlt.'
           }
           node -e "require('better-sqlite3'); console.log('prebuild ok')"
 

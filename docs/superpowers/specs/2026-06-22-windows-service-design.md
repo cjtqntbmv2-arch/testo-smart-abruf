@@ -137,13 +137,13 @@ Standardmäßig **keine** Regel (Default `HOST=127.0.0.1`). Für den LAN-Fall ei
 | E9 | `package-lock.json` nach package.json-Edit inkonsistent | Lockfile neu erzeugen + committen (2f) |
 | E10 | OEM-Codepage verstümmelt °C/µ in Logs | `chcp 65001` in `start.cmd` |
 | E11 | Orphan-`node.exe` hält Port nach Task-Stop → nächster Start EADDRINUSE | Task beendet Prozessbaum; in Abnahme verifizieren (kein Rest-`node.exe`) |
-| E12 | `prebuild-install` lädt von **github.com** (Release-Host), nicht nur npm-Registry | Proxy/Allowlist-Hinweis im README; für Air-Gap Prebuild/`node_modules` vorab mitbringen |
+| E12 | ~~`prebuild-install` lädt von **github.com** (Release-Host), nicht nur npm-Registry~~ **— historisch, entfällt seit better-sqlite3 13.x (2026-09-16)** | ~~Proxy/Allowlist-Hinweis im README~~; das Prebuild liegt im npm-Tarball (`prebuilds/win32-x64.node`), für Air-Gap weiterhin `node_modules` vorab mitbringen |
 | E13 | `?v=`-Cache-Buster: nach Update servt Browser veraltetes JSX | Update-Checklist: VERSION/Badge/`?v=` synchron + Hard-Reload; Server sendet keine Cache-Header → `?v=`-Bump ist der einzige Hebel |
 | E14 | NetworkService braucht Schreibrechte auf `.db` **und** `-wal`/`-shm` | Modify auf den **Ordner** (deckt alle drei ab); AV-Ausnahme auf den **Daten**-Ordner empfehlen |
 
 ## 8. Offene Annahmen (im README zu adressieren)
 
-- **Proxy / Outbound:** `npm ci` braucht ggf. `npm config set proxy …` — **und** `prebuild-install` braucht Zugriff auf `github.com`/`objects.githubusercontent.com` (separater Allowlist-Eintrag). Der Server muss ausgehend `data-api.<region>.smartconnect.testo.com` erreichen.
+- **Proxy / Outbound:** `npm ci` braucht ggf. `npm config set proxy …`. ~~**Und** `prebuild-install` braucht Zugriff auf `github.com`/`objects.githubusercontent.com` (separater Allowlist-Eintrag).~~ **— historisch, entfällt seit better-sqlite3 13.x (2026-09-16):** die Bibliothek hat kein `install`-Skript mehr und liefert das Prebuild im npm-Tarball aus, es genügt `registry.npmjs.org`. Der Server muss ausgehend `data-api.<region>.smartconnect.testo.com` erreichen.
 - **Delivery:** App-Ordner wird kopiert (ZIP/Netzlaufwerk), dann `npm ci --omit=dev` **auf der Box**. Kein Installer-Paket.
 
 ## 9. Tests & Verifikation
