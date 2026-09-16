@@ -33,7 +33,7 @@ The application is deployed as a **login-independent background service on a cor
 - **No external frontend assets:** React, ReactDOM, Babel and the Geist fonts are checked in under `Smart Meter Dashboard/vendor/` and served locally — the dashboard makes **zero** external requests when opened. Never reintroduce a CDN (`unpkg`, `fonts.googleapis.com`, `fonts.gstatic.com`): the customer's IT allowlist contains the testo host only, so a CDN reference silently yields a blank dashboard on the target machine. `deploy/windows/README.md` documents this in "Voraussetzungen" and the §9 offline probe.
 - **SQLite WAL:** the DB must stay on a **local disk** — WAL breaks on UNC / network shares.
 - **Server binding:** configure via `PORT` / `HOST` env; `HOST` defaults to localhost. LAN access is opt-in (a firewall rule), never the default.
-- **On release / when the deployment story changes:** keep `VERSION`, the README badge, `package.json` version, and all `?v=` cache-busters in `Klima Dashboard.html` (12 script tags) in sync; update `deploy/windows/` and re-run the Windows acceptance.
+- **On release / when the deployment story changes:** keep `VERSION`, the README badge, `package.json` version, and all `?v=` cache-busters in `Klima Dashboard.html` (every app script tag — the `vendor/` tags deliberately carry none) in sync; update `deploy/windows/` and re-run the Windows acceptance.
 
 ## Ignore: `spec/`
 
