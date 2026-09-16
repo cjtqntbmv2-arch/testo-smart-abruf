@@ -47,6 +47,7 @@ function systemSubtype(cond) {
 }
 
 const db = new Database(dbPath);
+db.pragma('foreign_keys = ON');
 
 // Feed rows (alarm_status set) not yet classified as system but whose condition names a
 // connection/battery problem.

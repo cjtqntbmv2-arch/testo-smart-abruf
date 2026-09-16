@@ -259,15 +259,23 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 ### CSV-Export (ab v0.11.0)
 
-- Einstellungen → Exportieren: Panel ist sichtbar und bedienbar.
-- Einstellungen `csv_format` (Semikolon/Komma/Tab), `backup_enabled`, `backup_dir` sind unter `GET /api/settings` als Felder vorhanden (API-Key maskiert).
-- Ein manuell ausgeloester CSV-Download (`GET /api/export/csv?…`) liefert eine gueltige CSV-Datei mit korrektem Delimiter.
+- Einstellungen → Datenexport: Panel ist sichtbar und bedienbar.
+- Einstellungen `csv_format` (`de` = "Deutsch (Excel)", `rfc` = "International (RFC)"), `backup_enabled`, `backup_dir` sind unter `GET /api/settings` als Felder vorhanden (API-Key maskiert).
+- **CSV-Download:** Einstellungen -> Datenexport -> genau eine Messstelle auswaehlen, Haken
+  bei "Meldungen & Alarme" NICHT setzen, auf "Exportieren" klicken. Der Browser laedt eine
+  einzelne CSV-Datei herunter, deren Trennzeichen der gewaehlten Option unter "CSV-Format"
+  entspricht (Deutsch = Semikolon, International/RFC = Komma). Technischer Weg: `POST
+  /api/export` mit JSON-Body (`stationIds`, `from`, `to`, `dialect`, ...), Antwort mit
+  `Content-Type: text/csv`. (Mehrere Messstellen oder aktivierte Meldungen liefern
+  stattdessen eine ZIP mit einer CSV je Messstelle.)
 
 ### Monatlicher Backup (ab v0.11.0)
 
 - Backup-Verzeichnis: Standard `C:\ProgramData\TestoSmartAbruf\backups` (ueberschreibbar via `backup_dir`-Einstellung).
 - Nach dem ersten Backup-Lauf existiert pro Messstelle eine ZIP-Datei mit dem Namensschema `<safeName>_<stationId>_<YYYY-MM>.zip` (Beispiel: `Lager_42_2026-05.zip`).
-- **Idempotenz:** Ein zweiter Lauf im selben Monat ueberschreibt die bestehende ZIP (kein Duplikat).
+- **Idempotenz:** Ein zweiter Lauf im selben Monat ueberspringt die bestehende ZIP-Datei
+  (kein Ueberschreiben, kein Duplikat) - erkennbar am unveraenderten Zeitstempel
+  (`LastWriteTime`) der ZIP nach dem zweiten Lauf.
 - **Leer-Schutz:** Monate ohne Messdaten erzeugen keine ZIP.
 - **Prune-Sicherheit:** Messdaten werden erst geloescht, wenn sie in einer ZIP gesichert sind. Nicht gesicherte Monate (z. B. weil `backup_enabled=false` war) werden **nicht** vorzeitig geloescht (`effectiveCutoff = min(retentionCutoff, computePruneFloor)`).
 - Der laufende Monat wird nie gesichert oder geloescht (Cutoff liegt immer vor Monatsbeginn des aktuellen Monats).

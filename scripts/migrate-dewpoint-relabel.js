@@ -33,6 +33,7 @@ function dewPoint(T, RH) {
 }
 
 const db = new Database(dbPath);
+db.pragma('foreign_keys = ON');
 const stations = db.prepare('SELECT id FROM stations').all().map((r) => r.id);
 
 let totalRelabeled = 0;
