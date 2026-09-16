@@ -1,5 +1,8 @@
 // Settings page — sidebar navigation + section content.
-// All values are mocked / persisted to localStorage. Test buttons simulate calls.
+// Data comes from the real backend: nine /api/* fetches (settings, system status,
+// manual sync, testo devices/measuring-objects, station create/delete). localStorage
+// keeps only a UI copy of the settings blob, api key stripped — the key lives backend-side.
+// These are live calls: DELETE /api/stations/:id removes a station and cascades its measurements.
 
 const { useState: sState, useRef: sRef, useEffect: sEff, useMemo: sMemo } = React;
 
