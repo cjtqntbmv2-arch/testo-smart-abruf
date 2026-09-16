@@ -514,6 +514,41 @@ test('POST /api/export: from > to => 400', async () => {
   assert.strictEqual(res.status, 400);
 });
 
+// ── Log-Flut: identische Route-Fehler dürfen app.log nicht linear aufblähen ──
+// Der Dienst läuft monatelang durch, app.log wird nur beim Dienststart rotiert.
+// Das Dashboard pollt alle 5 s (3 + 2×Messstellen Requests) — eine dauerhaft
+// werfende Route ergab pro Vorkommnis einen vollen Stacktrace (~0,5-1 KB).
+test('Error middleware logs a stack once per signature, not per occurrence', async () => {
+  const { format } = require('node:util');
+  const STACK_FRAME = /\n\s+at /; // echter Stackframe, nicht die Zählzeile
+  const captured = [];
+  const origError = console.error;
+  console.error = (...args) => { captured.push(format(...args)); };
+  try {
+    for (let i = 0; i < 12; i++) {
+      const res = await fetch('http://localhost:3001/api/_test/throw?msg=flood-a');
+      assert.strictEqual(res.status, 500, 'Antwort an den Client bleibt 500');
+      assert.strictEqual((await res.json()).error, 'flood-a', 'Antwortkörper bleibt unverändert');
+    }
+    const resB = await fetch('http://localhost:3001/api/_test/throw?msg=flood-b');
+    await resB.json();
+  } finally {
+    console.error = origError;
+  }
+
+  const a = captured.filter((l) => l.includes('flood-a'));
+  const aStacks = a.filter((l) => STACK_FRAME.test(l));
+  assert.strictEqual(aStacks.length, 1,
+    `Stacktrace nur beim ersten Auftreten erwartet, geloggt: ${aStacks.length}`);
+  const aBytes = a.join('\n').length;
+  assert.ok(aBytes < aStacks[0].length * 2,
+    `Log darf mit den Wiederholungen nicht linear mitwachsen (${a.length} Zeilen, ${aBytes} Bytes)`);
+
+  const bStacks = captured.filter((l) => l.includes('flood-b') && STACK_FRAME.test(l));
+  assert.strictEqual(bStacks.length, 1,
+    'ein anderer Fehler muss trotzdem seinen eigenen Stacktrace bekommen');
+});
+
 after(() => {
   server.close();
   stopScheduler();
