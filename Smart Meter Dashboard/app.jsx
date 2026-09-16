@@ -72,7 +72,6 @@ function App() {
   const [editing, setEditing] = aState(null); // tile id being edited
   const [drag, setDrag] = aState(null);  // {id, origin, offset, ghost: {x,y,w,h}}
   const [resize, setResize] = aState(null); // {id, origin, start, ghost}
-  const [stationPickerOpen, setStationPickerOpen] = aState(false);
   const [view, setView] = aState("dashboard"); // 'dashboard' | 'settings'
   const [, forceTick] = aState(0);
   const gridRef = aRef(null);
@@ -207,9 +206,6 @@ function App() {
         onAdd={() => setAddOpen(true)}
         onReset={resetLayout}
         tileCount={layout.length}
-        stationPickerOpen={stationPickerOpen}
-        onToggleStationPicker={() => setStationPickerOpen((v) => !v)}
-        onCloseStationPicker={() => setStationPickerOpen(false)}
         view={view}
         onOpenSettings={() => setView("settings")}
         onLeaveSettings={() => setView("dashboard")}

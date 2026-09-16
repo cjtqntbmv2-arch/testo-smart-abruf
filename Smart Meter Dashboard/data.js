@@ -301,11 +301,6 @@
     get stationOrder() { return STATION_ORDER; },
     get activeStationId() { return activeStationId; },
     get activeStation() { return STATIONS[activeStationId]; },
-    setActiveStation(id) {
-      if (!STATIONS[id] || id === activeStationId) return;
-      activeStationId = id;
-      refresh();
-    },
     subscribe(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
