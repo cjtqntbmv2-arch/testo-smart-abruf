@@ -2,6 +2,7 @@ const { getDb, getSetting, saveSetting } = require('./db');
 const TestoClient = require('./testo-client');
 const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText, measurementAlarmText } = require('./device-bridge');
 const { maybeRunBackupScan, computePruneFloor } = require('./backup-runner');
+const { reconcileEvents } = require('./event-reconcile');
 
 let isSyncing = false;
 let lastSyncTime = null;
@@ -362,57 +363,11 @@ async function runSyncCycle(customClient = null) {
         }
       })();
 
-      // Reconcile the transition-log feed. testo emits a violation and its recovery as
-      // separate rows (distinct uuids, ascending timestamps), so "currently active" is
-      // a property of a logical alarm group — not of a single row: only the most recent
-      // transition is live, and only when it is a violation ('Alarm'). A later 'Ok'
-      // recovery closes the whole group.
-      // Partition key must include serial_no so multi-sensor devices don't cross-close
-      // each other, and severity so a Warning violation isn't extinguished by an
-      // Alarm-severity recovery (they are separate limit bands on the same channel).
-      // Synthetic system rows (sys-*, alarm_status IS NULL) are owned by
-      // applySystemEvents and are excluded here. Runs over all stored feed rows so
-      // historical pairs settle even when only one side was fetched this cycle.
-      db.transaction(() => {
-        db.prepare("UPDATE events SET active = 0 WHERE alarm_status IS NOT NULL").run();
-        db.prepare(`
-          UPDATE events SET active = 1 WHERE uuid IN (
-            SELECT uuid FROM (
-              SELECT uuid,
-                ROW_NUMBER() OVER (
-                  PARTITION BY station_id, COALESCE(serial_no,''), alarm_condition_type, severity, COALESCE(metric,'')
-                  ORDER BY start_ts DESC, rowid DESC
-                ) AS rn,
-                alarm_status
-              FROM events
-              WHERE alarm_status IS NOT NULL
-            ) WHERE rn = 1 AND alarm_status = 'Alarm'
-          )
-        `).run();
-
-        // Episode end_ts = start of the NEXT transition in the same logical group.
-        // The feed is a transition log; a violation's real end is its recovery's start
-        // (or the next violation if no recovery was recorded). LEAD over the SAME
-        // partition as the active reconciliation, ordered ascending, yields that next
-        // start. The newest row in a group (the active violation, or a trailing
-        // recovery) gets NULL — the frontend shows "läuft" for active rows via the
-        // active flag, not via end_ts. This runs over ALL stored feed rows every cycle,
-        // so historical durations settle even when only one side was fetched this cycle.
-        db.prepare(`
-          UPDATE events AS e
-          SET end_ts = nxt.next_start
-          FROM (
-            SELECT rowid AS rid,
-              LEAD(start_ts) OVER (
-                PARTITION BY station_id, COALESCE(serial_no,''), alarm_condition_type, severity, COALESCE(metric,'')
-                ORDER BY start_ts ASC, rowid ASC
-              ) AS next_start
-            FROM events
-            WHERE alarm_status IS NOT NULL
-          ) AS nxt
-          WHERE e.rowid = nxt.rid AND e.alarm_status IS NOT NULL
-        `).run();
-      })();
+      // Reconcile the transition-log feed: active flags and episode end_ts, both over
+      // the same group key. See backend/event-reconcile.js for the grouping rationale.
+      // Runs over all stored feed rows so historical pairs settle even when only one
+      // side was fetched this cycle.
+      reconcileEvents(db);
 
       // Only advance the watermark when the bridge was available, otherwise alarms
       // fetched now could not be routed and would be lost on the next cycle.

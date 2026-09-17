@@ -131,7 +131,7 @@ function systemAlarmText(systemType) {
 // "aufräumen": diese Labels landen über measurementAlarmText() als message/detail in der
 // events-Tabelle. Eine Umbenennung schreibt die Historie nicht mit; das Ereignisprotokoll
 // zeigte danach dauerhaft beide Schreibweisen nebeneinander. Nur über
-// scripts/migrate-measurement-alarm-text.js zu ändern, das gespeicherte Überschriften
+// ein Migrationsskript für die events-Tabelle zu ändern, das gespeicherte Überschriften
 // hieraus neu ableitet und jede abweichende Zeile umschreibt (auf der Produktiv-DB
 // gemessen: 184 betroffene Alarmzeilen). Bildschirm- und CSV-Namen sind frei änderbar,
 // diese hier nicht.
