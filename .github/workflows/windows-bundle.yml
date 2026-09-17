@@ -65,6 +65,34 @@ jobs:
           }
           node -e "require('better-sqlite3'); console.log('prebuild ok')"
 
+      - name: Prune foreign-platform prebuilds
+        shell: pwsh
+        # better-sqlite3 13 legt ALLE acht Plattform-Prebuilds in den npm-Tarball
+        # (zusammen ~16 MB); 12.x baute genau eines. "Assemble bundle" kopiert
+        # node_modules unveraendert, also landeten .node-Binaries fuer macOS, Linux,
+        # Linux-musl und Windows-ARM auf der Zielmaschine - neue gebuendelte Binaries,
+        # die dort nie laufen und die EDR-Freigabe unnoetig belasten (CLAUDE.md:
+        # "nothing surprising"). Das Bundle ist reines win32-x64, die mitgelieferte
+        # node.exe ebenso, also bleibt genau ein Prebuild uebrig.
+        #
+        # Reihenfolge ist Absicht: NACH dem Guard oben (der win32-x64.node als
+        # vorhanden bestaetigt hat) und VOR "Assemble bundle", damit der E2E-Smoke
+        # weiter unten die tatsaechlich ausgelieferte, ausgeduennte Fassung testet
+        # und nicht eine vollstaendige.
+        run: |
+          $dir = 'node_modules/better-sqlite3/prebuilds'
+          $vorher = (Get-ChildItem -Path $dir -Filter *.node | Measure-Object -Property Length -Sum).Sum
+          Get-ChildItem -Path $dir -Filter *.node |
+            Where-Object { $_.Name -ne 'win32-x64.node' } |
+            Remove-Item -Force
+          $rest = @(Get-ChildItem -Path $dir -Filter *.node)
+          if ($rest.Count -ne 1 -or $rest[0].Name -ne 'win32-x64.node') {
+            throw "Nach dem Ausduennen muss genau win32-x64.node uebrig sein, gefunden: $($rest.Name -join ', ')"
+          }
+          node -e "require('better-sqlite3'); console.log('prebuild laedt auch nach dem Ausduennen')"
+          $gespart = [math]::Round(($vorher - $rest[0].Length) / 1MB, 1)
+          Write-Host "prebuilds: 1 statt 8, $gespart MB entfernt"
+
       - name: Read app version
         id: ver
         shell: pwsh
