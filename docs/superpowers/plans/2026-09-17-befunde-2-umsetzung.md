@@ -81,11 +81,22 @@ README-Badge und die `?v=` in jede Welle ziehen und jede Parallelität zerstöre
 
 | Schritt | Aufgabe | Dateien | Stand |
 |---|---|---|---|
-| A0 | #8 Worktree entfernen | `.claude/worktrees/eager-chebyshev-1b84d7` | offen |
-| A1 | #4 Versions-Sync-Test (rot) | `backend/tests/version-sync.test.js` | offen |
-| A2 | #1 Doku-Korrektur, **sechs** Stellen | `deploy/windows/README.md` | offen |
-| A3 | #2 `node_modules` auf better-sqlite3 13.0.3, Suite dagegen | keine getrackte Datei | offen |
-| A4 | #3 Bump 0.16.1, Tag, CI baut das Bundle | `VERSION`, `package.json`, `package-lock.json`, `README.md`, `Smart Meter Dashboard/Klima Dashboard.html`, `deploy/windows/README.md` | offen |
+| A0 | #8 Worktree entfernen | `.claude/worktrees/eager-chebyshev-1b84d7` | **erledigt** — SHA `16e73b4` war Vorfahr von `main` und `origin/main`, Worktree sauber, `node_modules` echtes Verzeichnis (kein Symlink) |
+| A1 | #4 Versions-Sync-Test (rot) | `backend/tests/version-sync.test.js` | **erledigt** — roter Lauf beobachtet: `actual '0.15.1' / expected '0.16.0'`, genau die eine Zusicherung |
+| A2 | #1 Doku-Korrektur, **sechs** Stellen | `deploy/windows/README.md` | **erledigt** — Test danach 3/3 grün, Gegenproben leer |
+| A3 | #2 `node_modules` auf better-sqlite3 13.0.3, Suite dagegen | keine getrackte Datei | **erledigt** — 13.0.3, alle 8 Prebuilds, **kein** `build/`; 316/316 grün auf Node 26 |
+| A3b | **nachträglich aufgenommen:** drei moderate CVEs der express-4-Kette | `package-lock.json` | **erledigt** — `npm audit fix` (ohne `--force`), `qs` 6.15.2, express bleibt 4.22.2, 0 verbleibend |
+| A4 | #3 Bump 0.16.1, Tag, CI baut das Bundle | `VERSION`, `package.json`, `package-lock.json`, `README.md`, `Smart Meter Dashboard/Klima Dashboard.html`, `deploy/windows/README.md` | **erledigt** — alle sechs Orte auf 0.16.1, Tag `v0.16.1` gesetzt und gepusht |
+
+**A3b war nicht geplant.** Das `npm ci` in A3 machte drei moderate CVEs sichtbar
+(`qs` → `body-parser` → `express`, zwei DoS-Vektoren). `npm audit fix` behebt alle drei
+**innerhalb** express 4.x — der Umstieg auf express 5, den der Nutzer am 2026-09-16
+ausdrücklich zurückgestellt hat, bleibt davon unberührt. Vom Nutzer am 2026-09-17
+freigegeben, weil es dieselbe Datei betrifft, die A4 ohnehin anfasst, und einen zweiten
+Release erspart. Änderungsumfang: 19 Zeilen in `package-lock.json`, sonst nichts.
+
+**Testzahl-Protokoll Block A:** 313 (Baseline) → **316** nach A1. Die drei neuen sind der
+Versions-Sync-Test. Gestiegen, wie die Orchestrator-Regel es verlangt.
 
 **A0** ist bulk-destructive: Inventar vor dem Löschen, SHA (`16e73b4`) festhalten,
 `git -C <worktree> status --porcelain` und `git -C <worktree> log --oneline main..HEAD`
@@ -278,6 +289,16 @@ zerreißen.
 
 ## Offene Punkte
 
+- **NEU (2026-09-17, beim Ausführen von Block A gefunden): das Bundle trägt jetzt sieben
+  fremde Plattform-Binaries.** better-sqlite3 13 liefert alle acht Prebuilds im Tarball
+  aus (zusammen 16 MB), 12.x baute nur eines. Die CI kopiert `node_modules` unverändert
+  in die ZIP — das Windows-Bundle wuchs dadurch von 42,0 MB (0.16.0) auf 49,5 MB (0.16.1)
+  und enthält `.node`-Binaries für macOS, Linux, Linux-musl und Windows-ARM, die dort nie
+  laufen. Das berührt die CLAUDE.md-Regel „keine neuen gebündelten Binaries" für die
+  EDR-Freigabe. Kleinste Korrektur: in `.github/workflows/windows-bundle.yml` **nach** dem
+  bestehenden Prebuild-Guard alle `prebuilds/*.node` außer `win32-x64.node` löschen; spart
+  ~14 MB und entfernt die fremden Binaries. **Fällig zum 0.17.0-Release**, nicht
+  rückwirkend — 0.16.1 ist bereits ausgeliefert.
 - **§9-Abnahme auf Windows** steht aus — für 0.16.1 und 0.17.0. Bis dahin liegt ein
   Release-Asset auf GitHub, das niemand auf Windows angefasst hat. Bewusste Entscheidung
   des Nutzers vom 2026-09-17.
