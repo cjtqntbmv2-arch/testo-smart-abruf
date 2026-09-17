@@ -328,7 +328,7 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 ### Versionscheck
 
 - `GET /api/system/status` → Feld `appVersion` lautet `0.16.1`.
-- Alle App-`<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen dieselbe Version wie `appVersion` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen). Die drei `vendor/`-Tags tragen bewusst keinen Cache-Buster.
+- Alle App-`<script src="…?v=…">`-Tags **und der `dashboard.css`-`<link>`** im `Klima Dashboard.html` tragen dieselbe Version wie `appVersion` (Browserkonsole: keine 404 auf `.js`/`.jsx`/`.css`-Ressourcen). Die drei `vendor/`-Tags tragen bewusst keinen Cache-Buster. **Ein 404 auf `dashboard.css` ist der schlimmste Fall dieser Liste** — die Seite laedt dann vollstaendig unformatiert, ohne Fehlermeldung.
 
 ### Update-Hinweis (ab v0.15.0)
 
