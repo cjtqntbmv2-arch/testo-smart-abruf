@@ -18,45 +18,7 @@ function useSize(ref) {
   return size;
 }
 
-// Build SVG path from x/y arrays.
-function buildPath(xs, ys) {
-  let d = "";
-  let started = false;
-  for (let i = 0; i < xs.length; i++) {
-    if (Number.isNaN(ys[i]) || ys[i] == null) {
-      started = false;
-      continue;
-    }
-    d += (!started ? "M" : "L") + xs[i].toFixed(2) + " " + ys[i].toFixed(2) + " ";
-    started = true;
-  }
-  return d;
-}
-function buildAreaPath(xs, ys, baseY) {
-  let d = "";
-  let started = false;
-  let lastValidX = null;
-  for (let i = 0; i < xs.length; i++) {
-    if (Number.isNaN(ys[i]) || ys[i] == null) {
-      if (started) {
-        d += "L" + lastValidX.toFixed(2) + " " + baseY.toFixed(2) + " Z ";
-        started = false;
-      }
-      continue;
-    }
-    if (!started) {
-      d += "M" + xs[i].toFixed(2) + " " + baseY.toFixed(2) + " L" + xs[i].toFixed(2) + " " + ys[i].toFixed(2) + " ";
-      started = true;
-    } else {
-      d += "L" + xs[i].toFixed(2) + " " + ys[i].toFixed(2) + " ";
-    }
-    lastValidX = xs[i];
-  }
-  if (started) {
-    d += "L" + lastValidX.toFixed(2) + " " + baseY.toFixed(2) + " Z";
-  }
-  return d;
-}
+// buildPath, buildAreaPath und xPositions liegen in chart-logic.js (dort getestet).
 
 // Tiny inline sparkline (no axes).
 function Sparkline({ series, color, height = 36 }) {
@@ -69,7 +31,7 @@ function Sparkline({ series, color, height = 36 }) {
     const max = validSeries.length ? validSeries.reduce((a, b) => Math.max(a, b), -Infinity) : 100;
     const pad = 4;
     const yRange = max - min || 1;
-    const xs = series.map((_, i) => (i / (series.length - 1)) * (w - 2) + 1);
+    const xs = xPositions(series.length, 1, w - 2);
     const ys = series.map((v) => (typeof v !== 'number' || Number.isNaN(v)) ? NaN : (1 - (v - min) / yRange) * (height - pad * 2) + pad);
     return { line: buildPath(xs, ys), area: buildAreaPath(xs, ys, height - 1) };
   }, [w, series, height]);
@@ -115,7 +77,7 @@ function LineChart({ metricIds, stationId, timestamps, showGrid = true, showAxes
       const margin = span * 0.12;
       const yLo = lo - margin, yHi = hi + margin;
       const plotH = h - padT - padB;
-      const xs = s.map((_, i) => padL + (i / (s.length - 1)) * (w - padL - padR));
+      const xs = xPositions(s.length, padL, w - padL - padR);
       const ys = s.map((v) => (typeof v !== 'number' || Number.isNaN(v)) ? NaN : padT + (1 - (v - yLo) / (yHi - yLo)) * plotH);
       return { m, xs, ys, yLo, yHi };
     });

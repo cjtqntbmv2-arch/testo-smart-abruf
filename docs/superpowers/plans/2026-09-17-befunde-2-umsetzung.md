@@ -155,8 +155,28 @@ getestet, was die CI nie tut.
 | # | Aufgabe | Ausschließlich diese Dateien |
 |---|---|---|
 | B1 | **#5 + #6**: `chart-logic.js` und `layout-logic.js` extrahieren, testen, NaN-Fehler beheben | `Smart Meter Dashboard/chart-logic.js` (neu), `layout-logic.js` (neu), `tests/chart-logic.test.js` (neu), `tests/layout-logic.test.js` (neu), `charts.jsx`, `tiles.jsx`, `Klima Dashboard.html`, `package.json` |
-| B2 | #13 Reconciliation-SQL nach `event-reconcile.js` | `backend/event-reconcile.js` (neu), `backend/tests/event-reconcile.test.js` (neu), `backend/scheduler.js`, `scripts/migrate-system-alarm-relabel.js`, `backend/tests/migrate-system-alarm-relabel.test.js`, `backend/tests/migrate-args.test.js` |
-| B3 | #10 Die vier Migrationsskripte entfernen | `scripts/migrate-alarm-resync.js`, `scripts/migrate-measurement-alarm-text.js`, `scripts/migrate-pressure-relabel.js`, `scripts/migrate-system-alarm-text.js` (alle vier gelöscht), `scripts/README.md` |
+| B2 | #13 Reconciliation-SQL nach `event-reconcile.js` | `backend/event-reconcile.js` (neu), `backend/tests/event-reconcile.test.js` (neu), `backend/scheduler.js`, `backend/tests/scheduler.test.js` |
+| B3 | #10 **alle sechs** Migrationsskripte entfernen (Nutzerentscheidung 2026-09-17) | die sechs `scripts/migrate-*.js`, `scripts/args.js`, `backend/tests/migrate-args.test.js`, `backend/tests/migrate-system-alarm-relabel.test.js` (alle gelöscht), `scripts/README.md`, `backend/device-bridge.js` (nur der Kommentarverweis in Zeile 134) |
+
+**Welle 1 ist erledigt (2026-09-17).** Alle drei Agenten sind in ihrem Revier geblieben:
+genau 22 berührte Pfade, exakt die zugewiesenen, `scheduler.test.js` unverändert.
+
+| Agent | Ergebnis |
+|---|---|
+| B1 | Zwei rote Läufe beobachtet (`MODULE_NOT_FOUND`, dann `Linienpfad enthaelt NaN: MNaN 32.00`). Der Fix sitzt in `xPositions(count, x0, span)` — dem einen x-Erzeuger, durch den beide Diagramme laufen: `count > 1 ? i/(count-1) : 0.5`. Für `count >= 2` nachweislich identisch zu vorher. +39 Tests |
+| B2 | Roter Lauf beobachtet (`MODULE_NOT_FOUND`). `EPISODE_PARTITION` steht jetzt **einmal** statt zweimal wortgleich; `scheduler.js` 6 Zeilen rein, 51 raus; `scheduler.test.js` **unverändert** grün. +6 Tests |
+| B3 | 9 Dateien gelöscht, für jede einzeln belegt, dass kein Nutzer bleibt. `args.js` hatte genau sechs `require`-Stellen — die sechs Skripte |
+
+**Testzahl-Protokoll Welle 1:** vorher 316 (200 + 116). Erwartet wurde **162 + neu**
+(200 − 38 gelöschte). Tatsächlich: **168 Backend** (162 + 6) und **155 Dashboard**
+(116 + 39), 0 Fehlschläge. Punktgenau — und damit greift der Riegel, der den unwirksamen
+`--diff-filter=D`-Detektor ersetzt.
+
+**Abweichung vom Vorbild, von B2 gemeldet und angenommen:** `event-reconcile.js` bekommt
+`db` als Parameter, statt es sich wie `export-service.js` per `getDb()` zu holen. Das
+direkte Vorbild steht in derselben Datei zwanzig Zeilen höher (`applySystemEvents(db, …)`),
+der Aufrufer hält `db` ohnehin, und die Untersuchung unter B2(b) brauchte das Modul gegen
+ein fremdes Handle.
 
 **#5 und #6 gehören in einen Agenten**, obwohl es zwei Aufgaben sind: sie teilen sich
 `Klima Dashboard.html` und `package.json`. Getrennt wären sie eine garantierte Kollision.
@@ -307,14 +327,37 @@ zerreißen.
 - **§9-Abnahme auf Windows** steht aus — für 0.16.1 und 0.17.0. Bis dahin liegt ein
   Release-Asset auf GitHub, das niemand auf Windows angefasst hat. Bewusste Entscheidung
   des Nutzers vom 2026-09-17.
-- **Die beiden verbleibenden Migrationsskripte.** `migrate-system-alarm-relabel.js` und
-  `migrate-dewpoint-relabel.js` haben Inhaltstests und bleiben in Welle 1 stehen. Das
-  Argument aus Aufgabe 10 gilt für sie genauso. **Vor Welle 1 zu entscheiden:** alle sechs
-  weg, oder die zwei getesteten behalten? Empfehlung weiterhin: alle sechs — aber mit
-  einem Preis, der vorher nicht bekannt war: `migrate-args.test.js:213-232` enthält einen
-  **hartkodierten** Skriptnamen und muss dann mitgelöscht werden. Gemessen: bei allen
-  sechs gelöscht und unverändertem Test bricht die Suite (`1 !== 0` in `:219`), der Seed
-  ab `:141` ist dann ebenfalls Ballast. Kein Blocker, aber kein Einzeiler mehr.
+- ~~**Die beiden verbleibenden Migrationsskripte.**~~ **Entschieden 2026-09-17: alle sechs
+  weg**, samt `args.js` und den beiden zugehörigen Testdateien. In Welle 1 erledigt.
+
+- **NEU (aus Welle 1, B1): `charts.jsx:xTicks` hat dieselbe `0/0`-Falle.** Rund um Zeile 110
+  rechnet `(t - first) / (last - first)`; bei genau einem Zeitstempel ist `last === first`.
+  Liegt der exakt auf einer vollen Stunde, entsteht ein Gitterstrich und eine
+  Achsenbeschriftung mit `NaN`. Folge ist milder als der behobene Fall — der Browser
+  verwirft nur diesen einen Tick, das Diagramm bleibt sichtbar. B1 hat es korrekt liegen
+  gelassen, weil der Auftrag den Fix auf die xs-Erzeuger festlegte. Dieselbe Ursache,
+  eigene Aufgabe.
+
+- **NEU (aus Welle 1, B2): Das gelöschte Relabel-Skript hat falsche `end_ts` hinterlassen —
+  die sich selbst reparieren.** An einer Wegwerf-DB mit echtem `--apply` nachgespielt: drei
+  von vier Episoden bekamen ein falsches oder fehlendes `end_ts`, darunter eine geschlossene
+  Episode ohne Ende (`active` 1→0, `end_ts` NULL). Die Abweichung geht **nur** in eine
+  Richtung (zu spät oder NULL, nie zu früh), weil Partitionen beim Relabel nur verschmelzen
+  und nie Mitglieder verlieren können. **Kein Handlungsbedarf:** das `end_ts`-Statement ist
+  nicht inkrementell — es rechnet jeden Zyklus über alle Feed-Zeilen und überschreibt auch
+  auf NULL zurück. Seit der Migration hat sich die Tabelle bei jedem erfolgreichen Zyklus
+  selbst korrigiert. Wer Gewissheit will, fragt die Kunden-DB einmal ab:
+  `active = 0 AND end_ts IS NULL AND alarm_status IS NOT NULL` — null Treffer heißt durch.
+  Die Eigenschaft steht jetzt in `CLAUDE.md`, damit sie ein künftiger „Performance"-Umbau
+  auf inkrementelles Rechnen nicht still entfernt.
+
+- **NEU (aus Welle 1, B2): Der Monats-Backup läuft außerhalb des Alarm-`try`.** Damit ist es
+  der einzige Weg, auf dem eine falsche Dauer **dauerhaft** wird: die Reconciliation sitzt
+  innerhalb des `try`, das mit `await client.fetchAlarms(...)` beginnt, `maybeRunBackupScan`
+  davor bzw. daneben. Eine ZIP, die in einem Zyklus mit gescheitertem Alarm-Abruf entsteht,
+  friert `end_ts` ein — eine CSV wird nie nachgerechnet. Dass ein Backup-Ausfall den Sync
+  nicht rot färben soll, ist Absicht; ob das die eingefrorene Dauer aufwiegt, ist eine
+  eigene Entscheidung. Kein Blocker.
 - **`README.md:38`** nennt im Quick start blankes `npm install`. Für `npm ci` ist belegt,
   dass npm daraus trotz `"gypfile": false` ein `node-gyp rebuild` synthetisiert; ob
   `npm install` bei 13.x denselben Pfad nimmt, ist **nicht** belegt. In A3 mitprüfen.
