@@ -38,7 +38,7 @@
     return `Teilausfall — ${list} werden nicht mehr geladen; die Anzeige ist unvollständig`;
   }
 
-  const api = { recordOutcome, partialFailureNotice, FAIL_THRESHOLD, GROUP_LABELS };
+  const api = { recordOutcome, partialFailureNotice, FAIL_THRESHOLD };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') {
     window.recordOutcome = recordOutcome;

@@ -165,19 +165,13 @@ function SettingsPage({ onClose }) {
         body.api_key = settings.api.apiKey;
       }
 
-      fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      })
-        .then(res => {
-          if (!res.ok) {
-            // H4: surface backend rejection (e.g. 400 validation) as save error
-            setSaveError(true);
-            setSavedFlash(false);
-            setTimeout(() => setSaveError(false), 3000);
-            return;
-          }
+      // Gemeinsamer Wrapper statt handgebautem fetch (wie UpdateCard und export-panel.jsx):
+      // gleiche Kopfzeile, gleiches Erfolgskriterium (res.ok). Er wirft, wo der alte Code
+      // verzweigte — HTTP-Fehler und Netzabbruch landen deshalb beide im catch unten.
+      // Die Entprellung darüber bleibt die einzige Abbruchstelle; abgebrochen wird wie
+      // zuvor nur der noch nicht gestartete Aufruf, nie ein laufender.
+      DASH_DATA.saveSettings(body)
+        .then(() => {
           setSavedFlash(true);
           setSaveError(false);
           setTimeout(() => setSavedFlash(false), 1200);
@@ -188,6 +182,7 @@ function SettingsPage({ onClose }) {
             .catch(() => {});
         })
         .catch(err => {
+          // H4: surface backend rejection (e.g. 400 validation) as save error
           console.error('Failed to save backend settings:', err);
           setSaveError(true);
           setSavedFlash(false);

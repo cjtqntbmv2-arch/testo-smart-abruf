@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { getDb, getSetting, saveSetting } = require('./db');
-const { getDialect } = require('./csv-format');
+const { getDialect, pad2 } = require('./csv-format');
 const { createZip } = require('./zip-writer');
 const { stationFiles, stationBase } = require('./export-service');
 
@@ -18,7 +18,6 @@ function resolveBackupDir() {
   return path.join(path.dirname(dbPath), 'backups');
 }
 
-function pad2(n) { return String(n).padStart(2, '0'); }
 function monthStartMs(year, monthIdx0) { return new Date(year, monthIdx0, 1, 0, 0, 0, 0).getTime(); }
 function localDateKey(epochMs) { const d = new Date(epochMs); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
 
@@ -134,4 +133,4 @@ function computePruneFloor(nowMs) {
   return floor;
 }
 
-module.exports = { resolveBackupDir, monthStartMs, candidateMonths, runBackupScan, maybeRunBackupScan, computePruneFloor, lookbackMs };
+module.exports = { resolveBackupDir, monthStartMs, runBackupScan, maybeRunBackupScan, computePruneFloor };
