@@ -148,7 +148,27 @@ function scriptTags() {
   }));
 }
 
-const appTags = () => scriptTags().filter((t) => !t.src.startsWith("vendor/"));
+// <link rel="stylesheet" href="..."> - kein JS, deshalb fuer analyze() uninteressant,
+// fuer Registrierung und Cache-Buster aber genauso verbindlich wie ein Skript-Tag.
+// Ohne diese Funktion war eine .css in BEIDEN Pruefungen unten unsichtbar: ein
+// fehlender <link> und ein fehlendes ?v= blieben gruen - genau die Stale-Asset-Falle,
+// die in diesem Projekt schon einmal als "fehlendes Feature" erschienen ist.
+function linkTags() {
+  const html = fs.readFileSync(path.join(DIR, "Klima Dashboard.html"), "utf8");
+  return [...html.matchAll(/<link([^>]*)href="([^"]+)"/g)].map((m) => ({
+    src: m[2].split("?")[0],
+    version: m[2].includes("?v=") ? m[2].split("?v=")[1] : null,
+  }));
+}
+
+const istApp = (t) => !t.src.startsWith("vendor/");
+
+// Nur Skript-Tags: analyze() parst diese Quellen, eine .css wuerde daran zerschellen.
+const appTags = () => scriptTags().filter(istApp);
+
+// Alles, was das HTML laedt - Skripte UND Stylesheets.
+const appAssets = () => [...appTags(), ...linkTags().filter(istApp)];
+const vendorAssets = () => [...scriptTags(), ...linkTags()].filter((t) => !istApp(t));
 
 const realFiles = () =>
   appTags().map((t) => ({
@@ -200,20 +220,20 @@ test("erkennt einen Syntaxfehler", () => {
 
 test("jede App-Datei traegt die aktuelle Version als Cache-Buster, vendor keine", () => {
   const version = fs.readFileSync(path.join(ROOT, "VERSION"), "utf8").trim();
-  for (const t of appTags()) {
+  for (const t of appAssets()) {
     assert.strictEqual(t.version, version, `${t.src} traegt ?v=${t.version}, erwartet ${version}`);
   }
-  for (const t of scriptTags().filter((t) => t.src.startsWith("vendor/"))) {
+  for (const t of vendorAssets()) {
     assert.strictEqual(t.version, null, `${t.src} soll bewusst keinen Cache-Buster tragen`);
   }
 });
 
 test("jede Datei im Dashboard-Verzeichnis ist im HTML registriert", () => {
-  const geladen = new Set(appTags().map((t) => t.src));
+  const geladen = new Set(appAssets().map((t) => t.src));
   const vorhanden = fs
     .readdirSync(DIR)
-    .filter((f) => (f.endsWith(".js") || f.endsWith(".jsx")) && !f.startsWith("."));
+    .filter((f) => /\.(js|jsx|css)$/.test(f) && !f.startsWith("."));
   for (const f of vorhanden) {
-    assert.ok(geladen.has(f), `${f} liegt im Verzeichnis, wird aber von keinem <script>-Tag geladen`);
+    assert.ok(geladen.has(f), `${f} liegt im Verzeichnis, wird aber von keinem <script>- oder <link>-Tag geladen`);
   }
 });
