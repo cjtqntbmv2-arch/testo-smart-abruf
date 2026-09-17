@@ -65,7 +65,7 @@ Die Datenbank in `C:\ProgramData\TestoSmartAbruf\` bleibt erhalten.
 ## Schnellinstallation (empfohlen)
 
 `setup.ps1` bündelt die Schritte unten zu einem Aufruf: Node-Preflight, Stoppen
-eines ggf. laufenden Dienstes, `npm ci --omit=dev` (inkl. Prebuild-Check),
+eines ggf. laufenden Dienstes, `npm ci --omit=dev --ignore-scripts` (inkl. Prebuild-Check),
 Pfad-/Konsistenz-Prüfung, Aufruf von `install-task.ps1`, Task-Start und ein
 `GET /api/system/status`-Smoke-Check. Re-run-sicher = zugleich Update-Pfad.
 
@@ -284,7 +284,9 @@ entfernen.
   `AllSigned` gesetzt, überschreibt das `-ExecutionPolicy Bypass` — unsignierte
   Skripte laufen dann nicht. Ohne Signatur mit der IT klären.
 - **npm hinter Proxy:** `npm config set proxy <url>` / `https-proxy` setzen (oder
-  in `.npmrc`), damit der better-sqlite3-Prebuild von `github.com` geladen wird.
+  in `.npmrc`), damit `npm ci` die Registry (`registry.npmjs.org`) erreicht. Ein
+  separater Download von `github.com` findet seit better-sqlite3 13.x nicht mehr
+  statt — das Prebuild liegt im npm-Tarball (s. "Voraussetzungen").
 - **Setup-Eigenlog:** `setup.ps1` schreibt zusätzlich nach
   `C:\ProgramData\TestoSmartAbruf\logs\setup.log` (auch wenn das Fenster zugeht).
 
@@ -325,18 +327,19 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 ### Versionscheck
 
-- `GET /api/system/status` → Feld `appVersion` lautet `0.15.1`.
-- Alle 14 `<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen dieselbe Version wie `appVersion` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen). Die drei `vendor/`-Tags tragen bewusst keinen Cache-Buster.
+- `GET /api/system/status` → Feld `appVersion` lautet `0.16.1`.
+- Alle App-`<script src="…?v=…">`-Tags im `Klima Dashboard.html` tragen dieselbe Version wie `appVersion` (Browserkonsole: keine 404 auf `.js`/`.jsx`-Ressourcen). Die drei `vendor/`-Tags tragen bewusst keinen Cache-Buster.
 
 ### Update-Hinweis (ab v0.15.0)
 
 - **Alt-ZIP-Probe:** In den leeren Ablageordner NUR die ZIP einer **aelteren**
-  Fassung legen (z. B. `testo-smart-abruf-0.9.0-win-x64.zip` bei laufender
-  0.15.0), `update_dir` setzen (Befehl im Abschnitt "Update-Hinweis") und
-  Einstellungen -> Erweitert -> Ueber oeffnen: die Zeile `Update` muss `Aktuell`
-  zeigen. Erst wenn zusaetzlich eine ZIP mit hoeherer Version im Ordner liegt
-  (`testo-smart-abruf-0.16.0-win-x64.zip`) und `update_dir` erneut gespeichert
-  wird, muss dort `Update verfuegbar: 0.16.0` stehen.
+  Fassung legen (`testo-smart-abruf-0.9.0-win-x64.zip` — diese Nummer bleibt
+  bewusst fest, sie traegt die Zeichenketten-Falle weiter unten), `update_dir`
+  setzen (Befehl im Abschnitt "Update-Hinweis") und Einstellungen -> Erweitert ->
+  Ueber oeffnen: die Zeile `Update` muss `Aktuell` zeigen. Erst wenn zusaetzlich
+  eine ZIP mit **echt hoeherer** Version als der laufenden im Ordner liegt (etwa
+  die naechste Patch-Version) und `update_dir` erneut gespeichert wird, muss dort
+  `Update verfuegbar: <diese hoehere Version>` stehen.
   *Warum dieser Punkt unterscheidet:* Die naheliegende Probe "neue ZIP hinlegen,
   Hinweis erscheint" bestehen auch zwei kaputte Umsetzungen - die, die nur
   "gefundene Version ungleich laufender Version" prueft, und die, die Versionen
@@ -372,7 +375,7 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 - ZIP-Artefakt `testo-smart-abruf-<version>-win-x64.zip` existiert auf der Releases-Seite.
 - Frische Maschine **ohne vorinstalliertes Node**: `install.cmd` fuehrt ohne `npm ci` zum laufenden Dienst.
-- Nach Installation existiert `C:\Apps\TestoSmartAbruf\node.exe` und `...\node_modules\better-sqlite3\build\Release\better_sqlite3.node`.
+- Nach Installation existiert `C:\Apps\TestoSmartAbruf\node.exe` und `...\node_modules\better-sqlite3\prebuilds\win32-x64.node`; ein Ordner `...\node_modules\better-sqlite3\build\` existiert **nicht** (er waere ein node-gyp-Compile, den `setup.ps1` und der CI-Guard als Fehler werten).
 - Nach erfolgreichem Smoke-Check oeffnet sich der Browser auf `http://localhost:3000`.
 - Update durch erneutes `install.cmd`: Dienst laeuft danach mit neuer `appVersion`, DB-Daten unveraendert.
 
