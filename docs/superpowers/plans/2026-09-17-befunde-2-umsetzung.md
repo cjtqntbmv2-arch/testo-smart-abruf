@@ -295,10 +295,15 @@ zerreißen.
   in die ZIP — das Windows-Bundle wuchs dadurch von 42,0 MB (0.16.0) auf 49,5 MB (0.16.1)
   und enthält `.node`-Binaries für macOS, Linux, Linux-musl und Windows-ARM, die dort nie
   laufen. Das berührt die CLAUDE.md-Regel „keine neuen gebündelten Binaries" für die
-  EDR-Freigabe. Kleinste Korrektur: in `.github/workflows/windows-bundle.yml` **nach** dem
-  bestehenden Prebuild-Guard alle `prebuilds/*.node` außer `win32-x64.node` löschen; spart
-  ~14 MB und entfernt die fremden Binaries. **Fällig zum 0.17.0-Release**, nicht
-  rückwirkend — 0.16.1 ist bereits ausgeliefert.
+  EDR-Freigabe. **ERLEDIGT am 2026-09-17** (Commit `25ce16b`, auf Wunsch des Nutzers sofort
+  statt zum 0.17.0): neuer Schritt „Prune foreign-platform prebuilds" in
+  `.github/workflows/windows-bundle.yml`, zwischen dem bestehenden Prebuild-Guard und dem
+  Bundling — damit testet der E2E-Smoke die ausgedünnte Fassung. Der Schritt wirft, wenn
+  nicht genau `win32-x64.node` übrig bleibt, und prüft danach selbst `require()`.
+  Auf dem Branch per `workflow_dispatch` verifiziert (Lauf `35204775642`, grün):
+  Artefakt **49.367.576 B → 41.695.222 B**, Schrittausgabe `prebuilds: 1 statt 8,
+  14.2 MB entfernt`, `prebuild laedt auch nach dem Ausduennen`.
+  **Wirkt erst ab dem nächsten Tag** — das Release-Asset von v0.16.1 trägt noch alle acht.
 - **§9-Abnahme auf Windows** steht aus — für 0.16.1 und 0.17.0. Bis dahin liegt ein
   Release-Asset auf GitHub, das niemand auf Windows angefasst hat. Bewusste Entscheidung
   des Nutzers vom 2026-09-17.
