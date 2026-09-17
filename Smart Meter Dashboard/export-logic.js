@@ -48,7 +48,24 @@
     return plain ? plain[1].trim() : null;
   }
 
-  const api = { presetRange, unionMetrics, buildExportPayload, parseFilename };
+  // Umstellen des DAUERFORMATS der automatischen Monats-Backups (Einstellung
+  // `csv_format`). Der Dialekt des manuellen Export-Dialogs ist nur eine Vorauswahl
+  // daraus, also entscheidet diese Funktion beides: was gespeichert wird und ob der
+  // Dialog mitgezogen wird.
+  //   next           – angeklickter Wert
+  //   archiveFormat  – aktuell gespeichertes Dauerformat
+  //   dialectTouched – hat der Bediener den Dialekt des Dialogs schon selbst gesetzt?
+  // Rueckgabe: save = POST noetig; dialect = neuer Wert fuer die Dialog-Vorauswahl,
+  // null heisst ausdruecklich "unveraendert lassen" — eine bewusst getroffene Auswahl
+  // fuer den naechsten Export wird nie ueberschrieben.
+  function applyCsvFormatChange(next, state) {
+    const cur = (state || {}).archiveFormat;
+    if (next !== 'de' && next !== 'rfc') return { save: false, archiveFormat: cur, dialect: null };
+    if (next === cur) return { save: false, archiveFormat: cur, dialect: null };
+    return { save: true, archiveFormat: next, dialect: (state || {}).dialectTouched ? null : next };
+  }
+
+  const api = { presetRange, unionMetrics, buildExportPayload, parseFilename, applyCsvFormatChange };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') Object.assign(window, api);
 })();

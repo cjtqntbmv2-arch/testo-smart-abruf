@@ -244,6 +244,39 @@ Oberfläche.
 `header.jsx`. Die Entscheidung „melden ja/nein" wandert als reine Funktion nach
 `status-logic.js` und wird dort getestet — `app.jsx` selbst bleibt ungetestet.
 
+**Welle 2 ist erledigt (2026-09-17).** Genau 11 berührte Pfade, exakt die zugewiesenen;
+keine Datei unter `backend/tests/` angefasst. Testzahlen: 323 → **330**
+(Backend **168 unverändert**, Dashboard 155 → **162**).
+
+| Agent | Ergebnis |
+|---|---|
+| B4 | Roter Lauf beobachtet (`applyCsvFormatChange is not a function`, 4 Fehlschläge). Verwechslungsgefahr über ein Gegensatzpaar gelöst: „wird nicht gespeichert" gegen „Wird dauerhaft gespeichert". Vorauswahl folgt dem Dauerformat **bis zur ersten eigenen Eingabe** (`dialectTouched`). `server.test.js` korrekt **nicht** angefasst — `:678` und `:696` decken beide Pfade bereits. +4 Tests |
+| B5 | Roter Lauf beobachtet (`explainLayoutSaveError is not a function`, 3 Fehlschläge). Am Aufrufpfad belegt, dass `app.jsx:114` **nur beim Loslassen** läuft, nicht je Mausbewegung. Quota-vs-gesperrt-Unterscheidung bewusst verworfen (der Bediener kann in beiden Fällen nur dasselbe tun), ein Test hält die Entscheidung fest. +3 Tests |
+| B6 | (a) fünf tote Exports entfernt, (b) `pad2` nach `csv-format.js` zusammengelegt, (c) **umgestellt** — die Vier-Punkte-Gegenüberstellung ergab Übereinstimmung. **Keine einzige Testdatei geändert**, was bei (a)/(b) der eigentliche Beweis der Verhaltensgleichheit ist |
+
+**Im Browser nachgeprüft**, nicht nur in Tests (B4 konnte das nicht, weil parallel
+Zwischenstände im Arbeitsbaum lagen):
+
+- Beide Beschriftungen stehen lesbar nebeneinander, das Gegensatzpaar trägt.
+- Das `dialectTouched`-Verhalten über fünf Zustandsübergänge: Dialog folgt dem Archiv →
+  eigene Auswahl im Dialog → Archiv zweimal umgestellt → Dialog **bleibt** auf der eigenen
+  Wahl.
+- `GET /api/settings` liefert nach dem Umstellen `csv_format: "rfc"` — die Einstellung
+  kommt also wirklich dauerhaft an, was der Zweck von #7 war. Danach zurückgesetzt.
+- B5s Banner mit erzwungenem `QuotaExceededError`: erscheint mit dem geplanten Wortlaut
+  über die **bestehende** `.offline-banner`-Klasse (keine CSS-Änderung nötig, wie
+  behauptet) und verschwindet nach dem nächsten erfolgreichen Schreibvorgang.
+
+**Bewusste Abweichung, von B5 offengelegt und angenommen:** das neue Banner trägt keine
+`view !== "settings"`-Bedingung, anders als seine zwei Geschwister. Die Aussage bleibt in
+den Einstellungen wahr, und bei dauerhaft gesperrtem Speicher erscheint der Hinweis schon
+beim Laden — bevor jemand Arbeit in eine Anordnung steckt, die nicht überlebt.
+
+**Ein beobachtbarer Unterschied aus B6(c), bewusst in Kauf genommen:** eine vom Backend
+abgelehnte POST schreibt jetzt zusätzlich `console.error`; vorher blieb sie stumm. Für den
+Bediener ändert sich nichts. Den Fall über `err.cause.status` wieder auseinanderzunehmen
+wäre mehr Code für weniger Diagnose.
+
 **B6 braucht `backend/tests/export-service.test.js`.** Nachgemessen: die drei toten Exports
 (`safeFileName`, `queryMeasurements`, `queryEvents` in `export-service.js:96`) sind der
 einzige Grund, warum diese Testdatei noch läuft — ohne sie endet Welle 2 mit

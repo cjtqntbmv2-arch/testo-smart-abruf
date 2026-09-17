@@ -35,6 +35,9 @@ function joinRow(cells, dialect) {
   return cells.join(dialect.delimiter) + CRLF;
 }
 
+// Exportiert, weil backup-runner.js dieselbe Zweistelligkeit für ZIP-Namen und
+// Datumsschlüssel braucht. Das Projekt hat kein Utility-Modul; ein neues für eine
+// Zeile anzulegen wäre mehr Struktur als die Dopplung kostet.
 function pad2(n) { return String(n).padStart(2, '0'); }
 
 // From a UTC epoch (ms), produce ISO-8601-with-offset and a local Excel-friendly string,
@@ -53,4 +56,4 @@ function formatTimestamps(epochMs) {
   };
 }
 
-module.exports = { DIALECTS, getDialect, formatNumber, escapeField, joinRow, formatTimestamps, BOM, CRLF };
+module.exports = { DIALECTS, getDialect, formatNumber, escapeField, joinRow, formatTimestamps, pad2, BOM, CRLF };

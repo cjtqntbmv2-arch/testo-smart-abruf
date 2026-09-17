@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { explainSyncError } = require('../status-logic');
+const { explainSyncError, explainLayoutSaveError } = require('../status-logic');
 
 test('explainSyncError: fehlender API-Schlüssel', () => {
   const r = explainSyncError('No API Key configured');
@@ -44,4 +44,26 @@ test('explainSyncError: null/leer -> Default ohne Rohtext', () => {
   assert.strictEqual(explainSyncError(null).plain, 'Synchronisation fehlgeschlagen.');
   assert.strictEqual(explainSyncError(null).showRaw, false);
   assert.strictEqual(explainSyncError('').showRaw, false);
+});
+
+test('explainLayoutSaveError: geglueckter Schreibvorgang -> keine Meldung', () => {
+  assert.strictEqual(explainLayoutSaveError(null), null);
+  assert.strictEqual(explainLayoutSaveError(undefined), null);
+});
+
+test('explainLayoutSaveError: fehlgeschlagen -> Meldung nennt Vorgang und Folge', () => {
+  const msg = explainLayoutSaveError(new Error('irgendwas'));
+  assert.match(msg, /nicht gespeichert/);
+  assert.match(msg, /verloren/);
+});
+
+// Bewusste Entscheidung: voller und gesperrter Speicher werden NICHT unterschieden.
+// Der Bediener kann in beiden Faellen nur dasselbe tun, ein zweiter Satz brauchte
+// eine Fallunterscheidung ohne Nutzen.
+test('explainLayoutSaveError: voller und gesperrter Speicher ergeben denselben Satz', () => {
+  const voll = new Error('The quota has been exceeded.');
+  voll.name = 'QuotaExceededError';
+  const gesperrt = new Error('The operation is insecure.');
+  gesperrt.name = 'SecurityError';
+  assert.strictEqual(explainLayoutSaveError(voll), explainLayoutSaveError(gesperrt));
 });

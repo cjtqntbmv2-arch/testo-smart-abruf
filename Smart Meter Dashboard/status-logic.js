@@ -18,7 +18,21 @@
     return { plain: 'Synchronisation fehlgeschlagen.', showRaw: s.length > 0 };
   }
 
-  const api = { explainSyncError };
+  // #11: Entscheidet, ob ein fehlgeschlagener Schreibvorgang des Kachel-Layouts
+  // gemeldet wird. Rückgabe: Meldungstext oder null (nichts zu melden).
+  // Ein fester Satz, keine Fallunterscheidung: ob der Speicher voll oder vom
+  // Browser gesperrt ist (privater Modus, Gruppenrichtlinie), ändert nichts daran,
+  // was der Bediener tun kann — beide Ursachen stehen deshalb im selben Satz.
+  function explainLayoutSaveError(error) {
+    if (!error) return null;
+    return 'Kachel-Anordnung konnte nicht gespeichert werden — Änderungen gehen beim '
+      + 'Neuladen der Seite verloren (Browser-Speicher voll oder gesperrt).';
+  }
+
+  const api = { explainSyncError, explainLayoutSaveError };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  if (typeof window !== 'undefined') { window.explainSyncError = explainSyncError; }
+  if (typeof window !== 'undefined') {
+    window.explainSyncError = explainSyncError;
+    window.explainLayoutSaveError = explainLayoutSaveError;
+  }
 })();

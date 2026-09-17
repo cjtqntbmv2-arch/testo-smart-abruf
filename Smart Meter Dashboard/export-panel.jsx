@@ -11,6 +11,9 @@ function ExportPanel() {
   const [toStr, setToStr] = useStateE('');
   const [includeEvents, setIncludeEvents] = useStateE(false);
   const [dialect, setDialect] = useStateE('de');
+  // Hat der Bediener den Dialekt fuer DIESEN Export selbst gesetzt? Danach zieht ihn
+  // ein Umstellen des Dauerformats (Backup-Sektion) nicht mehr mit.
+  const [dialectTouched, setDialectTouched] = useStateE(false);
   const [busy, setBusy] = useStateE(false);
   const [error, setError] = useStateE(null);
 
@@ -117,11 +120,11 @@ function ExportPanel() {
       </Card>
 
       <Card>
-        <Field label="CSV-Format" hint="Deutsch (Excel) nutzt ; und Komma; International (RFC) nutzt , und Punkt.">
+        <Field label="CSV-Format dieses Exports" hint="Gilt nur für den Export unten und wird nicht gespeichert — vorbelegt aus dem Format der Monats-Backups. Deutsch (Excel) nutzt ; und Komma; International (RFC) nutzt , und Punkt.">
           <SegmentedControl
             value={dialect}
             options={[{ value: 'de', label: 'Deutsch (Excel)' }, { value: 'rfc', label: 'International (RFC)' }]}
-            onChange={v => setDialect(v)}
+            onChange={v => { setDialect(v); setDialectTouched(true); }}
           />
         </Field>
         <Field label="Meldungen & Alarme" hint="Zusätzlich eine Meldungs-CSV je Messstelle exportieren (erzwingt ZIP-Ausgabe).">
@@ -137,16 +140,18 @@ function ExportPanel() {
             : <><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M7 1v8M4 6l3 3 3-3"/><path d="M1.5 10v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10"/></svg> Exportieren</>}
         </button>
       </div>
-      <BackupSettings />
+      <BackupSettings dialectTouched={dialectTouched} onDialect={setDialect} />
     </>
   );
 }
-function BackupSettings() {
+function BackupSettings({ dialectTouched, onDialect }) {
   const [enabled, setEnabled] = useStateE(true);
   const [dir, setDir] = useStateE('');
   const [status, setStatus] = useStateE(null);   // backup-Block aus /api/system/status, oder null
   const [statusErr, setStatusErr] = useStateE(false);
   const [pathErr, setPathErr] = useStateE(null);
+  const [format, setFormat] = useStateE('de'); // Dauerformat der Backups (csv_format)
+  const [formatErr, setFormatErr] = useStateE(null);
   const [settingsErr, setSettingsErr] = useStateE(null);
   const [savedFlash, setSavedFlash] = useStateE(false);
   const [busy, setBusy] = useStateE(false);
@@ -166,7 +171,7 @@ function BackupSettings() {
     // false), sonst schreibt ein Klick genau diese Standardwerte über den echten,
     // bereits gespeicherten Zustand (Pfad geleert bzw. Backup unbeabsichtigt umgeschaltet).
     DASH_DATA.fetchSettings()
-      .then(s => { setEnabled(s.backup_enabled !== false); setDir(s.backup_dir || ''); setPollSec(s.poll_interval_sec || 900); setSettingsErr(null); setLoaded(true); })
+      .then(s => { setEnabled(s.backup_enabled !== false); setDir(s.backup_dir || ''); setFormat(s.csv_format || 'de'); setPollSec(s.poll_interval_sec || 900); setSettingsErr(null); setLoaded(true); })
       .catch(() => setSettingsErr('Backup-Einstellungen konnten nicht geladen werden — Schalter und Pfad zeigen nur Standardwerte, nicht den echten Zustand. Bedienung ist deshalb gesperrt (Seite neu laden zum erneuten Versuch).'));
     reloadStatus();
   }, []);
@@ -187,6 +192,23 @@ function BackupSettings() {
       setSavedFlash(true); setTimeout(() => setSavedFlash(false), 2000);
       reloadStatus();
     } catch (e) { setPathErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  async function changeFormat(next) {
+    if (busy || !loaded) return;   // gleiche Sperre wie der Schalter: kein Schreiben ueber ungeladenen Zustand
+    const d = window.applyCsvFormatChange(next, { archiveFormat: format, dialectTouched });
+    if (!d.save) return;
+    setFormatErr(null); setBusy(true);
+    setFormat(d.archiveFormat);              // optimistisch
+    if (d.dialect) onDialect(d.dialect);     // Vorauswahl des Export-Dialogs mitziehen
+    try { await DASH_DATA.saveSettings({ csv_format: d.archiveFormat }); }
+    catch (e) {
+      // Nur das Dauerformat faellt zurueck. Die Dialog-Vorauswahl bleibt auf dem eben
+      // angeklickten Wert stehen: sie betrifft ausschliesslich den naechsten manuellen
+      // Export, nicht das Archiv, und der Bediener hat genau diesen Wert gewaehlt.
+      setFormat(format); setFormatErr(e.message);
+    }
     finally { setBusy(false); }
   }
 
@@ -232,6 +254,23 @@ function BackupSettings() {
             <div className="export-error">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               <span>{pathErr}</span>
+            </div>
+          )}
+        </Field>
+        <Field label="CSV-Format der Monats-Backups" hint="Wird dauerhaft gespeichert und gilt für jede automatische Sicherung. Bereits geschriebene ZIPs bleiben unverändert.">
+          {/* SegmentedControl (ui-kit.jsx) kennt wie Toggle kein disabled-Prop — die Sperre
+              sitzt in changeFormat, pointerEvents macht sie sichtbar. */}
+          <span style={loaded ? undefined : { opacity: 0.5, pointerEvents: 'none' }}>
+            <SegmentedControl
+              value={format}
+              options={[{ value: 'de', label: 'Deutsch (Excel)' }, { value: 'rfc', label: 'International (RFC)' }]}
+              onChange={changeFormat}
+            />
+          </span>
+          {formatErr && (
+            <div className="export-error">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span>{formatErr}</span>
             </div>
           )}
         </Field>

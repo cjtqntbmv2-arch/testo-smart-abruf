@@ -93,4 +93,4 @@ function exportStations({ stationIds, metricKeys, fromTs, toTs, includeEvents, d
   };
 }
 
-module.exports = { safeFileName, stationBase, queryMeasurements, queryEvents, getExportMetadata, exportStations, stationFiles };
+module.exports = { safeFileName, stationBase, getExportMetadata, exportStations, stationFiles };

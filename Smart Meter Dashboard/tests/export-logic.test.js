@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { presetRange, unionMetrics, buildExportPayload, parseFilename } = require('../export-logic.js');
+const { presetRange, unionMetrics, buildExportPayload, parseFilename, applyCsvFormatChange } = require('../export-logic.js');
 
 test('presetRange: lastMonth spans the previous calendar month', () => {
   const now = Date.UTC(2026, 5, 10, 9, 0, 0); // June 10
@@ -38,4 +38,29 @@ test('parseFilename: extracts filename* then filename', () => {
 test('parseFilename: trims trailing whitespace from the capture', () => {
   assert.strictEqual(parseFilename("attachment; filename*=UTF-8''report.csv  "), 'report.csv');
   assert.strictEqual(parseFilename('attachment; filename="x.zip" '), 'x.zip');
+});
+
+// ── Dauerformat der Monats-Backups (csv_format) ──────────────────────────────
+// Zwei Bedienelemente, ein Wert: das Dauerformat des Archivs wird gespeichert,
+// der Dialekt des manuellen Exports ist nur eine Vorauswahl daraus.
+
+test('applyCsvFormatChange: Umstellen speichert und zieht die unberuehrte Dialog-Vorauswahl mit', () => {
+  const d = applyCsvFormatChange('rfc', { archiveFormat: 'de', dialectTouched: false });
+  assert.deepStrictEqual(d, { save: true, archiveFormat: 'rfc', dialect: 'rfc' });
+});
+
+test('applyCsvFormatChange: eine selbst gesetzte Dialog-Auswahl wird nicht ueberschrieben', () => {
+  const d = applyCsvFormatChange('rfc', { archiveFormat: 'de', dialectTouched: true });
+  assert.deepStrictEqual(d, { save: true, archiveFormat: 'rfc', dialect: null });
+});
+
+test('applyCsvFormatChange: derselbe Wert speichert nicht erneut', () => {
+  // SegmentedControl feuert onChange auch beim Klick auf die bereits aktive Schaltflaeche.
+  const d = applyCsvFormatChange('de', { archiveFormat: 'de', dialectTouched: false });
+  assert.deepStrictEqual(d, { save: false, archiveFormat: 'de', dialect: null });
+});
+
+test('applyCsvFormatChange: unbekannter Wert aendert nichts', () => {
+  const d = applyCsvFormatChange('xml', { archiveFormat: 'de', dialectTouched: false });
+  assert.deepStrictEqual(d, { save: false, archiveFormat: 'de', dialect: null });
 });

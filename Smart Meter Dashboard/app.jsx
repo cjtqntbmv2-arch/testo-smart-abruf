@@ -94,6 +94,7 @@ function App() {
   const [resize, setResize] = aState(null); // {id, origin, start, ghost}
   const [view, setView] = aState("dashboard"); // 'dashboard' | 'settings'
   const [, forceTick] = aState(0);
+  const [saveWarning, setSaveWarning] = aState(null); // #11: Text oder null
   const gridRef = aRef(null);
   const [gridW, setGridW] = aState(1200);
 
@@ -110,8 +111,25 @@ function App() {
     return () => ro.disconnect();
   }, []);
 
+  // #11: Der Schreibvorgang lief bisher stumm ins Leere — bei vollem oder gesperrtem
+  // Speicher verlor der Bediener seine Anordnung ohne jeden Hinweis.
+  // Häufigkeit: einmal beim Laden und danach je ABGESCHLOSSENER Änderung. setLayout
+  // steht ausschliesslich in onUp, addTile, removeTile, updateTile und resetLayout;
+  // im mousemove-Pfad läuft nur setDrag/setResize. Eine Meldung je Mausbewegung kann
+  // also nicht entstehen.
+  // Gemeldet wird der ZUSTAND, nicht das Ereignis: ein späterer geglückter Versuch
+  // räumt das Banner wieder weg, denn dann steht die aktuelle Anordnung gespeichert
+  // und es geht nichts mehr verloren. Gleicher Wert -> React rendert nicht neu, das
+  // Banner flackert also nicht bei jeder Layout-Änderung.
   aEff(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(layout)); } catch (e) {}
+    let err = null;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+    } catch (e) {
+      err = e;
+      console.warn("[layout] Speichern der Kachel-Anordnung fehlgeschlagen:", e);
+    }
+    setSaveWarning(explainLayoutSaveError(err));
   }, [layout]);
 
   const cellW = (gridW - GAP * (COLS - 1)) / COLS;
@@ -264,6 +282,20 @@ function App() {
             <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
           <span>{window.DASH_DATA.partialFailure}</span>
+        </div>
+      )}
+
+      {/* #11: Layout liess sich nicht speichern. Ohne view-Bedingung, anders als die
+          zwei Banner darüber: die Aussage bleibt in den Einstellungen wahr, und die
+          Anordnung ist dort nur nicht sichtbar, nicht heil. Gleiche Klasse, gleiche
+          Warnfarbe — die Daten stimmen, nur eine Einstellung blieb ungespeichert. */}
+      {saveWarning && (
+        <div className="offline-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span>{saveWarning}</span>
         </div>
       )}
 
