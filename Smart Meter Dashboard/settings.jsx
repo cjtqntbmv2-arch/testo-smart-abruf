@@ -665,20 +665,11 @@ function DatabaseSection({ settings, update, systemStatus }) {
   );
 }
 
-// Update-Hinweis aus /api/system/status. Der Dienst wird davon nie gesperrt —
-// eine gesperrte Klimaüberwachung wäre schlimmer als eine alte Fassung.
-function updateText(u) {
-  if (!u) return '—';
-  if (!u.enabled) return 'Prüfung aus (kein Ablageordner)';
-  if (u.updateAvailable) return `Update verfügbar: ${u.latestVersion}`;
-  return 'Aktuell';
-}
-
 // Ablageordner für den Update-Hinweis. Eigene Karte direkt über der Über-Karte,
 // damit Einstellung und Zustand (Zeile „Update") untereinander stehen.
 // Hook-Aliase: sState/sEff aus dem Kopf dieser Datei — blanke useState/useEffect
 // kollidieren mit den globalen Namen aus charts.jsx und machen die Seite weiß.
-function UpdateCard({ onRefresh }) {
+function UpdateCard({ onRefresh, update, appVersion }) {
   const [dir, setDir] = sState('');
   const [busy, setBusy] = sState(false);
   const [savedFlash, setSavedFlash] = sState(false);
@@ -690,7 +681,7 @@ function UpdateCard({ onRefresh }) {
       .then(s => { setDir(s.update_dir || ''); setDirLoaded(true); })
       // Scheitert das Laden, bleibt dir auf '' stehen. Das darf nicht still passieren:
       // "Speichern" würde den leeren String senden und einen bestehenden Ablageordner
-      // löschen — die Update-Prüfung schaltet sich dabei selbst ab (siehe updateText()).
+      // löschen — die Update-Prüfung schaltet sich dabei selbst ab (siehe explainUpdateStatus()).
       // Deshalb zusätzlich zur Fehleranzeige: Speichern bleibt gesperrt, bis das Laden
       // einmal erfolgreich war (Neuladen der Seite versucht es erneut).
       .catch(() => setErr('Ablageordner konnte nicht geladen werden — das Feld zeigt nicht den echten Wert. Speichern ist deshalb gesperrt (Seite neu laden zum erneuten Versuch), sonst würde eine bestehende Einstellung stumm überschrieben.'));
@@ -708,12 +699,19 @@ function UpdateCard({ onRefresh }) {
     finally { setBusy(false); }
   }
 
+  // Zustand des ABGELEGTEN ORDNERS aus Sicht des Dienstes (nicht des Eingabefelds) — dieselbe
+  // Ableitung wie Kopfzeile und Über-Karte, damit alle drei nie Verschiedenes zeigen.
+  const status = window.explainUpdateStatus(update, appVersion);
+
   return (
     <Card>
       <div className="card-title">Update-Hinweis</div>
       <div className="card-sub" style={{ marginBottom: 12 }}>
-        Ablageordner, in dem neue Fassungen bereitgelegt werden (z. B. eine Netzfreigabe).
-        Der Ordner wird nur gelesen; installiert wird weiterhin von Hand. Leer = Prüfung aus.
+        Ablageordner, in dem neue Fassungen bereitgelegt werden — als UNC-Pfad, z. B.{' '}
+        <code>\\fileserver\Software\TestoSmartAbruf</code>: der Dienst läuft ohne Benutzeranmeldung
+        und sieht deshalb keine Netzlaufwerksbuchstaben. Leserecht auf die Freigabe braucht das
+        Computerkonto des Rechners, nicht ein Benutzerkonto. Der Ordner wird nur gelesen; installiert
+        wird durch die IT über <code>update.cmd</code> im Ablageordner. Leer = Prüfung aus.
       </div>
       <Field label="Ablageordner" hint="Gesucht wird testo-smart-abruf-&lt;Version&gt;-win-x64.zip. Leer lassen schaltet die Prüfung ab.">
         <div className="backup-path">
@@ -730,6 +728,18 @@ function UpdateCard({ onRefresh }) {
         </div>
         {err && <div className="export-error"><span>{err}</span></div>}
       </Field>
+      {/* Zustand des Dienstes: zeigt nach dem Speichern, ob der Ablageordner tatsaechlich
+          lesbar ist — unabhaengig vom err oben, der nur das Laden/Speichern des Feldes betrifft. */}
+      <div className="card-sub" style={{ marginTop: 10 }}>
+        Zustand: {status.label}
+        {update && update.checkedAt != null && ` · geprüft ${DASH_DATA.formatRelative(update.checkedAt)}`}
+      </div>
+      {status.cause && (
+        <div className="export-error" style={{ marginTop: 8, marginBottom: 0 }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span>{status.cause}</span>
+        </div>
+      )}
     </Card>
   );
 }
@@ -749,13 +759,13 @@ function AdvancedSection({ settings, update, onReset, systemStatus, onRefresh })
         </button>
       </Card>
 
-      <UpdateCard onRefresh={onRefresh} />
+      <UpdateCard onRefresh={onRefresh} update={systemStatus?.update} appVersion={systemStatus?.appVersion} />
 
       <Card>
         <div className="card-title">Über</div>
         <div className="kv-grid two-col">
           <KV label="Version"    value={`Klima Dashboard ${systemStatus?.appVersion || '—'}`} />
-          <KV label="Update"     value={updateText(systemStatus?.update)} />
+          <KV label="Update"     value={window.explainUpdateStatus(systemStatus?.update, systemStatus?.appVersion).label} />
           <KV label="API"        value="v3 · Testo Smart Connect" />
           <KV label="Datenbank"  value="SQLite 3" />
           <KV label="Lizenz"     value="Open Source" />

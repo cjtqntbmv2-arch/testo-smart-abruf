@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { explainSyncError, explainLayoutSaveError, explainBackupStatus } = require('../status-logic');
+const { explainSyncError, explainLayoutSaveError, explainBackupStatus, explainUpdateStatus } = require('../status-logic');
 
 test('explainSyncError: fehlender API-Schlüssel', () => {
   const r = explainSyncError('No API Key configured');
@@ -96,4 +96,77 @@ test('explainBackupStatus: noch kein Lauf oder kein Block -> neutral, keine Fehl
     { status: 'unknown', label: 'Noch kein Lauf', cause: null });
   assert.strictEqual(explainBackupStatus(undefined).status, 'unknown');
   assert.strictEqual(explainBackupStatus(null).status, 'unknown');
+});
+
+// Update-Hinweis aus dem update-Block von GET /api/system/status (Update-Weg):
+// { enabled, updateAvailable, latestVersion, latestFile, dir, error, checking, checkedAt }.
+// Rangfolge (spezifischste zuerst): kein Objekt < aus < prueft gerade < Lesefehler <
+// Update verfuegbar < aktuell. Jeder Fall unten haelt genau diese Reihenfolge fest.
+const UPDATE_DIR = '\\\\fileserver\\Software\\TestoSmartAbruf';
+const BANNER_089 = 'Neue Fassung 0.18.0 liegt bereit (installiert: 0.17.2). Installation durch die IT: '
+  + `update.cmd im Ablageordner ${UPDATE_DIR} als Administrator ausführen.`;
+
+test('explainUpdateStatus: kein update-Objekt -> Strich, keine Leiste', () => {
+  assert.deepStrictEqual(explainUpdateStatus(null, '0.17.2'), { label: '—', banner: null, cause: null });
+  assert.deepStrictEqual(explainUpdateStatus(undefined, '0.17.2'), { label: '—', banner: null, cause: null });
+});
+
+test('explainUpdateStatus: enabled false -> Prüfung aus, geht jedem anderen Feld vor', () => {
+  // enabled:false gewinnt selbst dann, wenn gleichzeitig checking/error/updateAvailable gesetzt sind.
+  const r = explainUpdateStatus({
+    enabled: false, checking: true, error: 'EACCES', updateAvailable: true, latestVersion: '0.18.0',
+  }, '0.17.2');
+  assert.deepStrictEqual(r, { label: 'Prüfung aus (kein Ablageordner)', banner: null, cause: null });
+});
+
+test('explainUpdateStatus: checking ohne bekanntes Update -> "Prüfung läuft …", keine Leiste', () => {
+  const r = explainUpdateStatus({ enabled: true, checking: true, error: null, updateAvailable: false }, '0.17.2');
+  assert.deepStrictEqual(r, { label: 'Prüfung läuft …', banner: null, cause: null });
+});
+
+test('explainUpdateStatus: checking mit bereits bekanntem Update -> Leiste bleibt stehen (kein Flackern)', () => {
+  const r = explainUpdateStatus({
+    enabled: true, checking: true, error: null, updateAvailable: true,
+    latestVersion: '0.18.0', dir: UPDATE_DIR,
+  }, '0.17.2');
+  assert.strictEqual(r.label, 'Prüfung läuft …');
+  assert.strictEqual(r.banner, BANNER_089);
+  assert.strictEqual(r.cause, null);
+});
+
+test('explainUpdateStatus: checking hat Vorrang vor einem alten Lesefehler', () => {
+  const r = explainUpdateStatus({ enabled: true, checking: true, error: 'EACCES: permission denied', updateAvailable: false }, '0.17.2');
+  assert.deepStrictEqual(r, { label: 'Prüfung läuft …', banner: null, cause: null });
+});
+
+test('explainUpdateStatus: Lesefehler -> Ursache im Klartext, keine Leiste', () => {
+  const r = explainUpdateStatus({ enabled: true, checking: false, error: 'EACCES: permission denied', updateAvailable: false }, '0.17.2');
+  assert.deepStrictEqual(r, { label: 'Ablageordner nicht lesbar', banner: null, cause: 'EACCES: permission denied' });
+});
+
+test('explainUpdateStatus: Lesefehler hat Vorrang vor updateAvailable', () => {
+  const r = explainUpdateStatus({
+    enabled: true, checking: false, error: 'ENOENT', updateAvailable: true, latestVersion: '0.18.0', dir: UPDATE_DIR,
+  }, '0.17.2');
+  assert.deepStrictEqual(r, { label: 'Ablageordner nicht lesbar', banner: null, cause: 'ENOENT' });
+});
+
+test('explainUpdateStatus: Update verfügbar -> Label und Leiste mit installierter Fassung und Ordner', () => {
+  const r = explainUpdateStatus({
+    enabled: true, checking: false, error: null, updateAvailable: true,
+    latestVersion: '0.18.0', latestFile: 'testo-smart-abruf-0.18.0-win-x64.zip', dir: UPDATE_DIR,
+  }, '0.17.2');
+  assert.deepStrictEqual(r, { label: 'Update verfügbar: 0.18.0', banner: BANNER_089, cause: null });
+});
+
+test('explainUpdateStatus: Update verfügbar ohne bekannte installierte Fassung -> Platzhalter in der Leiste', () => {
+  const r = explainUpdateStatus({
+    enabled: true, checking: false, error: null, updateAvailable: true, latestVersion: '0.18.0', dir: UPDATE_DIR,
+  }, null);
+  assert.match(r.banner, /installiert: —/);
+});
+
+test('explainUpdateStatus: nichts Neueres -> Aktuell, keine Leiste', () => {
+  const r = explainUpdateStatus({ enabled: true, checking: false, error: null, updateAvailable: false }, '0.17.2');
+  assert.deepStrictEqual(r, { label: 'Aktuell', banner: null, cause: null });
 });

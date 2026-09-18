@@ -343,6 +343,12 @@ body {
 }
 .offline-banner svg { color: var(--warn-strong); }
 
+/* Update-Hinweisleiste (Update-Weg): Info-Ton statt Warnfarbe — ein bereitliegendes
+   Update ist kein Fehlerzustand. --sys ist bereits die neutrale dritte Stufe neben
+   warn/alarm (siehe .sev-system), deshalb hier wiederverwendet statt einer neuen Farbe. */
+.update-banner { background: var(--sys-tint); border-bottom: 1px solid color-mix(in oklch, var(--sys) 35%, transparent); }
+.update-banner svg { color: var(--sys); }
+
 /* ---------- KPI body ---------- */
 .kpi { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; }
 .kpi-meta { display: flex; align-items: center; justify-content: space-between; }

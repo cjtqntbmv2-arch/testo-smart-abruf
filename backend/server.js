@@ -123,9 +123,15 @@ const SETTING_RULES = {
   },
   // Ablageordner fuer den Update-Hinweis. Bewusst OHNE mkdir/Schreibtest: das ist eine
   // fremde, oft nur lesbare Netzfreigabe. Leer = Pruefung aus. Ein nicht erreichbarer
-  // Pfad wird angenommen und fuehrt nur zu "kein Update bekannt" — er darf das
-  // Speichern der uebrigen Einstellungen nicht scheitern lassen.
-  update_dir: (v) => trimmedText(v, 'Ablageordner (update_dir) muss Text sein.'),
+  // Pfad wird angenommen; den Grund zeigt die Pruefung danach im Status. Nur relativ
+  // wird abgelehnt: das hiesse relativ zum Arbeitsverzeichnis des Dienstes. win32, weil der
+  // Dienst auf Windows laeuft: das nimmt UNC und D:\... an, "C:ordner" nicht.
+  update_dir: (v) => {
+    const dir = trimmedText(v, 'Ablageordner (update_dir) muss Text sein.');
+    return !dir || path.win32.isAbsolute(dir) ? dir
+      : invalid('Ablageordner (update_dir) muss ein absoluter Pfad sein, am besten ein UNC-Pfad wie '
+        + '\\\\fileserver\\Software\\TestoSmartAbruf (leer = Prüfung aus).');
+  },
 };
 
 app.post('/api/settings', (req, res) => {
