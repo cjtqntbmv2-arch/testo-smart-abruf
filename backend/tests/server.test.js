@@ -160,6 +160,87 @@ test('POST /api/stations accepts valid id and name (optional fields null)', asyn
   assert.strictEqual(station.name, 'Valid Station');
 });
 
+// ── Aufgabe 7 (V28): ein Gerät gehört zu höchstens einer Messstelle ───────
+// Vorher speicherte die API eine zweite Messstelle auf derselben device_uuid; der Scheduler
+// schrieb die echten Daten dann unter nur eine, und das Löschen der anderen nahm sie per Kaskade mit.
+const postStation = (body) => fetch('http://localhost:3001/api/stations', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+});
+const uuidOf = (id) => getDb().prepare('SELECT device_uuid FROM stations WHERE id = ?').get(id)?.device_uuid;
+
+test('POST /api/stations: device_uuid einer anderen Messstelle → 409 mit deren Name und ID, nichts gespeichert; Umbenennen mit eigener UUID bleibt erlaubt', async () => {
+  saveSetting('api_key', ''); // kein Hintergrund-Sync
+  const db = getDb();
+  try {
+    assert.strictEqual((await postStation({ id: 'a7-besitz', name: 'Besitzer', device_uuid: 'dev-a7' })).status, 200);
+
+    for (const uuid of ['dev-a7', '  dev-a7\t']) { // getrimmt verglichen
+      const res = await postStation({ id: 'a7-zweit', name: 'Zweite', device_uuid: uuid });
+      const body = await res.json();
+      assert.strictEqual(res.status, 409, `${JSON.stringify(uuid)}: ${JSON.stringify(body)}`);
+      assert.match(body.error, /„Besitzer“ \(a7-besitz\)/, body.error);
+      assert.match(body.error, /dev-a7/, body.error);
+    }
+    assert.strictEqual(db.prepare("SELECT count(*) c FROM stations WHERE id = 'a7-zweit'").get().c, 0, 'nichts gespeichert');
+
+    // Umbenennen = dieselbe Messstelle mit ihrer eigenen UUID erneut speichern.
+    assert.strictEqual((await postStation({ id: 'a7-besitz', name: 'Umbenannt', device_uuid: 'dev-a7' })).status, 200);
+    assert.strictEqual(db.prepare("SELECT name FROM stations WHERE id = 'a7-besitz'").get().name, 'Umbenannt');
+
+    // Eine bestehende Messstelle auf ein vergebenes Gerät umstellen: ebenfalls 409, ihre Zuordnung bleibt.
+    assert.strictEqual((await postStation({ id: 'a7-andere', name: 'Andere', device_uuid: 'dev-a7-b' })).status, 200);
+    const res = await postStation({ id: 'a7-andere', name: 'Andere', device_uuid: 'dev-a7' });
+    assert.strictEqual(res.status, 409);
+    assert.strictEqual(uuidOf('a7-andere'), 'dev-a7-b');
+  } finally {
+    db.prepare("DELETE FROM stations WHERE id LIKE 'a7-%'").run();
+  }
+});
+
+test('POST /api/stations: "kein Gerät" ("", nur Leerzeichen, null, fehlend) wird NULL und ist beliebig oft erlaubt; UUID getrimmt; kein Text → 400', async () => {
+  saveSetting('api_key', '');
+  const db = getDb();
+  try {
+    for (const [id, uuid] of [['a7-leer1', ''], ['a7-leer2', ''], ['a7-blank', ' \t '], ['a7-null', null], ['a7-ohne', undefined]]) {
+      const res = await postStation({ id, name: id, device_uuid: uuid });
+      assert.strictEqual(res.status, 200, `${id}: ${await res.text()}`);
+      assert.strictEqual(uuidOf(id), null, `${id}: als NULL gespeichert`);
+    }
+    assert.strictEqual((await postStation({ id: 'a7-trim', name: 'Trim', device_uuid: '  dev-a7-trim \n' })).status, 200);
+    assert.strictEqual(uuidOf('a7-trim'), 'dev-a7-trim');
+
+    for (const bad of [123, true, {}, ['dev-a7-trim']]) {
+      const res = await postStation({ id: 'a7-typ', name: 'Typ', device_uuid: bad });
+      const body = await res.json();
+      assert.strictEqual(res.status, 400, `${JSON.stringify(bad)}: ${res.status} ${JSON.stringify(body)}`);
+      assert.match(body.error, /device_uuid/);
+    }
+    assert.strictEqual(uuidOf('a7-typ'), undefined, 'nichts gespeichert');
+  } finally {
+    db.prepare("DELETE FROM stations WHERE id LIKE 'a7-%'").run();
+  }
+});
+
+test('POST /api/stations: greift der UNIQUE-Index trotz Vorprüfung, antwortet die API mit derselben 409 statt 500', async () => {
+  saveSetting('api_key', '');
+  const db = getDb();
+  db.prepare("INSERT INTO stations (id, name) VALUES ('a7-rivale', 'Rivale')").run();
+  // Ein Schreiber, der zwischen Vorprüfung und Speichern dieselbe UUID vergibt. Im Betrieb nur
+  // über eine zweite Verbindung denkbar; hier stellt ein Temp-Trigger das nach.
+  db.exec(`CREATE TEMP TRIGGER a7_rennen BEFORE INSERT ON stations WHEN NEW.id = 'a7-spaet'
+           BEGIN UPDATE stations SET device_uuid = NEW.device_uuid WHERE id = 'a7-rivale'; END`);
+  try {
+    const res = await postStation({ id: 'a7-spaet', name: 'Später', device_uuid: 'dev-a7-rennen' });
+    const body = await res.json();
+    assert.strictEqual(res.status, 409, JSON.stringify(body));
+    assert.match(body.error, /Das Gerät dev-a7-rennen ist bereits .* zugewiesen/, body.error);
+    assert.strictEqual(uuidOf('a7-spaet'), undefined, 'nichts gespeichert');
+  } finally {
+    db.exec('DROP TRIGGER IF EXISTS temp.a7_rennen');
+    db.prepare("DELETE FROM stations WHERE id LIKE 'a7-%'").run();
+  }
+});
+
 // ── DELETE /api/stations/:id (destructive route, was untested) ────────────
 test('DELETE /api/stations/:id removes the station and cascades its measurements and events', async () => {
   const db = getDb();

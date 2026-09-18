@@ -184,19 +184,45 @@ app.post('/api/stations', (req, res) => {
     return res.status(400).json({ error: 'name must be a non-empty string' });
   }
 
+  // Ein Geraet gehoert zu hoechstens einer Messstelle (Funktionstest 2026-09-17, V28): bei
+  // zweien schrieb der Scheduler die Daten unter nur eine, und das Loeschen der anderen nahm
+  // echte Messwerte und Alarme per Kaskade mit. Getrimmt; leer oder nur Leerzeichen = kein
+  // Geraet (NULL). Dieselbe Messstelle mit ihrer eigenen UUID erneut speichern (Umbenennen)
+  // bleibt erlaubt. Die Pruefung traegt auch Installationen, auf denen db.js den UNIQUE-Index
+  // wegen einer Alt-Dublette nicht anlegen konnte.
+  if (device_uuid != null && typeof device_uuid !== 'string') {
+    return res.status(400).json({ error: 'Geräte-UUID (device_uuid) muss Text sein.' });
+  }
+  const deviceUuid = device_uuid?.trim() || null;
+  const db = getDb();
+  const ownerOf = () => db.prepare('SELECT id, name FROM stations WHERE device_uuid = ? AND id != ?').get(deviceUuid, id);
+  const deviceTaken = (other) => res.status(409).json({
+    error: `Das Gerät ${deviceUuid} ist bereits ${other ? `der Messstelle „${other.name}“ (${other.id})` : 'einer anderen Messstelle'} zugewiesen. Ein Gerät kann nur zu einer Messstelle gehören – dort zuerst die Zuweisung entfernen oder ein anderes Gerät wählen.`
+  });
+  const owner = deviceUuid && ownerOf();
+  if (owner) return deviceTaken(owner);
+
   // Upsert via ON CONFLICT so an edit UPDATEs only the user-editable fields.
   // INSERT OR REPLACE would DELETE the existing row first, which (with foreign
   // keys ON and ON DELETE CASCADE) would wipe the station's measurements/events
   // and reset its live telemetry columns. ON CONFLICT updates in place instead.
-  getDb().prepare(`
-    INSERT INTO stations (id, name, location, mo_uuid, device_uuid)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      name = excluded.name,
-      location = excluded.location,
-      mo_uuid = excluded.mo_uuid,
-      device_uuid = excluded.device_uuid
-  `).run(id, name, location ?? null, mo_uuid ?? null, device_uuid ?? null);
+  try {
+    db.prepare(`
+      INSERT INTO stations (id, name, location, mo_uuid, device_uuid)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        location = excluded.location,
+        mo_uuid = excluded.mo_uuid,
+        device_uuid = excluded.device_uuid
+    `).run(id, name, location ?? null, mo_uuid ?? null, deviceUuid);
+  } catch (e) {
+    // Die id faengt das Upsert ab; eine UNIQUE-Verletzung kann nur der Geraete-Index sein. Er
+    // greift erst, wenn zwischen Pruefung und Speichern ein anderer Schreiber (eine zweite
+    // Verbindung) dieselbe UUID vergab — dann dieselbe Antwort statt 500.
+    if (e.code !== 'SQLITE_CONSTRAINT_UNIQUE') throw e;
+    return deviceTaken(ownerOf());
+  }
 
   // Trigger immediate sync for the new station
   runSyncCycle().catch(error);

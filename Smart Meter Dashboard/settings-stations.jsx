@@ -25,6 +25,9 @@ function StationsSection() {
   const [formLocation, setFormLocation] = mState('');
   const [formMoUuid, setFormMoUuid] = mState('');
   const [formDeviceUuid, setFormDeviceUuid] = mState('');
+  // Auswahlfeld und Freitextfeld teilen formDeviceUuid; gespeichert und verglichen wird getrimmt
+  // (der Server trimmt ebenso, leer = kein Geraet).
+  const deviceUuid = formDeviceUuid.trim();
 
   // Device list from local backend proxy (one entry per physical logger)
   const [deviceList, setDeviceList] = mState([]);
@@ -84,7 +87,7 @@ function StationsSection() {
       name: formName,
       location: formLocation,
       mo_uuid: formMoUuid || null,
-      device_uuid: formDeviceUuid || null
+      device_uuid: deviceUuid || null
     };
 
     fetch('/api/stations', {
@@ -182,7 +185,7 @@ function StationsSection() {
               </div>
             ) : (
               <select
-                value={formDeviceUuid}
+                value={deviceUuid}
                 onChange={(e) => setFormDeviceUuid(e.target.value)}
                 style={{
                   width: '100%',
@@ -201,6 +204,13 @@ function StationsSection() {
                     {dev.name}{dev.serial_no ? ` · ${dev.serial_no}` : ''} ({dev.device_uuid.substring(0, 8)}...)
                   </option>
                 ))}
+                {/* D7: Eine UUID, die die Geraeteliste nicht enthaelt (von Hand getippt, oder die Cloud
+                    listet das Geraet nicht mehr), bekommt eine eigene Option. Ohne sie waehlt React bei
+                    fehlendem Treffer sichtbar die erste Option ("Kein Geraet"), gespeichert wird aber
+                    die UUID. */}
+                {deviceUuid && !deviceList.some(dev => dev.device_uuid === deviceUuid) && (
+                  <option value={deviceUuid}>Manuell eingetragen (nicht in der Geräteliste): {deviceUuid}</option>
+                )}
               </select>
             )}
           </Field>

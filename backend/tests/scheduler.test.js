@@ -1293,3 +1293,74 @@ test('startScheduler: 5 s aus der DB wird auf 60 s angehoben; ein gültiger Wert
   assert.ok(valid.some((l) => l.includes('Syncing every 900 seconds')), valid.join('\n'));
   closeDb();
 });
+
+// ── Aufgabe 7 (V28): Zuordnung Gerät → Messstelle ─────────────────────────
+const measAlarm = (uuid, serial) => ({
+  uuid, serial_no: serial, alarm_type: 'measurement alarm', alarm_severity: 'Alarm', alarm_status: 'Alarm',
+  alarm_condition_type: 'Upper limit', alarm_value: '28.5', physical_property_name: 'Temperature',
+  physical_extension: 'Unknown', alarm_time: isoMinutesAgo(30), last_status_change_time: isoMinutesAgo(30)
+});
+
+test('Alt-Dublette auf einer device_uuid: die zuerst angelegte Messstelle erhält Messwerte und Alarme, mit Warnzeile; die andere hält das Abruffenster nicht zurück', async () => {
+  closeDb(); initTestDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  // Installation von vor dem UNIQUE-Index: db.js legt ihn bei vorhandener Dublette nicht an.
+  db.exec('DROP INDEX IF EXISTS idx_stations_device_uuid');
+  // IDs gegen die Anlagereihenfolge benannt, damit weder "zuletzt gelesen gewinnt" noch eine
+  // Sortierung nach ID zufällig das richtige Ergebnis liefert.
+  db.prepare("INSERT INTO stations (id, name, device_uuid) VALUES ('zz-alt', 'Zuerst angelegt', 'dev-1')").run();
+  db.prepare("INSERT INTO stations (id, name, device_uuid) VALUES ('aa-neu', 'Dublette', 'dev-1')").run();
+  // Die Dublette bekommt keine Daten mehr; ihr alter Stand darf das Messwertfenster nicht
+  // Tag für Tag weiter zurückziehen (es beginnt bei der am weitesten zurückliegenden Messstelle).
+  db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('alt-1', 'aa-neu', ?, 20, 'temperature', '°C')")
+    .run(Date.now() - 5 * 24 * 3600 * 1000);
+
+  const client = new MockTestoClient([measAlarm('alarm-dup', 'SN123')]);
+  const lines = await captureLog(() => schedulerModule.runSyncCycle(client));
+
+  assert.strictEqual(db.prepare("SELECT station_id FROM measurements WHERE uuid = 'meas-123'").get()?.station_id, 'zz-alt');
+  assert.strictEqual(db.prepare("SELECT station_id FROM events WHERE uuid = 'alarm-dup'").get()?.station_id, 'zz-alt');
+  const warnLine = lines.find((l) => l.includes('dev-1') && l.includes('zz-alt') && l.includes('aa-neu'));
+  assert.ok(warnLine, `Warnzeile zur Dublette erwartet:\n${lines.join('\n')}`);
+  const from = Date.parse(client.lastMeasurementParams.date_time_from);
+  assert.ok(Date.now() - from <= 24 * 3600 * 1000 + 60_000, `Fenster ab ${client.lastMeasurementParams.date_time_from}, erwartet höchstens 24 h zurück`);
+  closeDb();
+});
+
+test('Messstelle, die während des Zyklus gelöscht wird: kein FOREIGN-KEY-Abbruch, die übrigen Messstellen bekommen Status, Messwerte und Alarme', async () => {
+  closeDb(); initTestDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  db.prepare("INSERT INTO stations (id, name, device_uuid) VALUES ('bleibt', 'Bleibt', 'dev-1')").run();
+  db.prepare("INSERT INTO stations (id, name, device_uuid) VALUES ('weg', 'Weg', 'dev-2')").run();
+  const client = {
+    async fetchDeviceProperties() {
+      // Erste await-Pause nach dem Einlesen der Messstellen: hier läuft im Betrieb DELETE /api/stations.
+      db.prepare("DELETE FROM stations WHERE id = 'weg'").run();
+      return [
+        { device_uuid: 'dev-1', device_serial_no: 'SN1', sensor_uuid: 's-1', sensor_serial_no: 'SN1-A', channel_physical_property_name: 'Temperature' },
+        { device_uuid: 'dev-2', device_serial_no: 'SN2', sensor_uuid: 's-2', sensor_serial_no: 'SN2-A', channel_physical_property_name: 'Temperature' }
+      ];
+    },
+    // Batterie 10 % öffnet ein Systemereignis – auch für die gelöschte Messstelle.
+    async fetchDeviceStatus() { return ['dev-1', 'dev-2'].map((d) => ({ device_uuid: d, battery_level_percent: 10, radio_level_percent: 90 })); },
+    async fetchMeasuringObjects() { return []; },
+    async fetchMeasurements() {
+      return [['m-1', 's-1'], ['m-2', 's-2']].map(([uuid, s]) => ({ uuid, sensor_uuid: s, timestamp: isoMinutesAgo(60), measurement: 21, physical_property_name: 'Temperature', physical_unit: '°C' }));
+    },
+    async fetchAlarms() { return [measAlarm('al-1', 'SN1'), measAlarm('al-2', 'SN2')]; }
+  };
+
+  const lines = await captureLog(() => schedulerModule.runSyncCycle(client));
+
+  assert.ok(!lines.some((l) => /FOREIGN KEY/.test(l)), lines.join('\n'));
+  assert.strictEqual(schedulerModule.getSchedulerStatus().lastSyncStatus, 'success', lines.join('\n'));
+  assert.strictEqual(db.prepare("SELECT battery FROM stations WHERE id = 'bleibt'").get().battery, 10, 'Status der übrigen Messstelle');
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM events WHERE uuid = 'sys-battery-bleibt'").get().c, 1);
+  assert.strictEqual(db.prepare("SELECT station_id FROM measurements WHERE uuid = 'm-1'").get()?.station_id, 'bleibt');
+  assert.strictEqual(db.prepare("SELECT station_id FROM events WHERE uuid = 'al-1'").get()?.station_id, 'bleibt');
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid = 'm-2'").get().c, 0);
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM events WHERE uuid = 'al-2'").get().c, 0);
+  closeDb();
+});

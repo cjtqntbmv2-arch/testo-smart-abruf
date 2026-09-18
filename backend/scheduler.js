@@ -28,6 +28,24 @@ const SYSTEM_EVENT_TYPES = ['connection', 'battery'];
 // is filtered out forever, leaving its violation permanently active (the phantom-alarm bug).
 const ALARM_WINDOW_OVERLAP_MS = 26 * 3600 * 1000;
 
+// Geraet -> Messstelle. Seit dem UNIQUE-Index (db.js) gehoert ein Geraet hoechstens einer
+// Messstelle; eine Alt-Dublette von davor loest ORDER BY rowid auf: die zuerst angelegte
+// Messstelle behaelt das Geraet, die anderen bekommen nichts. rowid = Anlagereihenfolge, weil
+// eine neue Zeile die groesste vorhandene rowid + 1 bekommt und das Upsert in
+// POST /api/stations eine Zeile nie loescht und neu anlegt. Vorher gewann ohne ORDER BY die
+// zuletzt gelesene Zeile, also die neuere (im Funktionstest die Teststelle statt UWL).
+function loadDeviceToStation(db, logDuplicates = false) {
+  const map = new Map();
+  const rows = db.prepare("SELECT id, device_uuid FROM stations WHERE trim(device_uuid) != '' ORDER BY rowid").all();
+  for (const s of rows) {
+    if (!map.has(s.device_uuid)) map.set(s.device_uuid, s.id);
+    else if (logDuplicates) {
+      logThrottled(`Mehrere Messstellen auf device_uuid ${s.device_uuid}: '${map.get(s.device_uuid)}' (zuerst angelegt) erhält die Daten, '${s.id}' keine. Zuordnung in den Einstellungen korrigieren.`);
+    }
+  }
+  return map;
+}
+
 // Reconcile a station's open system events against its current status snapshot.
 // One stable synthetic row per (station, type) — opened on first detection (start_ts
 // preserved across repeats), reopened if it had cleared, and closed (active=0,end_ts)
@@ -98,15 +116,11 @@ async function runSyncCycle(customClient = null) {
     const client = customClient || new TestoClient(apiKey, region);
     const db = getDb();
 
-    // Station lookup by device_uuid
-    const stationRows = db.prepare("SELECT id, device_uuid FROM stations WHERE device_uuid IS NOT NULL AND device_uuid != ''").all();
-    const deviceToStation = new Map();
-    for (const s of stationRows) {
-      if (deviceToStation.has(s.device_uuid)) {
-        logThrottled(`Multiple stations share device_uuid ${s.device_uuid}; station '${s.id}' overrides '${deviceToStation.get(s.device_uuid)}'. One device maps to one station.`);
-      }
-      deviceToStation.set(s.device_uuid, s.id);
-    }
+    // Zuordnung zu Zyklusbeginn, fuer Sensorfilter und Messwertfenster. Die Schreibschritte
+    // lesen sie jeweils neu, am Anfang ihrer (synchronen, also lueckenlosen) Transaktion: bis
+    // dahin liegen await-Pausen, in denen DELETE /api/stations laufen kann, und eine
+    // geloeschte Messstelle liess sonst den ganzen Schritt am FOREIGN KEY scheitern.
+    const deviceToStation = loadDeviceToStation(db, true);
 
     // 0. Device Properties -> bridge maps
     let bridge = { sensorToDevice: new Map(), deviceSensors: new Map(), serialToDevice: new Map(), devices: new Set() };
@@ -132,6 +146,7 @@ async function runSyncCycle(customClient = null) {
       const statuses = await client.fetchDeviceStatus();
       const now = Date.now();
       db.transaction(() => {
+        const toStation = loadDeviceToStation(db);
         for (const s of statuses) {
           const lastComm = parseTimestamp(s.last_communication);
           const nextComm = parseTimestamp(s.next_communication);
@@ -142,7 +157,7 @@ async function runSyncCycle(customClient = null) {
             lastComm, parseTimestamp(s.last_measurement_time),
             nextComm, s.serial_no, online, s.device_uuid);
 
-          const stationId = deviceToStation.get(s.device_uuid);
+          const stationId = toStation.get(s.device_uuid);
           if (stationId) {
             applySystemEvents(db, stationId, { online, battery: s.battery_level_percent }, now);
           }
@@ -163,8 +178,8 @@ async function runSyncCycle(customClient = null) {
     `);
     try {
       const assignedSensors = new Set();
-      for (const s of stationRows) {
-        const sensors = bridge.deviceSensors.get(s.device_uuid);
+      for (const dev of deviceToStation.keys()) {
+        const sensors = bridge.deviceSensors.get(dev);
         if (sensors) for (const su of sensors) assignedSensors.add(su);
       }
       const filter = buildSensorFilter(assignedSensors);
@@ -172,13 +187,15 @@ async function runSyncCycle(customClient = null) {
         measurementsSkipped = true; // steht im Herzschlag, keine eigene Zeile je Zyklus
       } else {
         // Window starts at the most-lagging assigned station so none is under-fetched.
-        // INSERT OR IGNORE dedupes rows re-fetched for fresher stations.
+        // INSERT OR IGNORE dedupes rows re-fetched for fresher stations. Nur Messstellen, die
+        // Daten bekommen: der Verlierer einer Alt-Dublette bleibt stehen und zoege das Fenster
+        // sonst mit jedem Zyklus weiter zurueck.
         const dayAgo = Date.now() - 24 * 3600 * 1000;
         const maxTsStmt = db.prepare("SELECT max(timestamp) as max_ts FROM measurements WHERE station_id = ?");
         let windowStart = Date.now();
-        for (const s of stationRows) {
-          if (!bridge.deviceSensors.has(s.device_uuid)) continue;
-          const row = maxTsStmt.get(s.id);
+        for (const [dev, stationId] of deviceToStation) {
+          if (!bridge.deviceSensors.has(dev)) continue;
+          const row = maxTsStmt.get(stationId);
           const stationStart = (row && row.max_ts) ? row.max_ts + 1000 : dayAgo;
           if (stationStart < windowStart) windowStart = stationStart;
         }
@@ -198,10 +215,11 @@ async function runSyncCycle(customClient = null) {
         // Rueckgabe = tatsaechlich neu gespeicherte Zeilen (INSERT OR IGNORE zaehlt Dubletten
         // nicht), erst nach dem Commit uebernommen — ein Rollback zaehlt nichts.
         newMeasurements = db.transaction(() => {
+          const toStation = loadDeviceToStation(db);
           let inserted = 0;
           for (const m of measurements) {
             const dev = bridge.sensorToDevice.get(m.sensor_uuid);
-            const stationId = dev ? deviceToStation.get(dev) : null;
+            const stationId = dev ? toStation.get(dev) : null;
             const prop = mapPhysicalProperty(m.physical_property_name, m.physical_extension);
             if (!stationId || !prop) { diag.measurementsUnmatched++; continue; }
             inserted += insertMeasurementStmt.run(
@@ -318,11 +336,12 @@ async function runSyncCycle(customClient = null) {
       const countEvents = db.prepare('SELECT count(*) AS n FROM events');
       const eventsBefore = countEvents.get().n;
       db.transaction(() => {
+        const toStation = loadDeviceToStation(db);
         for (const a of alarms) {
           const dev = bridge.serialToDevice.get(a.serial_no)
             || bridge.sensorToDevice.get(a.alarm_source_uuid)
             || (bridge.devices.has(a.alarm_source_uuid) ? a.alarm_source_uuid : null);
-          const stationId = dev ? deviceToStation.get(dev) : null;
+          const stationId = dev ? toStation.get(dev) : null;
           if (!stationId) { diag.alarmsUnmatched++; continue; }
 
           // testo connection/battery problems arrive in this same feed as system
