@@ -1,5 +1,6 @@
 // backend/backup-runner.js
-// Monthly per-station ZIP backups + retention prune-floor. DB + filesystem.
+// Monthly per-station ZIP backups + daily snapshot of the whole DB + retention prune-floor.
+// DB + filesystem.
 const fs = require('node:fs');
 const path = require('node:path');
 const { getDb, getSetting, saveSetting } = require('./db');
@@ -56,7 +57,51 @@ function zipPathFor(dir, station, year, monthIdx0) {
 }
 
 function writeHealth(status, extra) {
-  saveSetting('backup_health', JSON.stringify(Object.assign({ status, lastScan: new Date().toISOString() }, extra || {})));
+  // Der letzte gelungene Datenbank-Abzug bleibt stehen, bis ein neuer gelingt: auch nach
+  // einem gescheiterten Lauf ist so sichtbar, wie alt der neueste zurueckspielbare Stand ist.
+  let prev = {};
+  try { prev = JSON.parse(getSetting('backup_health') || '{}') || {}; } catch (_) {}
+  saveSetting('backup_health', JSON.stringify(Object.assign({
+    status, lastScan: new Date().toISOString(),
+    lastDbSnapshot: prev.lastDbSnapshot || null, lastDbSnapshotAt: prev.lastDbSnapshotAt || null,
+  }, extra || {})));
+}
+
+// Taeglicher Abzug der ganzen Datenbank (alle Tabellen, settings samt API-Schluessel) in
+// <backup_dir>/datenbank/klima-JJJJ-MM-TT.db. Anders als die Monats-ZIPs ist er direkt
+// zurueckspielbar (deploy/windows/README.md, "Datenbank zuruecksichern"). VACUUM INTO liest
+// ueber diese Verbindung, sieht also auch Zeilen, die erst im WAL stehen, und schreibt eine
+// eigenstaendige Datei ohne -wal.
+const SNAPSHOT_KEEP = 7;
+const SNAPSHOT_NAME = /^klima-\d{4}-\d{2}-\d{2}\.db$/;
+
+function writeDbSnapshot(dir, nowMs) {
+  const snapDir = path.join(dir, 'datenbank');
+  fs.mkdirSync(snapDir, { recursive: true });
+  const name = `klima-${localDateKey(nowMs)}.db`; // Ortsdatum; toISOString() waere UTC
+  const target = path.join(snapDir, name);
+  const tmp = `${target}.tmp`;
+  // VACUUM INTO scheitert an einem vorhandenen Ziel und hinterliesse bei einem Abbruch eine
+  // halbe Datei: darum in .tmp (Rest eines abgebrochenen Laufs vorher weg), dann umbenennen.
+  // rename ersetzt den Abzug desselben Tages, unter Windows per MoveFileEx(REPLACE_EXISTING).
+  // ponytail: synchron, 0,06 s fuer 45 MB auf lokaler SSD; auf einer langsamen Netzfreigabe
+  // steht der Server einmal am Tag fuer die Schreibdauer. Stoert das: db.backup() (asynchron).
+  fs.rmSync(tmp, { force: true });
+  try {
+    getDb().prepare('VACUUM INTO ?').run(tmp); // Pfad als Parameter, nie im SQL-Text
+    fs.renameSync(tmp, target);
+  } catch (e) {
+    try { fs.rmSync(tmp, { force: true }); } catch (_) {} // der urspruengliche Fehler zaehlt
+    throw e;
+  }
+  // Aufbewahrung erst nach gelungenem Abzug, nur fuer genau dieses Namensmuster. Ein nicht
+  // loeschbarer Altabzug ist kein Sicherungsfehler (sonst liefe der Abzug jeden Zyklus neu).
+  let pruneError = null;
+  try {
+    const old = fs.readdirSync(snapDir).filter(f => SNAPSHOT_NAME.test(f)).sort().slice(0, -SNAPSHOT_KEEP);
+    for (const f of old) fs.rmSync(path.join(snapDir, f));
+  } catch (e) { pruneError = e.message; }
+  return { name, pruneError };
 }
 
 function runBackupScan(nowMs) {
@@ -66,7 +111,8 @@ function runBackupScan(nowMs) {
     fs.mkdirSync(dir, { recursive: true });
     fs.accessSync(dir, fs.constants.W_OK);
   } catch (e) {
-    writeHealth('error', { lastError: `backup_dir nicht beschreibbar: ${e.message}` });
+    const msg = `backup_dir nicht beschreibbar: ${e.message}`;
+    writeHealth('error', { lastError: msg, dbSnapshotError: msg });
     result.errors.push(e.message);
     return result;
   }
@@ -95,12 +141,25 @@ function runBackupScan(nowMs) {
     }
   }
 
+  // Ein gescheiterter Abzug zaehlt wie ein ZIP-Fehler: status 'error', und maybeRunBackupScan
+  // versucht es im naechsten Zyklus erneut.
+  let snapshot = null, snapshotError = null;
+  try {
+    snapshot = writeDbSnapshot(dir, nowMs);
+  } catch (e) {
+    snapshotError = e.message;
+    result.errors.push(`Datenbank-Abzug: ${e.message}`);
+  }
+
   // Health is 'ok' or 'error'. (A post-scan un-backed data-month only occurs when a write
   // errored — already covered by errors.length — so an 'overdue' status is unreachable here.)
   writeHealth(result.errors.length ? 'error' : 'ok', {
     lastZip: result.written[result.written.length - 1] || null,
     lastError: result.errors[0] || null,
     written: result.written.length,
+    ...(snapshot && { lastDbSnapshot: snapshot.name, lastDbSnapshotAt: new Date(nowMs).toISOString() }),
+    dbSnapshotError: snapshotError,
+    dbSnapshotPruneError: snapshot ? snapshot.pruneError : null,
   });
   return result;
 }

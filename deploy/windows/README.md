@@ -221,6 +221,98 @@ Der Meldungstext eines Alarms behaelt absichtlich die alte Schreibweise
 (`Luftfeuchte zu hoch`, `Druck zu niedrig`): diese Texte sind in der Datenbank
 gespeichert, eine Umbenennung wuerde die Historie nicht mitziehen.
 
+## Datensicherung und Ruecksicherung
+
+Der Dienst sichert auf zwei Wegen, beide im Backup-Verzeichnis (Standard
+`C:\ProgramData\TestoSmartAbruf\backups`, abweichend per Einstellung `backup_dir`):
+
+- **Monats-ZIPs** (`<safeName>_<stationId>_<YYYY-MM>.zip`): CSV je Messstelle und
+  abgeschlossenem Monat, zum Lesen in Excel. **Kein Backup** - aus ihnen laesst sich keine
+  Datenbank wiederherstellen (es fehlen Einstellungen, Grenzwerte, Geraetezuordnung und
+  die IDs der Messwerte).
+- **Taeglicher Datenbank-Abzug** im Unterordner `datenbank`: eine vollstaendige Kopie der
+  Datenbank - Messwerte bis zum Zeitpunkt des Abzugs (auch des laufenden Monats),
+  Meldungen, Grenzwerte, Messstellen samt Geraetezuordnung, Einstellungen. **Nur dieser
+  Abzug ist zurueckspielbar.**
+
+Zum Datenbank-Abzug:
+
+- **Name:** `klima-JJJJ-MM-TT.db`, Datum in Ortszeit, eine Datei je Tag.
+- **Zeitpunkt:** mit dem taeglichen Backup-Lauf im ersten Sync-Zyklus eines Tages, noch
+  vor dem Loeschen alter Messwerte (Aufbewahrung); nur bei eingeschalteter Sicherung
+  (`backup_enabled`). Scheitert er, versucht der Dienst es im naechsten Zyklus erneut.
+  Zustand unter `GET /api/system/status`, Feld `backup.health`: `lastDbSnapshot` und
+  `lastDbSnapshotAt` (letzter gelungener Abzug), `dbSnapshotError`.
+- **Aufbewahrung:** die sieben neuesten Tage. Ein zweiter Lauf am selben Tag ersetzt die
+  Datei dieses Tages. Aeltere Abzuege loescht der Dienst erst, nachdem ein neuer gelungen
+  ist; andere Dateien im Ordner fasst er nicht an.
+- **Platzbedarf:** etwa sieben mal die Datenbankgroesse, kurz vor dem Loeschen des
+  aeltesten acht. Gemessen: 45 MB Datenbank ergeben einen Abzug von 44 MB, zusammen gut
+  300 MB; waechst mit der Datenbank.
+- **Schutz:** Der Abzug enthaelt alle Einstellungen **einschliesslich des API-Schluessels**
+  - gewollt, damit nach dem Zurueckspielen alles ohne Nacharbeit laeuft. Den
+  Sicherungsordner deshalb schuetzen wie die Datenbank selbst; liegt er auf einer
+  Netzfreigabe, diese nur fuer Berechtigte lesbar freigeben. Die Freigabe ist fuer den
+  Sicherungsordner erlaubt, die Datenbank selbst muss auf der lokalen Platte bleiben (WAL).
+- Jede Installation braucht ihren **eigenen** Sicherungsordner: die Abzuege heissen nur
+  nach dem Datum, zwei Dienste im selben Ordner ueberschrieben sich gegenseitig.
+
+### Datenbank zuruecksichern
+
+Aus einer **Administrator**-PowerShell:
+
+1. Dienst stoppen und pruefen, dass kein `node.exe` mehr laeuft:
+   ```powershell
+   Stop-ScheduledTask -TaskName TestoSmartAbruf
+   tasklist | findstr node    # muss leer sein, sonst: taskkill /IM node.exe /F
+   ```
+2. Den jetzigen Stand beiseitelegen - **alle drei Dateien zusammen verschieben**, nicht
+   loeschen:
+   ```powershell
+   cd C:\ProgramData\TestoSmartAbruf
+   mkdir vor-ruecksicherung
+   Move-Item klima.db, klima.db-wal, klima.db-shm vor-ruecksicherung -ErrorAction SilentlyContinue
+   dir klima.db*              # muss leer sein
+   ```
+   Warum: `Stop-ScheduledTask` beendet Node hart, ohne dass die Datenbank sauber
+   geschlossen wird; `klima.db-wal` und `klima.db-shm` bleiben liegen und gehoeren zur
+   **alten** Datenbank. Laege die alte `-wal` neben dem eingespielten Abzug, spielte
+   SQLite sie beim naechsten Oeffnen in ihn hinein: die Datei oeffnet ohne Fehlermeldung,
+   ist aber beschaedigt (im Funktionstest: 48.563 statt 171.198 Messwerte,
+   `integrity_check` meldet `malformed`). Zusammen verschoben bleibt der alte Stand
+   dagegen vollstaendig lesbar.
+3. Gewuenschten Abzug als `klima.db` einspielen - **kopieren**, nicht verschieben: der
+   Abzug bleibt erhalten, und die Kopie erbt die Rechte des Datenordners fuer
+   NetworkService (bei eigenem `backup_dir` den Quellpfad anpassen):
+   ```powershell
+   Copy-Item backups\datenbank\klima-2026-09-18.db klima.db
+   ```
+4. Dienst starten und pruefen:
+   ```powershell
+   Start-ScheduledTask -TaskName TestoSmartAbruf
+   ```
+   Das Dashboard zeigt die Messstellen mit Werten, `logs\app.log` meldet nach dem ersten
+   Zyklus `Sync ok ...`, `GET http://localhost:3000/api/system/status` ist ohne Fehler.
+   Dieser erste Zyklus schreibt auch den Abzug des heutigen Tages neu (eine vorhandene
+   Datei dieses Tages wird ersetzt) - der Stand vor der Ruecksicherung liegt in
+   `vor-ruecksicherung`. Den Ordner erst loeschen, wenn alles stimmt.
+
+**Was zwischen Abzug und Ruecksicherung geschah:**
+
+- Messwerte holt der erste Sync-Zyklus nach dem Start aus der testo-Cloud nach, soweit
+  die Cloud sie noch liefert: er fragt ab dem letzten gespeicherten Messwert bis jetzt an
+  (bei mehreren Messstellen ab dem am weitesten zurueckliegenden).
+- Alarme und Meldungen ebenso, ab dem Abrufstand, der mit dem Abzug zurueckkommt
+  (`last_alarm_sync_time`), mindestens 26 Stunden zurueck. Geraetestatus und Grenzwerte
+  liest ohnehin jeder Zyklus neu.
+- **Nicht** nachgeholt wird, was nur lokal entstand: Einstellungen sowie seit dem Abzug
+  angelegte oder geaenderte Messstellen und Zuordnungen stehen wieder auf dem Stand des
+  Abzugs und sind von Hand zu wiederholen.
+- **Achtung Aufbewahrung:** Der Abzug bringt auch die Aufbewahrungsdauer
+  (`retention_days`) mit. Wer zuruecksichert, weil eine zu kleine Aufbewahrung Messwerte
+  geloescht hat, waehlt einen Abzug von **vor** dieser Aenderung - sonst loescht der erste
+  Zyklus nach dem Start erneut.
+
 ## Deinstallation
 
 `deploy\windows\uninstall-task.ps1` entfernt den geplanten Task wieder (stoppt ihn,
@@ -240,7 +332,8 @@ powershell -ExecutionPolicy Bypass -File deploy\windows\uninstall-task.ps1
   `C:\ProgramData\TestoSmartAbruf\klima.db` (+ `-wal`/`-shm`).
 - Die Logs: `C:\ProgramData\TestoSmartAbruf\logs\app.log` (plus rotierte
   `.bak`-Dateien) und `logs\setup.log`.
-- Die monatlichen Backup-ZIPs: standardmaessig `C:\ProgramData\TestoSmartAbruf\backups`,
+- Die monatlichen Backup-ZIPs und im Unterordner `datenbank` die taeglichen
+  Datenbank-Abzuege: standardmaessig `C:\ProgramData\TestoSmartAbruf\backups`,
   abweichend falls unter Einstellungen ein eigener `backup_dir` gesetzt wurde.
 - Eine eingerichtete Firewall-Regel fuer LAN-Zugriff (Abschnitt "LAN-Zugriff",
   `New-NetFirewallRule -DisplayName "TestoSmartAbruf 3000"`).
@@ -325,7 +418,19 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
   (`LastWriteTime`) der ZIP nach dem zweiten Lauf.
 - **Leer-Schutz:** Monate ohne Messdaten erzeugen keine ZIP.
 - **Prune-Sicherheit:** Messdaten werden erst geloescht, wenn sie in einer ZIP gesichert sind. Nicht gesicherte Monate (z. B. weil `backup_enabled=false` war) werden **nicht** vorzeitig geloescht (`effectiveCutoff = min(retentionCutoff, computePruneFloor)`).
-- Der laufende Monat wird nie gesichert oder geloescht (Cutoff liegt immer vor Monatsbeginn des aktuellen Monats).
+- Der laufende Monat wird nie als ZIP gesichert oder geloescht (Cutoff liegt immer vor Monatsbeginn des aktuellen Monats); gesichert ist er im taeglichen Datenbank-Abzug.
+
+### Datenbank-Abzug
+
+- Nach dem ersten Backup-Lauf eines Tages liegt `backups\datenbank\klima-JJJJ-MM-TT.db`
+  mit dem heutigen Datum (Ortszeit) vor; `GET /api/system/status` zeigt ihn unter
+  `backup.health.lastDbSnapshot`. Nach einem Update erscheint der erste Abzug erst am
+  Folgetag, wenn der Backup-Lauf des Tages schon vor dem Update stattfand.
+- Ab dem achten Abzug bleibt es bei sieben Dateien im Ordner `datenbank`: der aelteste
+  Tag verschwindet, sobald der neue geschrieben ist.
+- **Ruecksicherungsprobe:** den Weg aus "Datenbank zuruecksichern" einmal durchspielen.
+  Danach zeigt das Dashboard dieselben Messstellen mit Werten wie vorher, und
+  `logs\app.log` meldet `Sync ok ...`.
 
 ### Versionscheck
 

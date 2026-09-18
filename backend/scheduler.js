@@ -429,7 +429,9 @@ async function runSyncCycle(customClient = null) {
       }
     }
 
-    // 3b. Monthly CSV backup (throttled once per local day; catches up missed months).
+    // 3b. Monthly CSV backup + daily snapshot of the whole DB (throttled once per local day;
+    // catches up missed months). Must stay BEFORE step 4: the day's snapshot then still holds
+    // whatever the retention prune is about to delete.
     try {
       maybeRunBackupScan(Date.now());
     } catch (e) {

@@ -63,7 +63,8 @@ test('runBackupScan: skips (station,month) with no data — no empty zip', () =>
   db.prepare("INSERT INTO stations (id,name) VALUES (?,?)").run('s9', 'Leer');
   const res = runner.runBackupScan(Date.UTC(2026, 5, 10));
   assert.strictEqual(res.written.length, 0);
-  assert.strictEqual(fs.readdirSync(dir).length, 0);
+  // Einziger Eintrag: der Ordner des taeglichen Datenbank-Abzugs (entsteht auch ohne Messdaten).
+  assert.deepStrictEqual(fs.readdirSync(dir), ['datenbank']);
 });
 
 test('computePruneFloor: returns start of oldest un-backed-up data month', () => {
