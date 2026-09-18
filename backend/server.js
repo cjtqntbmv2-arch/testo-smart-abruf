@@ -40,9 +40,6 @@ if (storedApiRegion && !VALID_API_REGIONS.includes(storedApiRegion)) {
   saveSetting('api_region', 'eu');
 }
 
-startScheduler();
-startUpdateCheck(appVersion);
-
 const app = express();
 app.use(express.json());
 
@@ -575,6 +572,11 @@ const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 const server = app.listen(PORT, HOST, () => {
   console.log(`Klima Dashboard server running on http://${HOST}:${PORT}`);
+  // Hintergrundjobs erst nach erfolgreichem Bind: eine zweite Instanz, die am belegten
+  // Port scheitert (Windows-Task-Neustart, doppelter Start), darf vorher weder einen
+  // Sync-Zyklus gegen die testo-Cloud noch Schreibzugriffe auf die gemeinsame DB anstoßen.
+  startScheduler();
+  startUpdateCheck(appVersion);
 });
 
 // Nur außerhalb der Tests anhängen: backend/tests/server.test.js importiert dieses
