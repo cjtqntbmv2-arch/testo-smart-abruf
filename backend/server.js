@@ -5,7 +5,7 @@ require('dotenv').config({ path: path.join(__dirname, '../.env'), quiet: true })
 const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
 const { initDb, getDb, getSetting, saveSetting, closeDb } = require('./db');
-const { startScheduler, runSyncCycle, getSchedulerStatus, stopScheduler } = require('./scheduler');
+const { startScheduler, runSyncCycle, getSchedulerStatus, stopScheduler, pollIntervalSec, POLL_INTERVAL_MIN_SEC, POLL_INTERVAL_MAX_SEC } = require('./scheduler');
 const TestoClient = require('./testo-client');
 const { handleListenError } = require('./listen-error');
 const { getExportMetadata, exportStations } = require('./export-service');
@@ -64,7 +64,10 @@ app.get('/api/settings', (req, res) => {
   res.json({
     api_key_set: storedKey.length > 0,
     api_region: getSetting('api_region') || 'eu',
-    poll_interval_sec: parseInt(getSetting('poll_interval_sec') || '900', 10),
+    // Das wirksame (geklemmte) Intervall, nicht der Rohwert: das Dashboard schickt es bei
+    // jedem automatischen Speichern mit, ein Rohwert ausserhalb 60-3600 s liesse daher
+    // jedes Speichern der Seite am 400 unten scheitern (wie frueher die Region 'us').
+    poll_interval_sec: pollIntervalSec(),
     retention_days: parseInt(getSetting('retention_days') || '365', 10),
     backup_enabled: (getSetting('backup_enabled') || '1') === '1',
     backup_dir: getSetting('backup_dir') || '',
@@ -73,75 +76,90 @@ app.get('/api/settings', (req, res) => {
   });
 });
 
-// POST /api/settings
-app.post('/api/settings', (req, res) => {
-  const { api_key, api_region, poll_interval_sec, retention_days } = req.body;
+// POST /api/settings — Eingabepruefung je Feld. Eine Regel gibt den zu speichernden Text
+// zurueck, undefined fuer "nichts aendern", oder wirft den Klartext der 400-Antwort (das
+// Dashboard zeigt ihn an). Gespeichert wird erst, wenn JEDES Feld gueltig ist — vorher
+// blieben bei einem ungueltigen Feld die davor stehenden schon gespeichert zurueck.
+const invalid = (msg) => { throw new Error(msg); };
 
-  // Validate poll_interval_sec when present
-  if (poll_interval_sec !== undefined) {
-    const v = parseInt(poll_interval_sec, 10);
-    if (isNaN(v) || v <= 0) {
-      return res.status(400).json({ error: 'poll_interval_sec must be a positive integer' });
-    }
-  }
+// Ganze Zahl als JSON-Zahl oder reine Ziffernfolge; "900abc", "1.5", "", null nicht (parseInt
+// las "900abc" als 900). isSafeInteger, weil String() ab 1e21 "1e+21" schreibt und parseInt
+// das als 1 liest: aus riesigen Aufbewahrungstagen wurde 1 Tag.
+function wholeNumber(v, min, max, msg) {
+  const n = typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v;
+  return Number.isSafeInteger(n) && n >= min && n <= max ? String(n) : invalid(msg);
+}
+const trimmedText = (v, msg) => (typeof v === 'string' ? v.trim() : invalid(msg));
+// Die einzigen Schreibweisen fuer Ein/Aus — vorher galt alles ausser vier Aus-Werten als Ein.
+const ON_OFF = new Map([[true, '1'], [1, '1'], ['1', '1'], ['true', '1'],
+  [false, '0'], [0, '0'], ['0', '0'], ['false', '0']]);
 
-  // Validate retention_days when present
-  if (retention_days !== undefined) {
-    const v = parseInt(retention_days, 10);
-    if (isNaN(v) || v <= 0) {
-      return res.status(400).json({ error: 'retention_days must be a positive integer' });
-    }
-  }
-
-  // Validate api_region when present
-  if (api_region !== undefined && !VALID_API_REGIONS.includes(api_region)) {
-    return res.status(400).json({ error: `api_region must be one of: ${VALID_API_REGIONS.join(', ')}` });
-  }
-
-  // Only overwrite the stored api_key when a non-empty string is supplied;
-  // an absent or empty-string value leaves the key unchanged so it is never wiped.
-  if (api_key !== undefined && api_key !== '') {
-    saveSetting('api_key', api_key);
-  }
-  if (api_region !== undefined) saveSetting('api_region', api_region);
-  if (poll_interval_sec !== undefined) saveSetting('poll_interval_sec', String(parseInt(poll_interval_sec, 10)));
-  if (retention_days !== undefined) saveSetting('retention_days', String(parseInt(retention_days, 10)));
-
-  // csv_format, backup_enabled, backup_dir
-  if (req.body.csv_format !== undefined) {
-    const v = String(req.body.csv_format);
-    if (v !== 'de' && v !== 'rfc') return res.status(400).json({ error: "csv_format must be 'de' or 'rfc'" });
-    saveSetting('csv_format', v);
-  }
-  if (req.body.backup_enabled !== undefined) {
-    const be = req.body.backup_enabled;
-    const disabled = be === false || be === 0 || be === '0' || be === 'false';
-    saveSetting('backup_enabled', disabled ? '0' : '1');
-  }
-  if (req.body.backup_dir !== undefined) {
-    const dir = String(req.body.backup_dir || '').trim();
-    if (dir) {
-      try {
-        require('fs').mkdirSync(dir, { recursive: true });
-        require('fs').accessSync(dir, require('fs').constants.W_OK);
-      } catch (e) {
-        return res.status(400).json({ error: `backup_dir nicht beschreibbar: ${e.message}` });
-      }
-    }
-    saveSetting('backup_dir', dir);
-  }
+const SETTING_RULES = {
+  // Leer = gespeicherten Schluessel behalten: beabsichtigt und am Feld im Dashboard erklaert.
+  api_key: (v) => {
+    const key = trimmedText(v, 'API-Schlüssel (api_key) muss Text sein.');
+    if (v === '') return undefined;
+    return key || invalid('API-Schlüssel (api_key) besteht nur aus Leerzeichen.');
+  },
+  api_region: (v) => (VALID_API_REGIONS.includes(v) ? v
+    : invalid(`api_region must be one of: ${VALID_API_REGIONS.join(', ')}`)),
+  poll_interval_sec: (v) => wholeNumber(v, POLL_INTERVAL_MIN_SEC, POLL_INTERVAL_MAX_SEC,
+    `Abfrage-Intervall (poll_interval_sec) muss eine ganze Zahl von ${POLL_INTERVAL_MIN_SEC} bis ${POLL_INTERVAL_MAX_SEC} Sekunden sein.`),
+  retention_days: (v) => wholeNumber(v, 1, Number.MAX_SAFE_INTEGER,
+    'Aufbewahrungszeit (retention_days) muss eine ganze Zahl ab 1 (Tage) sein.'),
+  csv_format: (v) => {
+    const s = String(v);
+    return s === 'de' || s === 'rfc' ? s : invalid("csv_format must be 'de' or 'rfc'");
+  },
+  backup_enabled: (v) => ON_OFF.get(v)
+    ?? invalid('Automatisches Backup (backup_enabled) muss true/false, 1/0, "1"/"0" oder "true"/"false" sein.'),
+  // Relativ hiesse: relativ zum Arbeitsverzeichnis des Dienstes, einem fremden Ordner.
+  // Leer = Standardordner. Schreibtest erst im Handler, nach der Pruefung ALLER Felder.
+  backup_dir: (v) => {
+    const dir = trimmedText(v, 'Speicherpfad (backup_dir) muss Text sein.');
+    return !dir || path.isAbsolute(dir) ? dir
+      : invalid('Speicherpfad (backup_dir) muss ein absoluter Pfad sein, z. B. D:\\Sicherung (leer = Standardordner).');
+  },
   // Ablageordner fuer den Update-Hinweis. Bewusst OHNE mkdir/Schreibtest: das ist eine
   // fremde, oft nur lesbare Netzfreigabe. Leer = Pruefung aus. Ein nicht erreichbarer
   // Pfad wird angenommen und fuehrt nur zu "kein Update bekannt" — er darf das
   // Speichern der uebrigen Einstellungen nicht scheitern lassen.
-  if (req.body.update_dir !== undefined) {
-    saveSetting('update_dir', String(req.body.update_dir || '').trim());
-    // Sofort neu pruefen, damit die Aenderung ohne Dienstneustart sichtbar wird.
-    runUpdateCheck(appVersion);
+  update_dir: (v) => trimmedText(v, 'Ablageordner (update_dir) muss Text sein.'),
+};
+
+app.post('/api/settings', (req, res) => {
+  const updates = {};
+  let known = false;
+  try {
+    for (const [key, rule] of Object.entries(SETTING_RULES)) {
+      if (req.body[key] === undefined) continue;
+      known = true;
+      const value = rule(req.body[key]);
+      if (value !== undefined) updates[key] = value;
+    }
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+  // Vorher: {"success":true} ohne gespeicherten Wert, dazu ein Scheduler-Neustart.
+  if (!known) {
+    return res.status(400).json({ error: `Keine bekannte Einstellung in der Anfrage (erwartet: ${Object.keys(SETTING_RULES).join(', ')}).` });
   }
 
-  // Restart scheduler with new interval
-  startScheduler();
+  if (updates.backup_dir) {
+    try {
+      fs.mkdirSync(updates.backup_dir, { recursive: true });
+      fs.accessSync(updates.backup_dir, fs.constants.W_OK);
+    } catch (e) {
+      return res.status(400).json({ error: `backup_dir nicht beschreibbar: ${e.message}` });
+    }
+  }
+
+  for (const [key, value] of Object.entries(updates)) saveSetting(key, value);
+  // Sofort neu pruefen, damit ein neuer Ablageordner ohne Dienstneustart sichtbar wird.
+  if ('update_dir' in updates) runUpdateCheck(appVersion);
+  // Nur bei echtem Speichern: uebernimmt ein neues Intervall und gibt nach einem
+  // Schluesselwechsel sofort Rueckmeldung (Sofortlauf).
+  if (Object.keys(updates).length) startScheduler();
   res.json({ success: true });
 });
 
@@ -561,6 +579,15 @@ if (process.env.NODE_ENV === 'test') {
 // läuft über logThrottled() und erzeugt keine erneute volle Ausgabe.
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
+  // Ein unlesbarer Body (kaputtes JSON, zu gross, fremder Zeichensatz) scheitert schon in
+  // express.json(), vor jeder Route: ein Fehler des Aufrufers, kein Serverfehler. Solche
+  // Fehler tragen err.type und einen 4xx-Status. Die Parser-Meldung ("Expected property
+  // name ... at position 1") ist Interna und gehoert weder in die Antwort noch ins Log.
+  if (err.type && err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: err.type === 'entity.parse.failed'
+      ? 'Ungültige Anfrage: Der Inhalt ist kein gültiges JSON.'
+      : 'Ungültige Anfrage: Der Inhalt konnte nicht gelesen werden.' });
+  }
   // `|| err` fängt geworfene Nicht-Error-Werte (String, Objekt) ab.
   logThrottled(
     `Unhandled route error: ${err.name || 'Error'}: ${err.message || err}`,

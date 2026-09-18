@@ -568,6 +568,165 @@ test('POST /api/sync startet einen Sync und respektiert den laufenden-Sync-Guard
   }
 });
 
+// ── Aufgabe 5: Eingabeprüfung POST /api/settings (V4, V15, V21, V22, C2, C15) ──
+// Jede Ablehnung ist ein 400 mit Klartext, der das Feld unverändert lässt. api_key bleibt
+// leer, wo gespeichert wird: der dadurch angestoßene Zyklus bricht dann sofort ab und
+// erreicht keine Cloud.
+const postSettings = (body, raw) => fetch('http://localhost:3001/api/settings', {
+  method: 'POST', headers: { 'content-type': 'application/json' }, body: raw ?? JSON.stringify(body),
+});
+async function expect400(body, field, pattern) {
+  const before = getSetting(field);
+  const res = await postSettings(body);
+  const json = await res.json();
+  assert.strictEqual(res.status, 400, `${JSON.stringify(body)} -> ${res.status} ${JSON.stringify(json)}`);
+  assert.match(json.error, pattern);
+  assert.strictEqual(getSetting(field), before, `${JSON.stringify(body)} darf ${field} nicht ändern`);
+}
+async function waitSchedulerIdle() {
+  for (let i = 0; i < 100; i++) {
+    const s = await (await fetch('http://localhost:3001/api/system/status')).json();
+    if (!s.scheduler.isSyncing) return;
+    await new Promise(r => setTimeout(r, 20));
+  }
+}
+// Leerer api_key für die Testdauer, danach die angefassten Einstellungen zurück und den
+// Scheduler angehalten — auch wenn der Test scheitert. Sonst schlüge eine Regression in
+// fremde Tests durch: ein übernommenes 999999999 s liefe als 1-ms-Takt weiter, ein
+// übernommenes retention_days prunte deren Fixtures.
+async function withSettings(keys, fn) {
+  const saved = ['api_key', ...keys].map((k) => [k, getSetting(k)]);
+  saveSetting('api_key', '');
+  try { await fn(); } finally {
+    await waitSchedulerIdle();
+    stopScheduler();
+    for (const [k, v] of saved) saveSetting(k, v ?? '');
+  }
+}
+
+test('POST /api/settings: poll_interval_sec nur als ganze Zahl von 60 bis 3600', () => withSettings(['poll_interval_sec'], async () => {
+  saveSetting('poll_interval_sec', '900');
+  // 999999999 s lief als setInterval-Überlauf auf 1 ms: ein Anfragesturm gegen die Cloud.
+  for (const v of [999999999, 3601, 59, 1.5, '900abc', '', null, true]) {
+    await expect400({ poll_interval_sec: v }, 'poll_interval_sec', /60 bis 3600/);
+  }
+  for (const [v, stored] of [[60, '60'], [3600, '3600'], ['3600', '3600']]) {
+    const res = await postSettings({ poll_interval_sec: v });
+    assert.strictEqual(res.status, 200, JSON.stringify(v));
+    assert.strictEqual(getSetting('poll_interval_sec'), stored);
+  }
+}));
+
+test('POST /api/settings: retention_days ohne Teilparse, 1e21 wird nicht zu 1 Tag', () => withSettings(['retention_days'], async () => {
+  saveSetting('retention_days', '365');
+  // parseInt(1e21) liest "1e+21" als 1: aus riesigen Aufbewahrungstagen wurde 1 Tag.
+  for (const v of ['30abc', 1.5, 0, -5, 1e21, '99999999999999999999', '', null]) {
+    await expect400({ retention_days: v }, 'retention_days', /ganze Zahl ab 1/);
+  }
+  const res = await postSettings({ retention_days: '730' });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(getSetting('retention_days'), '730');
+}));
+
+test('POST /api/settings: api_key nur als Text, getrimmt; nur Leerzeichen, null oder Zahl -> 400', () => withSettings([], async () => {
+  saveSetting('api_key', 'bisheriger-schluessel');
+  for (const v of ['   ', '\t\n', null, 12345, true]) {
+    await expect400({ api_key: v }, 'api_key', /API-Schlüssel/);
+  }
+  // Getrimmt gespeichert. Erst getrimmt ist es der Mock-Schlüssel: der angestoßene Zyklus
+  // läuft im Mock-Modus (NODE_ENV=test) und erreicht keine Cloud.
+  const res = await postSettings({ api_key: '  mock-api-key \n' });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(getSetting('api_key'), 'mock-api-key');
+}));
+
+test('POST mit kaputtem JSON: 400 mit allgemeiner Meldung an allen POST-Endpunkten, keine Parser-Interna', () => withSettings([], async () => {
+  for (const p of ['/api/settings', '/api/export', '/api/stations', '/api/sync', '/api/backup']) {
+    const res = await fetch(`http://localhost:3001${p}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"poll_interval_sec": 60,',
+    });
+    const body = await res.json();
+    assert.strictEqual(res.status, 400, `${p}: ${res.status} ${JSON.stringify(body)}`);
+    assert.strictEqual(body.error, 'Ungültige Anfrage: Der Inhalt ist kein gültiges JSON.');
+  }
+}));
+
+test('POST /api/settings ohne bekanntes Feld: 400 und kein Scheduler-Neustart', () => withSettings([], async () => {
+  const { format } = require('node:util');
+  for (const raw of ['{}', '{"unbekannt":1}', '[]']) {
+    const lines = [];
+    const orig = { log: console.log, warn: console.warn, error: console.error };
+    for (const k of Object.keys(orig)) console[k] = (...a) => lines.push(format(...a));
+    let res, body;
+    try {
+      res = await postSettings(null, raw);
+      body = await res.json();
+    } finally { Object.assign(console, orig); }
+    assert.strictEqual(res.status, 400, `${raw}: ${JSON.stringify(body)}`);
+    assert.match(body.error, /Keine bekannte Einstellung/);
+    assert.ok(!lines.some((l) => l.includes('Scheduler started')), `${raw} darf den Scheduler nicht neu starten:\n${lines.join('\n')}`);
+  }
+}));
+
+test('POST /api/settings: backup_enabled nur true/false, 1/0, "1"/"0", "true"/"false"', () => withSettings(['backup_enabled'], async () => {
+  for (const [v, stored] of [[true, '1'], [1, '1'], ['1', '1'], ['true', '1'], [false, '0'], [0, '0'], ['0', '0'], ['false', '0']]) {
+    saveSetting('backup_enabled', stored === '1' ? '0' : '1');
+    const res = await postSettings({ backup_enabled: v });
+    assert.strictEqual(res.status, 200, JSON.stringify(v));
+    assert.strictEqual(getSetting('backup_enabled'), stored, JSON.stringify(v));
+  }
+  for (const v of [null, 123, 2, 'nein', 'yes', '']) {
+    await expect400({ backup_enabled: v }, 'backup_enabled', /backup_enabled/);
+  }
+}));
+
+test('POST /api/settings: backup_dir/update_dir erst typgeprüft, relativer backup_dir -> 400, kein Ordner', () => withSettings(['backup_dir', 'update_dir'], async () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const cwd = process.cwd();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'srv-cwd-'));
+  process.chdir(tmp); // fiele die Prüfung zurück, entstünde ./12345 hier und nicht im Repo
+  try {
+    for (const v of [12345, null, true, { pfad: 'D:\\Sicherung' }]) {
+      await expect400({ backup_dir: v }, 'backup_dir', /backup_dir/);
+    }
+    // Relativ hieße: relativ zum Arbeitsverzeichnis des Dienstes (fremd, oft C:\Windows\system32).
+    await expect400({ backup_dir: '12345' }, 'backup_dir', /absolut/);
+    assert.deepStrictEqual(fs.readdirSync(tmp), [], 'es darf kein Ordner angelegt werden');
+    for (const v of [12345, null]) {
+      await expect400({ update_dir: v }, 'update_dir', /update_dir/);
+    }
+
+    // Gültiges bleibt gültig: ein absoluter Pfad wird angelegt, leer heißt Standardordner.
+    const target = path.join(tmp, 'neu', 'sicherung');
+    let res = await postSettings({ backup_dir: target });
+    assert.strictEqual(res.status, 200);
+    assert.ok(fs.statSync(target).isDirectory());
+    res = await postSettings({ backup_dir: '  ' });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(getSetting('backup_dir'), '');
+  } finally {
+    process.chdir(cwd);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}));
+
+test('POST /api/settings: ein ungültiges Feld lässt auch die gültigen ungespeichert', () => withSettings(['poll_interval_sec', 'backup_enabled'], async () => {
+  saveSetting('poll_interval_sec', '900');
+  await expect400({ poll_interval_sec: 120, csv_format: 'xml' }, 'poll_interval_sec', /csv_format/);
+  await expect400({ backup_enabled: false, retention_days: 'x' }, 'backup_enabled', /retention_days/);
+}));
+
+// Das Dashboard schickt das geladene Intervall bei jedem automatischen Speichern mit. Meldete
+// GET einen Wert außerhalb 60-3600 (direkt in der DB, POLL_INTERVAL_SEC beim Erststart),
+// scheiterte jedes Speichern der Seite am neuen 400 — wie früher an der Region 'us'.
+test('GET /api/settings meldet das wirksame Intervall, auch wenn die DB einen Wert außerhalb 60-3600 hält', () => withSettings(['poll_interval_sec'], async () => {
+  for (const [stored, effective] of [['999999999', 3600], ['5', 60], ['900', 900]]) {
+    saveSetting('poll_interval_sec', stored);
+    const body = await (await fetch('http://localhost:3001/api/settings')).json();
+    assert.strictEqual(body.poll_interval_sec, effective, `gespeichert ${stored}`);
+  }
+}));
+
 test('GET /api/stations/:id/events supports limit, active and compound (start_ts,rowid) cursor', async () => {
   const db = getDb();
   db.prepare("INSERT OR IGNORE INTO stations (id, name) VALUES ('evpag', 'Pagination Test')").run();

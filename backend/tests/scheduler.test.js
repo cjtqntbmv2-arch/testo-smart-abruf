@@ -1246,3 +1246,50 @@ test('Log: scheiternde Sicherung ist ein gescheiterter Schritt im Herzschlag, Ur
   assert.doesNotMatch(later[0], /Sicherung/, 'der Tag ist verbraucht: kein weiterer Lauf');
   closeDb();
 });
+
+// ── Aufgabe 5 (V4): Intervall aus der DB auf 60-3600 s klemmen ────────────────
+// POST /api/settings prüft, ein direkt in die DB geschriebener Wert (oder POLL_INTERVAL_SEC
+// beim Erststart) geht aber nur hier durch. api_key leer: jeder Zyklus bricht sofort mit
+// "Skipping sync" ab — eine Zeile je Zyklus, ohne Cloud.
+const skips = (lines) => lines.filter((l) => l.includes('Skipping sync')).length;
+
+test('startScheduler: 999999999 s aus der DB wird auf 3600 s geklemmt statt auf 1 ms zu fallen, mit Warnzeile', async () => {
+  closeDb(); initTestDb();
+  saveSetting('api_key', '');
+  saveSetting('poll_interval_sec', '999999999');
+  let status;
+  const lines = await captureLog(async () => {
+    schedulerModule.startScheduler();
+    await new Promise((r) => setTimeout(r, 50)); // der alte 1-ms-Takt schaffte hier Dutzende Zyklen
+    status = schedulerModule.getSchedulerStatus();
+    schedulerModule.stopScheduler();
+  });
+  assert.strictEqual(skips(lines), 1, `nur der Sofortlauf:\n${lines.join('\n')}`);
+  const warns = lines.filter((l) => l.includes('poll_interval_sec='));
+  assert.strictEqual(warns.length, 1, lines.join('\n'));
+  assert.match(warns[0], /poll_interval_sec=999999999 .*60-3600 s.* 3600 s/);
+  assert.strictEqual(status.pollIntervalSec, 3600, 'die Systemübersicht zeigt das wirksame Intervall');
+  closeDb();
+});
+
+test('startScheduler: 5 s aus der DB wird auf 60 s angehoben; ein gültiger Wert bleibt ohne Warnung', async (t) => {
+  closeDb(); initTestDb();
+  saveSetting('api_key', '');
+  saveSetting('poll_interval_sec', '5');
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const start = await captureLog(async () => {
+    schedulerModule.startScheduler();
+    t.mock.timers.tick(59_000);
+  });
+  const at60 = await captureLog(async () => { t.mock.timers.tick(1_000); });
+  schedulerModule.stopScheduler();
+  assert.strictEqual(skips(start), 1, `bis 59 s nur der Sofortlauf:\n${start.join('\n')}`);
+  assert.match(start.find((l) => l.includes('poll_interval_sec=')) || '', /poll_interval_sec=5 .* 60 s/);
+  assert.strictEqual(skips(at60), 1, 'der zweite Zyklus nach 60 s');
+
+  saveSetting('poll_interval_sec', '900');
+  const valid = await captureLog(async () => { schedulerModule.startScheduler(); schedulerModule.stopScheduler(); });
+  assert.ok(!valid.some((l) => l.includes('poll_interval_sec=')), valid.join('\n'));
+  assert.ok(valid.some((l) => l.includes('Syncing every 900 seconds')), valid.join('\n'));
+  closeDb();
+});

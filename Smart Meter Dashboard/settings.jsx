@@ -52,7 +52,7 @@ function SettingsPage({ onClose }) {
   const [section, setSection] = sState("overview");
   const [settings, setSettings] = sState(loadSettings);
   const [savedFlash, setSavedFlash] = sState(false);
-  const [saveError, setSaveError] = sState(false);
+  const [saveError, setSaveError] = sState(null); // { text } des letzten Fehlschlags, sonst null
   const [apiKeyConfigured, setApiKeyConfigured] = sState(false);
   const [systemStatus, setSystemStatus] = sState(null);
   const [, forceTick] = sState(0);
@@ -173,7 +173,7 @@ function SettingsPage({ onClose }) {
       DASH_DATA.saveSettings(body)
         .then(() => {
           setSavedFlash(true);
-          setSaveError(false);
+          setSaveError(null);
           setTimeout(() => setSavedFlash(false), 1200);
           // Immediately trigger status refresh after successful settings update
           fetch('/api/system/status')
@@ -184,9 +184,12 @@ function SettingsPage({ onClose }) {
         .catch(err => {
           // H4: surface backend rejection (e.g. 400 validation) as save error
           console.error('Failed to save backend settings:', err);
-          setSaveError(true);
+          // Eigenes Objekt je Fehlschlag: der Timer eines älteren löscht so nie die Meldung
+          // eines neueren (gleiches Muster wie „Jetzt sichern“ in export-panel.jsx).
+          const failure = { text: (err && err.message) || 'Speichern fehlgeschlagen' };
+          setSaveError(failure);
           setSavedFlash(false);
-          setTimeout(() => setSaveError(false), 3000);
+          setTimeout(() => setSaveError(m => (m === failure ? null : m)), 6000);
         });
     }, 1000);
 
@@ -234,10 +237,17 @@ function SettingsPage({ onClose }) {
         </nav>
         <div className="settings-side-foot">
           {saveError ? (
-            <div className="save-pill show" style={{ background: 'var(--alarm)', color: '#fff' }}>
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 2v5M6 9v1"/></svg>
-              Speichern fehlgeschlagen
-            </div>
+            <>
+              <div className="save-pill show" style={{ background: 'var(--alarm)', color: '#fff' }}>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 2v5M6 9v1"/></svg>
+                Speichern fehlgeschlagen
+              </div>
+              {/* Klartext des Backends (400) oder des Netzfehlers: ohne ihn bliebe offen,
+                  welches Feld zu korrigieren ist (z. B. ein Schlüssel nur aus Leerzeichen). */}
+              {saveError.text !== 'Speichern fehlgeschlagen' && (
+                <div style={{ marginTop: 6, fontSize: 11, lineHeight: 1.35, color: 'var(--alarm)' }}>{saveError.text}</div>
+              )}
+            </>
           ) : (
             <div className={`save-pill ${savedFlash ? "show" : ""}`}>
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2.5 6 5 8.5 9.5 3.5"/></svg>

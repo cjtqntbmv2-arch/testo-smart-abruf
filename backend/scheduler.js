@@ -3,7 +3,7 @@ const TestoClient = require('./testo-client');
 const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText, measurementAlarmText } = require('./device-bridge');
 const { maybeRunBackupScan, computePruneFloor, readHealth, backupSummary } = require('./backup-runner');
 const { reconcileEvents } = require('./event-reconcile');
-const { info, error, logThrottled, resetThrottled } = require('./log');
+const { info, warn, error, logThrottled, resetThrottled } = require('./log');
 
 let isSyncing = false;
 let cyclesWithErrors = 0; // Zyklen mit Fehlern seit dem letzten fehlerfreien — nur fuers Log
@@ -497,17 +497,31 @@ async function runSyncCycle(customClient = null) {
   }
 }
 
+// Abfrage-Intervall, wie der Scheduler es wirklich verwendet. POST /api/settings nimmt nur
+// 60-3600 s an; ein anders gespeicherter Wert (direkt in der DB, POLL_INTERVAL_SEC beim
+// Erststart) wird hier geklemmt. Ohne Obergrenze kappt Node ein setInterval ueber 2^31-1 ms
+// (~24,8 Tage) auf 1 ms: ein Anfragesturm gegen die Cloud.
+const POLL_INTERVAL_MIN_SEC = 60;
+const POLL_INTERVAL_MAX_SEC = 3600;
+function pollIntervalSec() {
+  const n = parseInt(getSetting('poll_interval_sec') || '900', 10);
+  if (isNaN(n) || n <= 0) return 900;
+  return Math.min(POLL_INTERVAL_MAX_SEC, Math.max(POLL_INTERVAL_MIN_SEC, n));
+}
+
 let timer = null;
 function startScheduler() {
   if (timer) clearInterval(timer);
-  const intervalSetting = getSetting('poll_interval_sec') || '900';
-  const intervalSec = parseInt(intervalSetting, 10);
-  const validIntervalSec = isNaN(intervalSec) || intervalSec <= 0 ? 900 : intervalSec;
-  info(`Scheduler started. Syncing every ${validIntervalSec} seconds.`);
+  const stored = getSetting('poll_interval_sec');
+  const intervalSec = pollIntervalSec();
+  if (stored != null && stored !== String(intervalSec)) {
+    warn(`poll_interval_sec=${stored} ungültig (erlaubt ${POLL_INTERVAL_MIN_SEC}-${POLL_INTERVAL_MAX_SEC} s), verwendet werden ${intervalSec} s.`);
+  }
+  info(`Scheduler started. Syncing every ${intervalSec} seconds.`);
   runSyncCycle().catch(error);
   timer = setInterval(() => {
     runSyncCycle().catch(error);
-  }, validIntervalSec * 1000);
+  }, intervalSec * 1000);
 }
 
 function stopScheduler() {
@@ -524,7 +538,7 @@ function getSchedulerStatus() {
     lastSyncTime,
     lastSyncStatus,
     lastSyncError,
-    pollIntervalSec: parseInt(getSetting('poll_interval_sec') || '900', 10),
+    pollIntervalSec: pollIntervalSec(),
     diagnostics: lastSyncDiag
   };
 }
@@ -533,5 +547,8 @@ module.exports = {
   runSyncCycle,
   startScheduler,
   stopScheduler,
-  getSchedulerStatus
+  getSchedulerStatus,
+  pollIntervalSec,
+  POLL_INTERVAL_MIN_SEC,
+  POLL_INTERVAL_MAX_SEC
 };
