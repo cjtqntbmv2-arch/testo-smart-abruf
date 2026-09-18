@@ -1,6 +1,22 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 
+// Keine Anfrage an die testo-Cloud. Jedes gespeicherte Setting startet den Scheduler neu, und
+// dessen Sofortlauf fragte mit den Wegwerf-Schlüsseln dieser Datei ('preserved-key', 'new-key')
+// die echte Cloud an: vier 401 je Lauf, auch in der CI. Alles außer dem eigenen Server bekommt
+// jetzt sofort eine 401 — derselbe Fehlerweg wie bisher, nur ohne Netz. Ablehnen statt antworten
+// löste die Wiederholungen samt Wartezeit in _fetchWithRetry aus.
+const realFetch = globalThis.fetch;
+globalThis.fetch = (url, opts) => String(url).startsWith('http://localhost:3001/')
+  ? realFetch(url, opts)
+  : Promise.resolve(new Response('{"message":"Test-Stub: keine Cloud im Test"}', { status: 401 }));
+// Was trotzdem hinausginge, zählt undici unterhalb von fetch; der letzte Test verlangt die Liste
+// leer. So fiele auch ein umgangener Stub auf.
+const cloudRequests = [];
+require('node:diagnostics_channel').subscribe('undici:request:create', ({ request }) => {
+  if (request.origin !== 'http://localhost:3001') cloudRequests.push(`${request.method} ${request.origin}${request.path}`);
+});
+
 process.env.DB_PATH = ':memory:';
 process.env.PORT = '3001';
 const { initDb, saveSetting, getSetting, closeDb, getDb } = require('../db');
@@ -1106,6 +1122,12 @@ test('server.js startup: invalid stored api_region (legacy "us") is reset to eu'
   fs.rmSync(tmpDir, { recursive: true, force: true });
 
   assert.strictEqual(row.value, 'eu', 'ungültig gespeicherte Region muss beim Start auf eu zurückgesetzt werden');
+});
+
+// Gegenprobe zum fetch-Stub am Dateianfang.
+test('keine Anfrage dieser Datei verlässt den Rechner', async () => {
+  await waitSchedulerIdle();
+  assert.deepStrictEqual(cloudRequests, []);
 });
 
 after(() => {
