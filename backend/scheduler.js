@@ -1,7 +1,7 @@
 const { getDb, getSetting, saveSetting } = require('./db');
 const TestoClient = require('./testo-client');
 const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText, measurementAlarmText } = require('./device-bridge');
-const { maybeRunBackupScan, computePruneFloor, readHealth, backupSummary } = require('./backup-runner');
+const { maybeRunBackupScan, computePruneFloor, readHealth, backupSummary, retentionDays } = require('./backup-runner');
 const { reconcileEvents } = require('./event-reconcile');
 const { info, warn, error, logThrottled, resetThrottled } = require('./log');
 
@@ -469,12 +469,10 @@ async function runSyncCycle(customClient = null) {
 
     // 4. Data retention cleanup, clamped by computePruneFloor: with backups on, nothing that is
     // not in a backup is deleted (no ZIP for its month, or younger than the last snapshot).
+    // retentionDays() (backup-runner.js) klemmt den gespeicherten Wert auf 1-3650 Tage.
     try {
-      const daysSetting = getSetting('retention_days') || '365';
-      const days = parseInt(daysSetting, 10);
-      const validDays = isNaN(days) || days <= 0 ? 365 : days;
       const now = Date.now();
-      const retentionCutoff = now - validDays * 24 * 3600 * 1000;
+      const retentionCutoff = now - retentionDays() * 24 * 3600 * 1000;
       const backupFloor = computePruneFloor(now); // Infinity if backups off; -Infinity before the first snapshot
       const effectiveCutoff = Math.min(retentionCutoff, backupFloor);
       db.prepare("DELETE FROM measurements WHERE timestamp < ?").run(effectiveCutoff);
