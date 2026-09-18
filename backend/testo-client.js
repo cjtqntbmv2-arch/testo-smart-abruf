@@ -1,5 +1,19 @@
 const zlib = require('zlib');
+const { setTimeout: sleep } = require('node:timers/promises');
 const { warn } = require('./log');
+
+// Poll budget per async request: the conservative default from
+// testo-smart-connect-api/03-async-pattern.md, which also prescribes the 429 handling below.
+const POLL_BUDGET_SEC = 300;
+
+// Retry-After is delay-seconds or an HTTP date (RFC 9110 10.2.3). Milliseconds, or null when
+// the header is absent or unreadable. Digits first: Date.parse('5') is a date in 2001.
+function parseRetryAfter(value) {
+  if (value == null) return null;
+  if (/^\d+$/.test(value)) return Number(value) * 1000;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, at - Date.now());
+}
 
 class TestoClient {
   constructor(apiKey, region = 'eu', opts = {}) {
@@ -8,6 +22,7 @@ class TestoClient {
     this.baseUrl = `https://data-api.${region}.smartconnect.testo.com`;
     this.retryAttempts = opts.retryAttempts ?? 3;
     this.retryBaseMs = opts.retryBaseMs ?? 500;
+    this.sleep = opts.sleep ?? sleep;
   }
 
   // Long-running processes hit transient network failures (stale keep-alive
@@ -16,7 +31,7 @@ class TestoClient {
   // Retry the transport-level rejection with exponential backoff; on final
   // failure throw an Error that surfaces the cause so it is diagnosable.
   // A returned response (even a non-ok HTTP status) is NOT retried — that is the
-  // caller's concern.
+  // caller's concern (a 429: see _submit and _poll).
   async _fetchWithRetry(url, options) {
     let lastErr;
     for (let i = 0; i < this.retryAttempts; i++) {
@@ -25,7 +40,7 @@ class TestoClient {
       } catch (err) {
         lastErr = err;
         if (i < this.retryAttempts - 1) {
-          await new Promise(resolve => setTimeout(resolve, this.retryBaseMs * Math.pow(2, i)));
+          await this.sleep(this.retryBaseMs * Math.pow(2, i));
         }
       }
     }
@@ -115,26 +130,57 @@ class TestoClient {
           errMsg = bodyText;
         }
       } catch (_) {}
-      throw new Error(`HTTP error! status: ${response.status} on ${path}${errMsg ? `: ${errMsg}` : ''}`);
+      const err = new Error(`HTTP error! status: ${response.status} on ${path}${errMsg ? `: ${errMsg}` : ''}`);
+      err.status = response.status;
+      if (response.status === 429) err.retryAfterMs = parseRetryAfter(response.headers.get('retry-after'));
+      throw err;
     }
     return response.json();
   }
 
-  async _poll(pollPath, maxBudgetSec = 300) {
+  // Submit step. A 429 is retried up to 3 times (03-async-pattern.md, "429 (Too Many Requests)
+  // handling"): after as long as Retry-After says, else after 2 s, 4 s, 8 s -- the start of
+  // the poll's backoff schedule. A wait longer than a whole poll budget is not sat out: it
+  // would hold up the sync cycle and, through isSyncing, every later one. The next cycle asks.
+  async _submit(postPath, requestBody) {
+    for (let retry = 0; ; retry++) {
+      try {
+        return await this._request(postPath, 'POST', requestBody);
+      } catch (err) {
+        if (err.status !== 429 || retry === 3) throw err;
+        const wait = err.retryAfterMs ?? 2000 * 2 ** retry;
+        if (wait > POLL_BUDGET_SEC * 1000) throw err;
+        await this.sleep(wait);
+      }
+    }
+  }
+
+  async _poll(pollPath, maxBudgetSec = POLL_BUDGET_SEC) {
     let delay = 2000; // start with 2s delay
     const maxDelay = 30000;
     const deadline = Date.now() + maxBudgetSec * 1000;
 
     while (Date.now() < deadline) {
-      const result = await this._request(pollPath);
-      if (result.status === 'Completed') {
+      let result;
+      let wait = delay;
+      try {
+        result = await this._request(pollPath);
+      } catch (err) {
+        // A 429 on the poll is no request failure (03-async-pattern.md): keep the request_uuid
+        // and poll again after the backoff, or after Retry-After if that is longer -- unless
+        // that reaches past the budget, then the 429 is the reason polling ends.
+        if (err.status !== 429) throw err;
+        wait = Math.max(delay, err.retryAfterMs ?? 0);
+        if (Date.now() + wait >= deadline) throw err;
+      }
+      if (result?.status === 'Completed') {
         return result.data_urls;
       }
-      if (result.status === 'Failed' || result.status === 'Error') {
+      if (result?.status === 'Failed' || result?.status === 'Error') {
         throw new Error(`Testo API report failed for ${pollPath}`);
       }
-      
-      await new Promise(resolve => setTimeout(resolve, delay));
+
+      await this.sleep(wait);
       delay = Math.min(delay * 2, maxDelay);
     }
     throw new Error(`Polling timeout for ${pollPath}`);
@@ -222,7 +268,7 @@ class TestoClient {
   }
 
   async _executeAsyncFlow(postPath, getPathPrefix, requestBody) {
-    const submitRes = await this._request(postPath, 'POST', requestBody);
+    const submitRes = await this._submit(postPath, requestBody);
     const uuid = submitRes.request_uuid;
     if (!uuid) {
       throw new Error(`No request_uuid returned by POST ${postPath}`);
