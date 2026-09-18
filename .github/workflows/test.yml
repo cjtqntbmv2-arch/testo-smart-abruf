@@ -15,9 +15,9 @@ jobs:
   test:
     runs-on: ubuntu-latest   # better-sqlite3 hat linux-x64-Prebuilds, und der Lauf ist hier am guenstigsten
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # Aus .nvmrc (24) statt fest eingetragen: eine Versionsangabe weniger,
           # die driften kann. engines erlaubt 22.x || 24.x || 26.x.
