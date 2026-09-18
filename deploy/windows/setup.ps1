@@ -181,19 +181,32 @@ for ($i = 0; $i -lt 30; $i++) {
   try { $resp = Invoke-RestMethod -Uri $statusUrl -TimeoutSec 3 -ErrorAction Stop; break } catch {}
 }
 
+# Hinweis fuer beide Fehlerfaelle unten. `$_ ist maskiert, sonst interpolierte PowerShell es.
+$orphanHint = "  Haeufig: verwaister node.exe belegt Port $port -> Admin-PowerShell: Stop-ScheduledTask -TaskName $TaskName; Get-CimInstance Win32_Process | Where-Object { `$_.Name -eq 'node.exe' -and `$_.CommandLine -match 'backend\\server\.js' } | Invoke-CimMethod -MethodName Terminate | Out-Null"
+
 if ($resp) {
   Write-Host "`n  Server erreichbar." -ForegroundColor Green
   Write-Host "  Version  : $($resp.appVersion)"
+  # Antwortet die Fassung, die hier liegt? Ein uebrig gebliebener alter Prozess auf
+  # demselben Port antwortet auch. Ohne diesen Vergleich meldete das Update Erfolg,
+  # und install.cmd raeumte die Vorversion weg.
+  $versionFile = Join-Path $AppRoot 'VERSION'
+  $expected = if (Test-Path -LiteralPath $versionFile) { (Get-Content -Raw -LiteralPath $versionFile).Trim() } else { '' }
+  if ($resp.appVersion -ne $expected) {
+    Write-Host $orphanHint -ForegroundColor Yellow
+    Fail "Server meldet Version '$($resp.appVersion)', installiert ist '$expected' ($versionFile)."
+  }
   Write-Host "  Scheduler: $($resp.scheduler.lastSyncStatus)   Storage: $($resp.storage.status)"
   if ($resp.api.apiKeyConfigured) { Write-Host "  API-Key  : konfiguriert" }
   else { Write-Host "  API-Key  : NOCH NICHT konfiguriert -> im Dashboard unter Einstellungen eintragen" -ForegroundColor Yellow }
   Write-Host "  Dashboard: $baseUrl"
-  try { Start-Process $baseUrl } catch {}
+  # Nicht in der CI: dort wartete Start-Process -Wait des Workflows sonst auf den Browser.
+  if (-not $env:CI) { try { Start-Process $baseUrl } catch {} }
   Write-Host "  DB-Datei : $DataDir\klima.db    Log: $DataDir\logs\app.log"
   try { Stop-Transcript | Out-Null } catch {}
 } else {
   $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
   Write-Host "  Server nach ~60s nicht erreichbar (LastTaskResult: $($info.LastTaskResult)). Log pruefen: $DataDir\logs\app.log" -ForegroundColor Yellow
-  Write-Host "  Haeufig: verwaister node.exe belegt Port $port -> Admin-PowerShell: Stop-ScheduledTask -TaskName $TaskName; Get-CimInstance Win32_Process | Where-Object { `$_.Name -eq 'node.exe' -and `$_.CommandLine -match 'backend\\server\.js' } | Invoke-CimMethod -MethodName Terminate | Out-Null" -ForegroundColor Yellow
+  Write-Host $orphanHint -ForegroundColor Yellow
   Fail 'Smoke-Check fehlgeschlagen.'
 }

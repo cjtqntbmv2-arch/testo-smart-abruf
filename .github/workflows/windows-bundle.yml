@@ -119,8 +119,9 @@ jobs:
       - name: E2E smoke — bundled node.exe serves the dashboard
         shell: pwsh
         # Testet die TATSAECHLICH ausgelieferte Kombination (gebuendelte node.exe +
-        # gebuendeltes node_modules + App), nicht die System-node. Ersetzt das fehlende
-        # End-to-End. Der Scheduled-Task-/NetworkService-Pfad bleibt der Windows-Abnahme (§9).
+        # gebuendeltes node_modules + App), nicht die System-node. Aufgabe unter
+        # NetworkService, update.cmd und Rollback pruefen die Installtest-Schritte nach
+        # "Zip bundle"; nur die UAC-Abfrage bleibt der Windows-Abnahme (§9).
         run: |
           $env:DB_PATH = "$env:RUNNER_TEMP\smoke.db"
           $env:PORT = "3000"; $env:HOST = "127.0.0.1"
@@ -144,6 +145,276 @@ jobs:
         # /* -> Wurzelordner NICHT mit einpacken: install.cmd liegt in der ZIP-Wurzel.
         run: Compress-Archive -Path "bundle/testo-smart-abruf/*" -DestinationPath "testo-smart-abruf-${{ steps.ver.outputs.version }}-win-x64.zip" -Force
 
+      # --- Installtest --------------------------------------------------------------
+      # install.cmd, setup.ps1 und update.cmd laufen hier wirklich: auf der Release-ZIP,
+      # als Aufgabe unter NetworkService. Vorher liefen sie nie in der CI (ein
+      # PS-Parserfehler in setup.ps1 blieb vier Releases lang unentdeckt). Die Schritte
+      # bauen aufeinander auf: Erstinstallation -> Hinweis -> Update -> Rollback.
+      # Alles liegt ausserhalb des Workspace (C:\Apps, C:\ci-ablage, RUNNER_TEMP);
+      # Artefakt und Release-Asset unten bleiben unberuehrt.
+      #
+      # Batches laufen ueber cmd /c: mit Umleitung startet Start-Process ueber
+      # CreateProcess, und das fuehrt eine .cmd nicht aus. timeout-minutes an jedem
+      # Schritt: die Batches enden mit pause; bedient die Eingabedatei eines nicht,
+      # liefe der Job sonst in den 6-Stunden-Default. Start-Process -Wait wartet auch
+      # auf Nachfahren - die Prozesse der Aufgabe startet aber der Aufgabenplanungsdienst.
+      - name: Installtest - Hilfsfunktionen und Umgebung
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Content -Path "$env:RUNNER_TEMP\installtest.ps1" -Value @'
+          # Gemeinsam fuer die Installtest-Schritte, dort per Dot-Source geladen.
+          # Pfade = Vertrag mit install.cmd, update.cmd und start.cmd.
+          $ProgressPreference = 'SilentlyContinue'
+          $Live    = 'C:\Apps\TestoSmartAbruf'
+          $Data    = 'C:\ProgramData\TestoSmartAbruf'
+          $Ablage  = 'C:\ci-ablage'
+          $Api     = 'http://127.0.0.1:3000'
+          $Eingabe = Join-Path $env:RUNNER_TEMP 'eingabe.txt'
+
+          # Fuehrt eine .cmd mit der Eingabedatei aus, gibt stdout und stderr aus und
+          # liefert Exit-Code und Text. Arbeitsordner RUNNER_TEMP: nie ein Ordner, den
+          # die Batch verschiebt oder loescht.
+          function Invoke-Batch([string]$Pfad, [string]$Name) {
+            $out = Join-Path $env:RUNNER_TEMP "$Name.out.log"
+            $err = Join-Path $env:RUNNER_TEMP "$Name.err.log"
+            $p = Start-Process -FilePath $env:ComSpec -ArgumentList '/c', $Pfad `
+                   -WorkingDirectory $env:RUNNER_TEMP -RedirectStandardInput $Eingabe `
+                   -RedirectStandardOutput $out -RedirectStandardError $err `
+                   -Wait -PassThru -NoNewWindow
+            Get-Content $out, $err | Out-Host
+            # Ohne Exit-Code bestuende jede "Exit ungleich 0"-Pruefung still.
+            if ($null -eq $p.ExitCode) { throw "${Name}: kein Exit-Code" }
+            Write-Host "${Name}: Exit $($p.ExitCode)"
+            [pscustomobject]@{ Code = $p.ExitCode; Text = (Get-Content $out, $err -Raw) -join "`n" }
+          }
+
+          # Fragt den Status ab, bis die Bedingung gilt ($_ = Antwort); nach 90 s Abbruch
+          # mit der letzten Antwort. Ueberbrueckt auch einen Neustart des Dienstes.
+          function Wait-Status([scriptblock]$Bis) {
+            $ende = (Get-Date).AddSeconds(90)
+            while ($true) {
+              try {
+                $s = Invoke-RestMethod "$Api/api/system/status" -TimeoutSec 5
+                if ($s | Where-Object $Bis) { return $s }
+                $zuletzt = $s | ConvertTo-Json -Depth 5 -Compress
+              } catch { $zuletzt = "keine Antwort: $($_.Exception.Message)" }
+              if ((Get-Date) -gt $ende) { throw "Status nach 90 s nicht erreicht: {$Bis}. Zuletzt: $zuletzt" }
+              Start-Sleep -Seconds 2
+            }
+          }
+
+          # update_dir speichern und warten, bis die Pruefung fuer genau diesen Ordner
+          # fertig ist: server.js stoesst sie nach dem Speichern ohne await an.
+          function Set-UpdateDir([string]$Dir) {
+            $body = @{ update_dir = $Dir } | ConvertTo-Json
+            Invoke-RestMethod -Method Post -Uri "$Api/api/settings" -ContentType 'application/json' -Body $body | Out-Null
+            Wait-Status { $_.update.checking -eq $false -and $_.update.dir -eq $Dir }
+          }
+
+          # Der eine node.exe mit backend\server.js, also der Dienst.
+          function Get-ServerProcess {
+            $p = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
+                   Where-Object CommandLine -match 'backend\\server\.js')
+            if ($p.Count -ne 1) { throw "Erwartet genau einen server.js-Prozess, gefunden: $($p.Count)" }
+            $p[0]
+          }
+
+          # Test-ZIP aus einer Bundle-Kopie, gepackt wie "Zip bundle": update.cmd prueft
+          # die ZIP-Wurzel, und tar -a -cf ... . listete ./install.cmd. Ziel direkt in der
+          # Ablage, ausserhalb des Workspace: nie Artefakt, nie Release-Asset.
+          function New-TestZip([string]$Version, [switch]$Kaputt) {
+            $bau = Join-Path $env:RUNNER_TEMP "bau-$Version"
+            Copy-Item -Path (Join-Path $env:GITHUB_WORKSPACE 'bundle/testo-smart-abruf') -Destination $bau -Recurse
+            Set-Content -Path (Join-Path $bau 'VERSION') -Value $Version -Encoding ascii
+            if ($Kaputt) {
+              $js = Join-Path $bau 'backend/server.js'
+              Set-Content -Path $js -NoNewline -Value ("throw new Error('CI: absichtlich kaputt');`n" + (Get-Content $js -Raw))
+            }
+            Compress-Archive -Path "$bau/*" -DestinationPath (Join-Path $Ablage "testo-smart-abruf-$Version-win-x64.zip") -Force
+          }
+          '@
+          . "$env:RUNNER_TEMP\installtest.ps1"
+          # "J" beantwortet die eine set /p-Frage von update.cmd, die Leerzeilen jedes pause.
+          Set-Content -Path $Eingabe -Encoding ascii -Value (@('J') + @('') * 12)
+          # install.cmd und update.cmd erkennen Adminrechte an "net session". Scheitert das,
+          # erhoehen sie sich neu in ein eigenes Fenster, dessen pause niemand bedient.
+          net session *> $null
+          if ($LASTEXITCODE -ne 0) { throw 'Umgebung: "net session" scheitert - die Batches wuerden sich neu erhoehen und bis zum Timeout haengen.' }
+
+      - name: Installtest 1/4 - Erstinstallation per install.cmd
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . "$env:RUNNER_TEMP\installtest.ps1"
+          $ver = '${{ steps.ver.outputs.version }}'
+          if (Test-Path $Live) { throw "Umgebung: $Live existiert schon - das waere keine Erstinstallation." }
+          # Wie beim Kunden: Release-ZIP entpacken, install.cmd daraus starten.
+          # tar aus System32 (bsdtar): ein GNU-tar im PATH kann kein ZIP.
+          $ziel = Join-Path $env:RUNNER_TEMP 'erstinstallation'
+          New-Item -ItemType Directory -Path $ziel | Out-Null
+          & "$env:SystemRoot\System32\tar.exe" -xf "testo-smart-abruf-$ver-win-x64.zip" -C $ziel
+          if ($LASTEXITCODE -ne 0) { throw "tar: Exit $LASTEXITCODE" }
+
+          $r = Invoke-Batch (Join-Path $ziel 'install.cmd') 'erstinstallation'
+          if ($r.Code -ne 0) { throw "install.cmd: Exit $($r.Code), erwartet 0" }
+          $null = Wait-Status { $_.appVersion -eq $ver }
+
+          $task = Get-ScheduledTask -TaskName TestoSmartAbruf
+          if ($task.State -ne 'Running') { throw "Aufgabe: $($task.State), erwartet Running" }
+          # Ueber die SID: der Kontoname ist sprachabhaengig (NETZWERKDIENST) und steht je
+          # nach Abfrage mit oder ohne "NT AUTHORITY\" da.
+          $uid = $task.Principal.UserId
+          $sid = try { ([Security.Principal.NTAccount]$uid).Translate([Security.Principal.SecurityIdentifier]).Value } catch { $uid }
+          if ($sid -ne 'S-1-5-20') { throw "Aufgabe laeuft als '$uid', erwartet NetworkService (S-1-5-20)" }
+          # Auch der Dienstprozess selbst: darauf baut "Hinweis unter NetworkService" auf.
+          $owner = (Invoke-CimMethod -InputObject (Get-ServerProcess) -MethodName GetOwnerSid).Sid
+          if ($owner -ne 'S-1-5-20') { throw "server.js laeuft als $owner, erwartet S-1-5-20" }
+          Write-Host "Erstinstallation ok: $ver, Aufgabe Running als NetworkService"
+
+      - name: Installtest 2/4 - Update-Hinweis unter NetworkService
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . "$env:RUNNER_TEMP\installtest.ps1"
+          $ver = '${{ steps.ver.outputs.version }}'
+          # Ablage wie bei der IT: der Dienst liest sie als NetworkService.
+          New-Item -ItemType Directory -Path $Ablage | Out-Null
+          icacls $Ablage /grant '*S-1-5-20:(OI)(CI)RX' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "icacls: Exit $LASTEXITCODE" }
+          Copy-Item "testo-smart-abruf-$ver-win-x64.zip" $Ablage
+          New-TestZip '99.0.0'
+          # Stoerer, die der Dienst uebergehen muss: 0 Byte = Kopie laeuft noch,
+          # .part = kein Release-Name.
+          New-Item -ItemType File -Path "$Ablage\testo-smart-abruf-99.9.0-win-x64.zip" | Out-Null
+          Set-Content -Path "$Ablage\testo-smart-abruf-99.8.0-win-x64.zip.part" -Value 'halb kopiert'
+          Copy-Item 'bundle/testo-smart-abruf/deploy/windows/update.cmd' $Ablage
+          Get-ChildItem $Ablage | Format-Table Name, Length -AutoSize | Out-Host
+
+          $u = (Set-UpdateDir $Ablage).update
+          if ($u.latestVersion -ne '99.0.0' -or $u.latestFile -ne 'testo-smart-abruf-99.0.0-win-x64.zip' -or
+              $null -ne $u.error -or $u.updateAvailable -ne $true) {
+            throw "Hinweis falsch: $($u | ConvertTo-Json -Compress)"
+          }
+          Write-Host "Hinweis ok: $($u.latestFile)"
+
+          # Fehlerfall (V7): einen Ordner, den NetworkService nicht lesen darf, muss der
+          # Dienst als Fehler melden, nicht als "kein Update". Die ZIP darin belegt, dass
+          # er nichts gelesen hat.
+          $gesperrt = 'C:\ci-ablage-gesperrt'
+          New-Item -ItemType Directory -Path $gesperrt | Out-Null
+          Set-Content -Path "$gesperrt\testo-smart-abruf-99.0.0-win-x64.zip" -Value 'keine echte ZIP'
+          icacls $gesperrt /inheritance:r /grant '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "icacls: Exit $LASTEXITCODE" }
+          $fremd = (Get-Acl $gesperrt).Access.IdentityReference |
+                     ForEach-Object { $_.Translate([Security.Principal.SecurityIdentifier]).Value } |
+                     Where-Object { $_ -notin 'S-1-5-18', 'S-1-5-32-544' }
+          if ($fremd) { throw "Umgebung: $gesperrt gewaehrt noch Zugriff fuer $($fremd -join ', ')" }
+          $u = (Set-UpdateDir $gesperrt).update
+          if ($null -eq $u.error -or $u.updateAvailable -ne $false) {
+            throw "Gesperrter Ordner nicht als Fehler gemeldet: $($u | ConvertTo-Json -Compress)"
+          }
+          Write-Host "Fehlerfall ok: $($u.error)"
+
+          $u = (Set-UpdateDir $Ablage).update
+          if ($u.latestVersion -ne '99.0.0' -or $null -ne $u.error) {
+            throw "Zurueck auf ${Ablage}: $($u | ConvertTo-Json -Compress)"
+          }
+
+      - name: Installtest 3/4 - update.cmd ueber Laufwerk Q (Bootstrap, Update)
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . "$env:RUNNER_TEMP\installtest.ps1"
+          $ver = '${{ steps.ver.outputs.version }}'
+          New-SmbShare -Name ciablage -Path $Ablage -ReadAccess Everyone | Out-Null
+          # Trennt Umgebungs- von Codefehler: ein SMB-Server auf dem Runner ist nicht garantiert.
+          if (-not (Test-Path '\\localhost\ciablage')) { throw 'Umgebung: SMB-Freigabe \\localhost\ciablage auf dem Runner nicht erreichbar.' }
+          net use Q: \\localhost\ciablage
+          if ($LASTEXITCODE -ne 0) { throw "Umgebung: net use Q: scheitert (Exit $LASTEXITCODE)." }
+
+          # a) Bootstrap: eine Installation ohne CLI (vor 0.18.0) fuehrt zum Hinweis auf den
+          #    Handweg, installiert wird nichts. Leere update-check.js = kein CLI.
+          $uc = "$Live\backend\update-check.js"
+          $echt = "$env:RUNNER_TEMP\update-check.js.echt"
+          Copy-Item $uc $echt
+          Clear-Content $uc
+          try { $r = Invoke-Batch 'Q:\update.cmd' 'bootstrap' }
+          finally { Copy-Item $echt $uc -Force }
+          if ($r.Code -eq 0) { throw 'Bootstrap: Exit 0, erwartet ungleich 0' }
+          if ($r.Text -notlike '*aelter als 0.18.0*') { throw 'Bootstrap: Zeile "aelter als 0.18.0" fehlt' }
+          $null = Wait-Status { $_.appVersion -eq $ver }
+
+          # b) Echtes Update: waehlt 99.0.0 (99.9.0 hat 0 Byte, .part ist kein Release-Name).
+          $r = Invoke-Batch 'Q:\update.cmd' 'update'
+          if ($r.Code -ne 0) { throw "update.cmd: Exit $($r.Code), erwartet 0" }
+          # Der erhoehte Prozess sieht beim Kunden die Laufwerke des Benutzers nicht, darum
+          # schreibt update.cmd Q: immer auf den Serverpfad um. Fehlt er im Log, lief das nicht.
+          if ($r.Text -notlike '*\\localhost\ciablage*') { throw 'update.cmd nennt \\localhost\ciablage nicht - Q: wurde nicht auf UNC umgeschrieben' }
+          $null = Wait-Status { $_.appVersion -eq '99.0.0' }
+          if (Test-Path "$Live.old") { throw "$Live.old ist nach dem Update noch da" }
+          # Der Abzug muss eine lesbare DB mit dem Stand aus Schritt 2 sein; blosses
+          # Vorhandensein bestuende auch mit einem leeren Abzug.
+          $env:ABZUG = "$Data\klima-vor-update.db"
+          $env:BS3 = "$Live\node_modules\better-sqlite3"
+          $wert = & "$Live\node.exe" -e "const db = new (require(process.env.BS3))(process.env.ABZUG, { readonly: true, fileMustExist: true }); const r = db.prepare('SELECT value FROM settings WHERE key = ?').get('update_dir'); db.close(); process.stdout.write(r ? String(r.value) : '(kein Eintrag)')"
+          if ($LASTEXITCODE -ne 0) { throw "klima-vor-update.db laesst sich nicht oeffnen (node: Exit $LASTEXITCODE)" }
+          if ($wert -ne $Ablage) { throw "klima-vor-update.db: update_dir = '$wert', erwartet '$Ablage'" }
+          Write-Host "Update ok: 99.0.0, Abzug mit update_dir = $wert"
+
+      - name: Installtest 4/4 - Rollback per UNC
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . "$env:RUNNER_TEMP\installtest.ps1"
+          $vorher = Get-ServerProcess
+          # Erst jetzt in die Ablage: laege 99.1.0 schon in Schritt 3 dort, haette update.cmd sie gewaehlt.
+          New-TestZip '99.1.0' -Kaputt
+          $r = Invoke-Batch '\\localhost\ciablage\update.cmd' 'rollback'
+          if ($r.Code -eq 0) { throw 'Rollback: Exit 0, erwartet ungleich 0' }
+          if ($r.Text -cnotlike '*ROLLBACK*') { throw 'Rollback: Zeile mit "ROLLBACK" fehlt' }
+          $null = Wait-Status { $_.appVersion -eq '99.0.0' }
+          # Belegen, dass wirklich umgeschaltet und zurueckgerollt wurde: Exit, appVersion und
+          # laufende Aufgabe saehen nach einem Abbruch vor dem Umschalten genauso aus.
+          $failed = "$Live.failed\VERSION"
+          if (-not (Test-Path $failed) -or "$(Get-Content $failed -Raw)".Trim() -ne '99.1.0') { throw "$failed fehlt oder nennt nicht 99.1.0" }
+          $nachher = Get-ServerProcess
+          # PID plus Startzeit: Windows vergibt freie PIDs schnell wieder.
+          if ($nachher.ProcessId -eq $vorher.ProcessId -and $nachher.CreationDate -eq $vorher.CreationDate) {
+            throw "server.js ist noch derselbe Prozess (PID $($vorher.ProcessId)) - umgeschaltet wurde nie"
+          }
+          if (-not (Test-Path "$Data\klima-vor-update.fehlgeschlagen.db")) { throw 'klima-vor-update.fehlgeschlagen.db fehlt' }
+          $state = (Get-ScheduledTask -TaskName TestoSmartAbruf).State
+          if ($state -ne 'Running') { throw "Aufgabe nach dem Rollback: $state, erwartet Running" }
+          Write-Host "Rollback ok: 99.0.0 laeuft wieder (PID $($nachher.ProcessId)), 99.1.0 liegt in $Live.failed"
+
+      # Der Dienst schreibt nach app.log, das kein Batch-Log zeigt. Ohne diesen Schritt
+      # bleibt bei "Server nicht erreichbar" nur Raten.
+      - name: Installtest - Diagnose bei Fehler
+        if: failure()
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $ErrorActionPreference = 'Continue'
+          Get-ScheduledTask -TaskName TestoSmartAbruf -ErrorAction SilentlyContinue |
+            Format-List TaskName, State, @{ n = 'UserId'; e = { $_.Principal.UserId } }
+          Get-ChildItem 'C:\Apps', 'C:\ci-ablage', 'C:\ProgramData\TestoSmartAbruf' -ErrorAction SilentlyContinue |
+            Format-Table FullName, Length, LastWriteTime -AutoSize
+          # Haengt eine Batch bis zum Timeout, gibt Invoke-Batch ihr Log nie aus.
+          Get-ChildItem "$env:RUNNER_TEMP\*.log" -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime | Select-Object -Last 2 |
+            ForEach-Object { "==== $($_.FullName)"; Get-Content $_.FullName -Tail 80 }
+          # start.cmd rotiert app.log bei jedem Start nach app.<zeit>.log.bak: die letzten
+          # vier zeigen auch den Absturz einer kaputten Fassung vor dem Rollback.
+          Get-ChildItem 'C:\ProgramData\TestoSmartAbruf\logs' -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime | Select-Object -Last 4 |
+            ForEach-Object { "==== $($_.FullName)"; Get-Content $_.FullName -Tail 60 }
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
         with:
@@ -163,4 +434,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
-          files: testo-smart-abruf-*-win-x64.zip
+          # Genau die Release-ZIP, kein Muster: die Test-ZIPs 99.x der Installtests
+          # (99.1.0 absichtlich kaputt) duerfen nie Release-Asset werden, auch nicht,
+          # wenn sie spaeter einmal im Workspace entstehen.
+          files: testo-smart-abruf-${{ steps.ver.outputs.version }}-win-x64.zip

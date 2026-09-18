@@ -27,6 +27,9 @@ function Header({ editMode, onToggleEdit, onAdd, onReset, tileCount, view, onOpe
   // V30: eine gescheiterte Datensicherung stand nur im Datenexport-Dialog. Derselbe Poll
   // liefert den Zustand mit; solange die Sicherung im Fehlerzustand ist, steht hier die Ursache.
   const [backupCause, setBackupCause] = hState(null);
+  // Update-Weg: derselbe Poll liefert den update-Block mit. Nur der banner-Text wird hier
+  // gebraucht (Leistentext bei bekanntem Update) - Label/Ursache stehen in den Einstellungen.
+  const [updateBanner, setUpdateBanner] = hState(null);
   hEff(() => {
     let cancelled = false;
     function loadSystemStatus() {
@@ -37,6 +40,8 @@ function Header({ editMode, onToggleEdit, onAdd, onReset, tileCount, view, onOpe
           setMockActive(!!(data && data.api && data.api.mockActive));
           const backup = window.explainBackupStatus(data && data.backup);
           setBackupCause(backup.status === 'err' ? backup.cause : null);
+          const update = window.explainUpdateStatus(data && data.update, data && data.appVersion);
+          setUpdateBanner(update.banner);
         })
         .catch(() => {}); // transient fetch failure: keep the last known state, don't flicker
     }
@@ -125,6 +130,17 @@ function Header({ editMode, onToggleEdit, onAdd, onReset, tileCount, view, onOpe
             <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
           <span>Datensicherung fehlgeschlagen: {backupCause} — Einstellungen → Datenexport.</span>
+        </div>
+      )}
+      {/* Info-Ton statt Warnfarbe: ein bereitliegendes Update ist kein Fehlerzustand, nur ein
+          Hinweis fuer die IT. Auf jeder Ansicht, wie Mock- und Sicherungsleiste. */}
+      {updateBanner && (
+        <div className="offline-banner update-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <span>{updateBanner}</span>
         </div>
       )}
     </>

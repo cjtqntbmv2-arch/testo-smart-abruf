@@ -46,11 +46,45 @@
     return { status: 'unknown', label: 'Noch kein Lauf', cause: null };
   }
 
-  const api = { explainSyncError, explainLayoutSaveError, explainBackupStatus };
+  // Baut den Leistentext, der sowohl im Fall "Update verfuegbar" als auch waehrend einer
+  // laufenden 6-h-Pruefung erscheint (dort nur, wenn schon vorher eines bekannt war) -
+  // eine Stelle statt zwei Kopien desselben Satzes.
+  function updateBannerText(update, appVersion) {
+    return `Neue Fassung ${update.latestVersion} liegt bereit (installiert: ${appVersion || '—'}). `
+      + `Installation durch die IT: update.cmd im Ablageordner ${update.dir} als Administrator ausführen.`;
+  }
+
+  // Update-Hinweis aus dem update-Block von GET /api/system/status (Update-Weg):
+  // { enabled, updateAvailable, latestVersion, latestFile, dir, error, checking, checkedAt }.
+  // Der Dienst wird davon nie gesperrt - eine gesperrte Klimaueberwachung waere schlimmer
+  // als eine alte Fassung. Rueckgabe: { label, banner, cause }.
+  // Rangfolge (spezifischste zuerst): kein Objekt < aus < prueft gerade < Lesefehler <
+  // Update verfuegbar < aktuell. "checking" steht VOR "error", damit ein alter Lesefehler
+  // waehrend der naechsten Pruefung nicht kurz aufblitzt; die Leiste selbst bleibt in diesem
+  // Fall stehen (kein Flackern bei der 6-h-Pruefung), wenn zuvor schon ein Update bekannt war.
+  function explainUpdateStatus(update, appVersion) {
+    if (!update) return { label: '—', banner: null, cause: null };
+    if (!update.enabled) return { label: 'Prüfung aus (kein Ablageordner)', banner: null, cause: null };
+    if (update.checking) {
+      return {
+        label: 'Prüfung läuft …',
+        banner: update.updateAvailable ? updateBannerText(update, appVersion) : null,
+        cause: null,
+      };
+    }
+    if (update.error) return { label: 'Ablageordner nicht lesbar', banner: null, cause: update.error };
+    if (update.updateAvailable) {
+      return { label: `Update verfügbar: ${update.latestVersion}`, banner: updateBannerText(update, appVersion), cause: null };
+    }
+    return { label: 'Aktuell', banner: null, cause: null };
+  }
+
+  const api = { explainSyncError, explainLayoutSaveError, explainBackupStatus, explainUpdateStatus };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') {
     window.explainSyncError = explainSyncError;
     window.explainLayoutSaveError = explainLayoutSaveError;
     window.explainBackupStatus = explainBackupStatus;
+    window.explainUpdateStatus = explainUpdateStatus;
   }
 })();

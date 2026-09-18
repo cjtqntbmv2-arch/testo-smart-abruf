@@ -824,6 +824,22 @@ test('POST /api/settings: backup_dir/update_dir erst typgeprüft, relativer back
   }
 }));
 
+// Update-Weg: relativ hieße relativ zum Arbeitsverzeichnis des Dienstes. Kein Speicherweg des
+// Dashboards schickt update_dir zusammen mit anderen Feldern, die Regel blockiert also kein
+// anderes Speichern. path.win32.isAbsolute nimmt UNC, D:\… und die POSIX-Pfade der Tests an.
+test('POST /api/settings: update_dir nur leer oder absolut; relativ -> 400 mit Beispiel, UNC wird angenommen', () => withSettings(['update_dir'], async () => {
+  saveSetting('update_dir', '');
+  for (const v of ['Updates', 'relativ\\ordner', '.\\ablage', 'C:ablage']) {
+    await expect400({ update_dir: v }, 'update_dir',
+      /absolut.*\\\\fileserver\\Software\\TestoSmartAbruf.*leer = Prüfung aus/);
+  }
+  for (const v of ['\\\\srv\\freigabe', '  \\\\srv\\freigabe\\Klima  ', 'D:\\Ablage', '']) {
+    const res = await postSettings({ update_dir: v });
+    assert.strictEqual(res.status, 200, `${JSON.stringify(v)} -> ${res.status}`);
+    assert.strictEqual(getSetting('update_dir'), v.trim());
+  }
+}));
+
 test('POST /api/settings: ein ungültiges Feld lässt auch die gültigen ungespeichert', () => withSettings(['poll_interval_sec', 'backup_enabled'], async () => {
   saveSetting('poll_interval_sec', '900');
   await expect400({ poll_interval_sec: 120, csv_format: 'xml' }, 'poll_interval_sec', /csv_format/);

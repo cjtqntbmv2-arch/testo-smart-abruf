@@ -51,10 +51,11 @@ GitHub-Zugang.
 von der IT/dem testo-Administrator). Ohne Key laeuft der Dienst, synct aber nichts
 (das Setup-Fenster weist darauf hin).
 
-**Update:** neue ZIP von der IT erhalten, entpacken, `install.cmd` erneut
-doppelklicken (stoppt den Dienst, schaltet per atomarem Wechsel auf die neue
-Version um, re-registriert; bei Fehlschlag Rollback auf die alte Version).
-Die Datenbank in `C:\ProgramData\TestoSmartAbruf\` bleibt erhalten.
+**Update:** ab v0.18.0 per `update.cmd` aus dem Ablageordner, siehe "Update der
+App". Der Handweg bleibt als Rueckfall: neue ZIP entpacken, `install.cmd` erneut
+doppelklicken (sichert die Datenbank, stoppt den Dienst, schaltet per atomarem
+Wechsel auf die neue Version um, re-registriert; bei Fehlschlag Rollback auf die
+alte Version). Die Datenbank in `C:\ProgramData\TestoSmartAbruf\` bleibt erhalten.
 
 > Das Bundle bringt eine offizielle (OpenJS-signierte) portable `node.exe` mit —
 > eine bewusste Lockerung der „keine gebuendelten Binaries"-Regel. Auf
@@ -169,49 +170,222 @@ Standard ist nur-lokal. Fuer Zugriff von Tablets/anderen PCs:
 
 ## Update der App
 
-Nach jedem App-Update **VERSION**, README-Badge und die `?v=`-Cache-Buster im
-`Klima Dashboard.html` synchron halten (gleicher SemVer). Achtung: `?v=` kommt
-**mehrfach** vor — in jedem `<script src="...?v=...">`-Tag (aktuell 14) — alle
-zugleich bumpen, nicht nur eins. Der Server sendet keine Cache-Header → der
-`?v=`-Bump ist der einzige Invalidierungs-Hebel; im Browser des Bedieners
-zusaetzlich einmal hart neu laden (Strg+F5).
+Der Dienst meldet eine neue Fassung nur, eingespielt wird sie von der IT. Ab v0.18.0
+geht das mit `update.cmd` im Ablageordner: Doppelklick, UAC, eine Rueckfrage. Den Rest
+erledigt `install.cmd` der neuen Fassung: Datenbank-Abzug, Staging, Umschalten,
+Versionspruefung und bei Bedarf den automatischen Rollback. Der Dienst selbst laedt,
+installiert und startet nichts.
+
+### Installationen vor v0.18.0: einmal von Hand (Bootstrap)
+
+`update.cmd` fragt das installierte Programm, welche Fassung es nehmen soll. Das
+koennen erst Fassungen ab v0.18.0. Der Schritt auf v0.18.0 geht deshalb **einmal ueber
+den Handweg** (unten): ZIP entpacken, `install.cmd` starten. Ein vorher gestartetes
+`update.cmd` bricht ab mit
+`FEHLER: Die installierte Fassung ist aelter als 0.18.0 und kennt diese Pruefung noch nicht.`
+Bei dieser Gelegenheit die "Einmalige Einrichtung durch die IT" erledigen. Fassungen
+**vor v0.15.0** zeigen nicht einmal den Hinweis; v0.15.0 bis v0.17.2 zeigen ihn nur
+unter Einstellungen -> Erweitert -> Ueber, ohne Hinweisleiste und ohne Fehlergrund.
+
+Die `install.cmd` vor v0.18.0 legte wegen eines echo-Fehlers (ein unmaskiertes `>` in
+den Fortschrittszeilen wirkte als Umleitung) Dateien wie `Bundle` oder `Staging` im
+Programmordner ab. Sie sind harmlos und verschwinden mit dem naechsten Update.
 
 ### Update-Hinweis (Ablageordner, ab v0.15.0)
 
-Der Dienst sieht beim Start und danach alle 6 Stunden in einem Ablageordner nach,
-ob dort eine neuere Release-ZIP liegt. Gesucht wird genau der Name, den die CI
-baut: `testo-smart-abruf-<version>-win-x64.zip`. Gemeldet wird nur eine echt
-hoehere SemVer-Version - die ZIP des vorigen Rollouts darf also liegen bleiben.
+Der Dienst sieht beim Start, danach alle 6 Stunden und sofort nach dem Speichern des
+Ablageordners nach, ob dort eine neuere Release-ZIP liegt. Gesucht wird genau der Name,
+den die CI baut: `testo-smart-abruf-<version>-win-x64.zip`. Gemeldet wird nur eine echt
+hoehere Version, numerisch verglichen - die ZIP des vorigen Rollouts darf also liegen
+bleiben. Eine Datei mit 0 Byte gilt als noch laufende Kopie und wird uebergangen.
 
 **Der Start wird nie gesperrt.** Das ist eine bewusste Abweichung von der sonst
 ueblichen Startsperre: eine gesperrte Klimaueberwachung waere schlimmer als eine
 alte Fassung, und unter `NT AUTHORITY\NetworkService` (BootTrigger) sitzt niemand
 davor, der eine Sperre wegklicken koennte. Der Dienst meldet nur.
 
-Der Ordner ist eine Einstellung (`update_dir`), kein fester Pfad. **Leer =
-Pruefung aus, das ist der Standard** - ohne diesen Eintrag entsteht kein
-Netzzugriff. Einmalig auf der Zielmaschine setzen:
+**Der Dienst listet den Ordner nur.** Er liest Namen und Groessen, oeffnet keine Datei
+darin, laedt nichts herunter, installiert nichts und startet keine Programme. Internet
+oder GitHub fragt er nicht, der Ablageordner ist der einzige Weg. Standard ist ein
+leerer Ablageordner (`update_dir`): dann ist die Pruefung aus, und es entsteht kein
+Netzzugriff.
 
-```powershell
-Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/settings `
-  -ContentType 'application/json' `
-  -Body '{"update_dir":"\\\\fileserver\\Software\\TestoSmartAbruf"}'
-```
+Wo das Ergebnis steht:
 
-Die Pruefung laeuft direkt nach dem Speichern erneut; ein Dienstneustart ist nicht
-noetig. Ergebnis: Einstellungen -> Erweitert -> Ueber, Zeile `Update`
-(`Pruefung aus (kein Ablageordner)` / `Aktuell` / `Update verfuegbar: <Version>`).
-Maschinenlesbar unter `GET /api/system/status` im Feld `update`.
+- **Hinweisleiste** unter der Kopfzeile, auf jeder Ansicht (Dashboard und
+  Einstellungen), solange eine neuere Fassung bereitliegt:
+  `Neue Fassung <Version> liegt bereit (installiert: <Version>). Installation durch die IT: update.cmd im Ablageordner <Ordner> als Administrator ausführen.`
+  Ein Lesefehler erzeugt keine Leiste, er steht nur in den Einstellungen.
+- **Einstellungen -> Erweitert -> Karte "Update-Hinweis":** unter dem Feld
+  `Zustand: ...` mit dem Zeitpunkt der letzten Pruefung (etwa `geprüft vor 5 min`),
+  bei einem Lesefehler darunter der Grund (Texte unter "Troubleshooting"). So zeigt
+  sich direkt nach dem Speichern, ob **der Dienst** den Ordner lesen kann - nicht nur
+  der angemeldete Benutzer.
+- **Einstellungen -> Erweitert -> Ueber**, Zeile `Update`.
+- Die Zustaende: `Prüfung aus (kein Ablageordner)`, `Prüfung läuft …`,
+  `Ablageordner nicht lesbar`, `Update verfügbar: <Version>`, `Aktuell`.
+- Maschinenlesbar: `GET /api/system/status`, Feld `update` mit `enabled`,
+  `updateAvailable`, `latestVersion`, `latestFile`, `dir`, `error` (Klartext oder
+  `null`), `checking`, `checkedAt`.
+- `logs\app.log`: je Zustandswechsel genau eine Zeile `Update-Prüfung ...`.
 
-Der Ordner wird nur gelesen, nie beschrieben; es wird nichts heruntergeladen und
-nichts installiert. Das Update bleibt das erneute `install.cmd` aus dem Abschnitt
-darueber. Nicht erreichbare Freigabe, fehlende Rechte, halb kopierte Datei
-(0 Byte): alles ergibt "kein Update bekannt", nie einen Fehler im Dienst.
+### Einmalige Einrichtung durch die IT
 
-**Bestehende Installationen erfahren davon nichts.** Eine Fassung vor v0.15.0 hat
-die Pruefung noch nicht; sie muss einmalig ueber einen Kanal ausserhalb des
-Programms aktualisiert werden (Mail an die IT, Wartungstermin). Erst ab dann
-traegt der Hinweis sich selbst.
+1. **Ablageordner auf einer Freigabe** anlegen und per UNC-Pfad ansprechen, z. B.
+   `\\fileserver\Software\TestoSmartAbruf`, nicht per Laufwerksbuchstaben: der Dienst
+   laeuft ohne Benutzeranmeldung und sieht keine Netzlaufwerke.
+2. **Leserecht fuer das Computerkonto** der Zielmaschine, auf der Freigabe **und** im
+   NTFS: `DOMAENE\RECHNERNAME$` oder die Gruppe "Domaenencomputer". "Domaenen-Benutzer"
+   genuegt nicht: der Dienst laeuft als `NT AUTHORITY\NetworkService` und greift im Netz
+   als Computerkonto zu, und Computerkonten sind dort nicht Mitglied. Lesen genuegt.
+
+   **Reiner Entra-ID-Join oder Arbeitsgruppe:** Dann kann NetworkService keine Freigabe
+   lesen. Stattdessen einen lokalen Ordner auf der Zielmaschine nehmen und die ZIPs von
+   Hand hineinlegen. NetworkService braucht darauf Leserecht, schreiben duerfen nur
+   Administratoren (siehe "Betriebsregeln"); ein neuer Ordner unter `C:\` ist dagegen
+   fuer Authentifizierte Benutzer beschreibbar. Passend ist dieselbe ACL, die
+   `install.cmd` dem Programmordner gibt:
+   ```powershell
+   icacls "<Ablageordner>" /inheritance:r /grant "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-20:(OI)(CI)RX"
+   ```
+3. **`update_dir` setzen:** Einstellungen -> Erweitert -> Karte "Update-Hinweis", Feld
+   "Ablageordner", Speichern. Oder per REST:
+   ```powershell
+   Invoke-RestMethod -Method Post -Uri http://localhost:3000/api/settings `
+     -ContentType 'application/json' `
+     -Body '{"update_dir":"\\\\fileserver\\Software\\TestoSmartAbruf"}'
+   ```
+   Angenommen wird ein leerer Wert (= Pruefung aus) oder ein absoluter Pfad, ein
+   relativer wird abgelehnt. Die Pruefung laeuft direkt nach dem Speichern, ein
+   Dienstneustart ist nicht noetig. Danach die Karte ansehen: `Aktuell` oder
+   `Update verfügbar: ...` heisst, der Dienst liest den Ordner;
+   `Ablageordner nicht lesbar` nennt darunter den Grund.
+4. **`update.cmd` einmal in den Ablageordner kopieren**, neben die ZIPs. Es liegt im
+   Bundle unter `deploy\windows\update.cmd` und gehoert nur in den Ablageordner: aus
+   einer Installation oder einem entpackten Bundle gestartet, bricht es ab.
+
+### Ablauf eines Updates
+
+Ausfuehren muss ein Konto, das auf der Zielmaschine **Administrator** ist **und** die
+Freigabe lesen darf.
+
+1. Die Hinweisleiste meldet `Neue Fassung <Version> liegt bereit ...`.
+2. `update.cmd` im Ablageordner doppelklicken, gern ueber das verbundene Netzlaufwerk
+   (`Q:\update.cmd`): es schreibt den Laufwerksbuchstaben vor der Rechteerhoehung auf
+   den UNC-Pfad um, denn das erhoehte Fenster sieht die Netzlaufwerke des Benutzers
+   nicht.
+3. UAC mit "Ja" bestaetigen (`Administrator-Rechte werden angefordert...`). Die Arbeit
+   laeuft in einem zweiten, erhoehten Fenster, das am Ende offen bleibt.
+4. Den Bericht lesen. Welche Fassung es wird, entscheidet das **installierte**
+   Programm nach derselben Regel wie die Hinweisleiste; jeder Eintrag des Ordners steht
+   mit Grund da. Beispiel:
+   ```text
+    testo-smart-abruf: Update aus dem Ablageordner
+    Ablageordner: "\\fileserver\Software\TestoSmartAbruf\"
+
+   Update-Pruefung testo-smart-abruf
+   Ablageordner:         \\fileserver\Software\TestoSmartAbruf
+   Installierte Version: 0.18.0
+   Ordner lesbar:        ja
+   Eintraege:
+     [--] testo-smart-abruf-0.18.0-win-x64.zip (nicht neuer)
+     [ok] testo-smart-abruf-0.19.0-win-x64.zip (neuer)
+     [--] update.cmd (fremder Name)
+   Ergebnis: neuere Fassung 0.19.0 gefunden: testo-smart-abruf-0.19.0-win-x64.zip
+
+    Neue Fassung: 0.19.0   Datei: testo-smart-abruf-0.19.0-win-x64.zip
+    Der Dienst wird dafuer kurz gestoppt. Vorher sichert install.cmd die Datenbank.
+
+   Jetzt installieren? [J/N]
+   ```
+   Weitere Gruende fuer `[--]`: `keine Datei`, `0 Byte, Kopie laeuft noch?`,
+   `stat gescheitert (...)`.
+5. `J` eingeben. `update.cmd` kopiert die ZIP nach `C:\Apps\TestoSmartAbruf.update`,
+   prueft sie (`install.cmd`, `node.exe` und `VERSION` in der obersten Ebene, `VERSION`
+   gleich der Version im Dateinamen), entpackt sie dort und startet `install.cmd` der
+   **neuen** Fassung. Das baut das Staging `C:\Apps\TestoSmartAbruf.staging` (mit der
+   `.env` der bisherigen Installation), zieht den Datenbank-Abzug noch bei laufendem
+   Dienst, stoppt den Dienst, schaltet per `move` um (die bisherige Fassung wird zu
+   `C:\Apps\TestoSmartAbruf.old`) und richtet die neue mit `setup.ps1 -Bundled` ein.
+   Dessen Versionspruefung verlangt, dass der gestartete Dienst genau die Version aus
+   der neuen `VERSION` meldet. Gelingt das, loescht `install.cmd` die `.old`; sonst
+   rollt es automatisch zurueck (naechster Abschnitt).
+6. Ende: `Update auf <Version> abgeschlossen.` Der Dienst prueft beim Start neu, die
+   Hinweisleiste verschwindet. Im Browser einmal hart neu laden (Strg+F5).
+
+`update.cmd` erwartet die Installation wie `install.cmd` unter `C:\Apps\TestoSmartAbruf`.
+Exit-Code: 0 = aktualisiert oder nichts zu tun, 1 = Fehler oder Abbruch. Aussagekraeftig
+ist er nur, wenn `update.cmd` schon erhoeht startet; sonst endet das erste Fenster nach
+dem Anfordern der Rechte mit 0.
+
+**Erhoeht die IT mit einem lokalen Admin-Konto (LAPS),** hat das erhoehte Fenster keine
+Domaenenanmeldung und kann die Freigabe nicht lesen; es bleibt mit der Fehlermeldung von
+Windows offen. Dann die ZIP **und** `update.cmd` in einen lokalen Ordner kopieren, in den
+nur Administratoren schreiben duerfen (ACL wie in der Einrichtung, Schritt 2), und
+`update.cmd` dort starten: es nimmt immer seinen eigenen Ordner als Quelle.
+
+### Datenbank-Abzug und Rollback
+
+- **Abzug vor jedem Update:** `install.cmd` sichert die Datenbank nach
+  `C:\ProgramData\TestoSmartAbruf\klima-vor-update.db`, bevor es den Dienst stoppt
+  (`VACUUM INTO`, die Datenbank nur lesend geoeffnet; erfasst auch, was erst im `-wal`
+  steht). Scheitert der Abzug, bricht das Update ab und der Dienst laeuft unveraendert
+  weiter. Jedes Update ersetzt den Abzug des vorigen. Bei der Erstinstallation gibt es
+  noch keine Datenbank und damit keinen Abzug.
+- **Automatischer Rollback:** Scheitert die Einrichtung der neuen Fassung (`setup.ps1`,
+  einschliesslich der Versionspruefung), deaktiviert `install.cmd` zuerst die Aufgabe
+  (sonst startete sie die abgestuerzte Fassung neu), stoppt den Dienst, verschiebt die
+  neue Fassung nach `C:\Apps\TestoSmartAbruf.failed` und die vorherige zurueck nach
+  `C:\Apps\TestoSmartAbruf`. Dann richtet es die vorherige mit ihrem eigenen
+  `setup.ps1 -Bundled` wieder ein; das registriert die Aufgabe neu und damit wieder
+  aktiv. Den Abzug benennt es in `klima-vor-update.fehlgeschlagen.db` um, damit ein
+  neuer Versuch ihn nicht mit seinem eigenen Abzug ueberschreibt; ein weiterer
+  gescheiterter Versuch ersetzt ihn. Nach einem Rollback endet `install.cmd` mit Exit 1.
+- **Zurueckgesetzt wird nur der Code, nie die Daten.** Die Datenbank bleibt, wie die
+  gescheiterte Fassung sie hinterlassen hat. Deshalb duerfen neue Fassungen das Schema
+  nur ergaenzen: die vorherige muss es vertragen. Wird der Stand von vor dem Update
+  gebraucht, den Abzug zurueckspielen, und zwar **nur** ueber "Datenbank
+  zuruecksichern" - nicht einfach ueber `klima.db` kopieren, sonst spielt SQLite die
+  alte `-wal` hinein.
+
+### Handweg (Rueckfall)
+
+Geht `update.cmd` nicht - Installation vor v0.18.0, kein Ablageordner, Abbruch im
+Ablauf -, bleibt der Weg aus "Installation aus dem Bundle": die neue ZIP per
+**"Alle extrahieren"** entpacken, darin `install.cmd` doppelklicken. Das ist dieselbe
+`install.cmd` mit Abzug und Rollback; `update.cmd` erledigt davor nur Auswahl, Kopie und
+Pruefung der ZIP.
+
+### Betriebsregeln fuer den Ablageordner
+
+- Der Dateiname ist zeichengenau `testo-smart-abruf-X.Y.Z-win-x64.zip`. Kein `v`, keine
+  Zusaetze, kein `(1)`.
+- Andere Dateien im Ordner stoeren nicht, dafuer ist das strikte Muster da. Auch
+  `update.cmd` liegt ja darin.
+- **Erst unter fremdem Namen kopieren, dann umbenennen.** Wer direkt unter dem
+  Zielnamen kopiert, hat die Datei minutenlang unvollstaendig im Ordner: der Dienst
+  meldet sie schon als neue Fassung (uebergangen wird nur eine Datei mit 0 Byte), und
+  ein `update.cmd` in dieser Zeit holt Bruchstuecke.
+- Alte Fassungen duerfen liegen bleiben, es gewinnt die hoechste Nummer.
+- Zum Zurueckziehen muss die Fassung **geloescht** werden. Eine aeltere danebenzulegen
+  hilft nicht, `update.cmd` waehlt nur eine hoehere Nummer als die installierte.
+- **Schreibrecht auf den Ablageordner hat nur die Stelle, die das Release bereitstellt.**
+  Wer dort schreiben darf, kann Code mit Adminrechten zur Ausfuehrung bringen, sobald
+  die IT `update.cmd` startet: `update.cmd` selbst liegt dort, und aus der ZIP laufen
+  `install.cmd` und `node.exe` mit Adminrechten. Eine Pruefsumme oder Signatur der ZIP
+  prueft `update.cmd` nicht; die Schreibrechte sind die Sicherung.
+- Abschalten: `update_dir` leeren. Dann prueft der Dienst nichts mehr und greift nicht
+  auf den Ordner zu.
+
+### Versionsstand beim Release (Entwickler)
+
+Nach jedem App-Update **VERSION**, README-Badge und die `?v=`-Cache-Buster im
+`Klima Dashboard.html` synchron halten (gleicher SemVer). Achtung: `?v=` kommt
+**mehrfach** vor — in jedem App-`<script src="...?v=...">`-Tag und im
+`dashboard.css`-`<link>` (aktuell 18; die drei `vendor/`-Tags tragen bewusst keinen) —
+alle zugleich bumpen, nicht nur eins. Der Server sendet keine Cache-Header → der
+`?v=`-Bump ist der einzige Invalidierungs-Hebel; im Browser des Bedieners
+zusaetzlich einmal hart neu laden (Strg+F5).
 
 ### Geaenderte CSV-Spaltennamen (ab v0.15.0)
 
@@ -245,6 +419,14 @@ Der Dienst sichert auf zwei Wegen, beide im Backup-Verzeichnis (Standard
   Datenbank - Messwerte bis zum Zeitpunkt des Abzugs (auch des laufenden Monats),
   Meldungen, Grenzwerte, Messstellen samt Geraetezuordnung, Einstellungen. **Nur dieser
   Abzug ist zurueckspielbar.**
+
+Dazu kommt der **Vor-Update-Abzug** von `install.cmd`:
+`C:\ProgramData\TestoSmartAbruf\klima-vor-update.db`, der Stand unmittelbar vor dem
+letzten Update, nach einem Rollback umbenannt in `klima-vor-update.fehlgeschlagen.db`
+(siehe "Update der App"). Er ist ebenso vollstaendig und der Ruecksprungpunkt, wenn eine
+neue Fassung Daten beschaedigt hat. Er entsteht unabhaengig von `backup_enabled`, liegt
+im Datenordner statt im Backup-Verzeichnis und wird genauso zurueckgespielt (Abschnitt
+"Datenbank zuruecksichern").
 
 Zum Datenbank-Abzug:
 
@@ -344,6 +526,8 @@ Aus einer **Administrator**-PowerShell:
    ```powershell
    Copy-Item backups\datenbank\klima-2026-09-18.db klima.db
    ```
+   Der Vor-Update-Abzug genauso: `Copy-Item klima-vor-update.db klima.db` (bzw.
+   `klima-vor-update.fehlgeschlagen.db` nach einem Rollback).
 4. Dienst starten und pruefen:
    ```powershell
    Start-ScheduledTask -TaskName TestoSmartAbruf
@@ -440,6 +624,75 @@ entfernen.
 - **Setup-Eigenlog:** `setup.ps1` schreibt zusätzlich nach
   `C:\ProgramData\TestoSmartAbruf\logs\setup.log` (auch wenn das Fenster zugeht).
 
+### Update-Hinweis und update.cmd
+
+**Update-Karte** (Einstellungen -> Erweitert -> "Update-Hinweis"). Steht dort
+`Zustand: Ablageordner nicht lesbar`, nennt der Text darunter den Grund:
+
+- `Ablageordner „<Ordner>“ nicht lesbar: Zugriff verweigert (EPERM). Der Dienst läuft als NT AUTHORITY\NetworkService und greift im Netz als Computerkonto (DOMÄNE\RECHNERNAME$) zu. Dieses Konto braucht Leserecht auf Freigabe und Ordner.`
+  (statt `EPERM` auch `EACCES`): Das Computerkonto darf Freigabe oder Ordner nicht
+  lesen, oft ist nur "Domaenen-Benutzer" berechtigt. Leserecht auf Freigabe **und** NTFS
+  fuer `DOMAENE\RECHNERNAME$` oder "Domaenencomputer" geben ("Einmalige Einrichtung",
+  Schritt 2). Bei reinem Entra-ID-Join oder in einer Arbeitsgruppe hilft das nicht:
+  lokalen Ordner nehmen.
+- `Ablageordner „Q:\…“ nicht lesbar: nicht gefunden (ENOENT). Ist Q: ein Netzlaufwerk? Laufwerksbuchstaben von Netzlaufwerken sieht der Dienst nicht – bitte den UNC-Pfad eintragen, z. B. \\fileserver\Software\TestoSmartAbruf.`
+  Im Feld steht ein Laufwerksbuchstabe. Verbundene Netzlaufwerke gehoeren zur Anmeldung
+  eines Benutzers, der Dienst hat keine: den UNC-Pfad eintragen. Derselbe Text erscheint
+  fuer einen lokalen Pfad, den es nicht gibt.
+- `Ablageordner „<Ordner>“ nicht lesbar (<Fehlercode und Meldung von Node>).`: jeder
+  andere Lesefehler, etwa Server nicht erreichbar oder Freigabe- bzw. Ordnername falsch.
+  Pfad pruefen und erneut speichern.
+- `Update-Prüfung fehlgeschlagen: <Meldung>`: Die Pruefung selbst ist gescheitert, etwa
+  beim Lesen der Einstellung. Der Dienst laeuft weiter; Einzelheiten in `logs\app.log`.
+
+Ein relativer Pfad wird schon beim Speichern abgelehnt:
+`Ablageordner (update_dir) muss ein absoluter Pfad sein, am besten ein UNC-Pfad wie \\fileserver\Software\TestoSmartAbruf (leer = Prüfung aus).`
+
+**Keine Hinweisleiste, obwohl eine neue ZIP liegt** (`Zustand: Aktuell`): Der Name
+weicht ab, die Datei hat 0 Byte, oder die Version ist nicht hoeher. Die Pruefung laeuft
+nur beim Start, alle 6 Stunden und nach dem Speichern; erneutes Speichern prueft sofort.
+Welchen Eintrag das Programm aus welchem Grund verwirft, zeigt ein Bericht ohne
+Installation, aus einer **Administrator**-Eingabeaufforderung (der Programmordner ist
+nur fuer Administratoren lesbar). Er liest als angemeldeter Benutzer, nicht als Dienst,
+und schreibt nichts:
+
+```powershell
+C:\Apps\TestoSmartAbruf\node.exe C:\Apps\TestoSmartAbruf\backend\update-check.js --check-update \\fileserver\Software\TestoSmartAbruf
+```
+
+Exit-Code: 0 = neuere Fassung, 10 = nichts Neueres, 2 = Ordner nicht lesbar, 3 = Aufruf
+falsch oder eigene `VERSION` unlesbar.
+
+**Meldungen von update.cmd und install.cmd** (wortgetreu, `<...>` steht fuer den
+eingesetzten Wert):
+
+| Meldung | Bedeutung, was tun |
+|---|---|
+| `Nichts zu tun: im Ablageordner liegt keine neuere Fassung.` | Kein Fehler, Exit 0. Warum ein Eintrag nicht zaehlt, steht im Bericht darueber (`[--] <Name> (<Grund>)`). |
+| `FEHLER: Die installierte Fassung ist aelter als 0.18.0 und kennt diese Pruefung noch nicht.` | Bootstrap: einmal den Handweg nehmen, danach geht jedes Update ueber `update.cmd`. |
+| `FEHLER: Der Ablageordner ist nicht lesbar, Grund siehe oben.` | Den Grund nennt die Zeile `Ergebnis: Ablageordner ... nicht lesbar ...` darueber. Hier liest das Konto, mit dem `update.cmd` laeuft, nicht der Dienst: der Hinweis auf das Computerkonto in diesem Text gilt dann nicht, sondern dieses Konto braucht das Leserecht (LAPS: siehe "Ablauf eines Updates"). |
+| `FEHLER: <Datei> laesst sich nicht lesen - defekt oder unvollstaendig in den Ablageordner kopiert?` | `tar` kann die ZIP nicht lesen, meist eine abgebrochene oder noch laufende Kopie. Neu kopieren, erst unter fremdem Namen, dann umbenennen. |
+| `FEHLER: <Datei> hat install.cmd, node.exe und VERSION nicht in der obersten Ebene.` | Die ZIP ist falsch gebaut: eine ZIP in der ZIP oder ein Oberordner. Die Inhaltsliste steht in `C:\Apps\TestoSmartAbruf.update\inhalt.txt`. Nur die Release-ZIP der CI unveraendert ablegen, nicht neu packen. |
+| `FEHLER: VERSION in der ZIP lautet "<a>", der Dateiname sagt "<b>".` | ZIP umbenannt oder falsch gebaut. Ohne diese Pruefung meldete das Dashboard nach dem Update weiter eine neue Fassung. Die Release-ZIP unter ihrem Originalnamen ablegen. |
+| `FEHLER: Rechteerhoehung abgelehnt oder gescheitert. Nichts geaendert.` | UAC abgelehnt oder das Konto ist kein Administrator. |
+| `FEHLER: install.cmd endete mit Exit-Code <n>, Einzelheiten siehe oben.` | Die Meldungen von `install.cmd` darueber lesen (folgende Zeilen). `C:\Apps\TestoSmartAbruf.update` bleibt zur Diagnose liegen, der naechste Lauf raeumt ihn weg. |
+| `FEHLER: Datenbank-Abzug gescheitert, der Dienst laeuft unveraendert weiter.` | Vor dem Stopp: nichts geaendert. Die Ausgabe darueber nennt den Fehler. |
+| `FEHLER: Server meldet Version '<a>', installiert ist '<b>' (C:\Apps\TestoSmartAbruf\VERSION).` | Aus `setup.ps1`: auf dem Port antwortet noch ein alter Prozess (der Hinweis zum verwaisten `node.exe` steht darueber). Loest den Rollback aus. |
+| `ROLLBACK abgeschlossen: die vorherige Version laeuft wieder. Die gescheiterte liegt in "C:\Apps\TestoSmartAbruf.failed".` | Die neue Fassung liess sich nicht einrichten, die vorherige laeuft. Ursache in den Zeilen darueber, in `logs\setup.log` und `logs\app.log`. Der Abzug liegt als `klima-vor-update.fehlgeschlagen.db` bereit. |
+| `ROLLBACK unvollstaendig: auch die vorherige Version startet nicht, Exit-Code <n>. Log: C:\ProgramData\TestoSmartAbruf\logs\app.log` | Ursache in `logs\app.log` und `logs\setup.log`. Scheitert die vorherige Fassung an der Datenbank, die die neue schon veraendert hat, `klima-vor-update.fehlgeschlagen.db` zurueckspielen ("Datenbank zuruecksichern"). |
+| `FEHLER: Der ROLLBACK blieb stehen, ein Ordner ist gesperrt. Die Aufgabe TestoSmartAbruf ist deaktiviert.` | Ein `move` scheiterte, meist haelt ein Fenster oder Programm einen der Ordner offen. Schliessen, dann die ausgegebenen Handschritte (unten) in einer Admin-Eingabeaufforderung. |
+
+Die Handschritte nach `Der ROLLBACK blieb stehen`, wie `install.cmd` sie ausgibt. Die
+ersten beiden nur, solange `C:\Apps\TestoSmartAbruf` noch die neue Version enthaelt;
+`setup.ps1` registriert die Aufgabe neu und aktiviert sie damit wieder:
+
+```cmd
+rmdir /s /q "C:\Apps\TestoSmartAbruf.failed"
+move "C:\Apps\TestoSmartAbruf" "C:\Apps\TestoSmartAbruf.failed"
+move "C:\Apps\TestoSmartAbruf.old" "C:\Apps\TestoSmartAbruf"
+powershell -ExecutionPolicy Bypass -File "C:\Apps\TestoSmartAbruf\deploy\windows\setup.ps1" -Bundled
+```
+
 ## §9 Abnahmekriterien (Acceptance Criteria)
 
 Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfuellt sein, bevor der Release als abgenommen gilt.
@@ -501,7 +754,7 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 ### Versionscheck
 
-- `GET /api/system/status` → Feld `appVersion` lautet `0.17.2`.
+- `GET /api/system/status` → Feld `appVersion` lautet `0.18.0`.
 - Alle App-`<script src="…?v=…">`-Tags **und der `dashboard.css`-`<link>`** im `Klima Dashboard.html` tragen dieselbe Version wie `appVersion` (Browserkonsole: keine 404 auf `.js`/`.jsx`/`.css`-Ressourcen). Die drei `vendor/`-Tags tragen bewusst keinen Cache-Buster. **Ein 404 auf `dashboard.css` ist der schlimmste Fall dieser Liste** — die Seite laedt dann vollstaendig unformatiert, ohne Fehlermeldung.
 
 ### Update-Hinweis (ab v0.15.0)
@@ -509,11 +762,11 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 - **Alt-ZIP-Probe:** In den leeren Ablageordner NUR die ZIP einer **aelteren**
   Fassung legen (`testo-smart-abruf-0.9.0-win-x64.zip` — diese Nummer bleibt
   bewusst fest, sie traegt die Zeichenketten-Falle weiter unten), `update_dir`
-  setzen (Befehl im Abschnitt "Update-Hinweis") und Einstellungen -> Erweitert ->
+  setzen ("Einmalige Einrichtung durch die IT", Schritt 3) und Einstellungen -> Erweitert ->
   Ueber oeffnen: die Zeile `Update` muss `Aktuell` zeigen. Erst wenn zusaetzlich
   eine ZIP mit **echt hoeherer** Version als der laufenden im Ordner liegt (etwa
   die naechste Patch-Version) und `update_dir` erneut gespeichert wird, muss dort
-  `Update verfuegbar: <diese hoehere Version>` stehen.
+  `Update verfügbar: <diese hoehere Version>` stehen.
   *Warum dieser Punkt unterscheidet:* Die naheliegende Probe "neue ZIP hinlegen,
   Hinweis erscheint" bestehen auch zwei kaputte Umsetzungen - die, die nur
   "gefundene Version ungleich laufender Version" prueft, und die, die Versionen
@@ -526,6 +779,35 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 - **Dienst hat Vorrang:** `update_dir` auf eine nicht erreichbare Freigabe setzen
   (`\\kein-server\freigabe`), Dienst neu starten - Dashboard ist weiterhin
   erreichbar, Sync laeuft, `update.updateAvailable` ist `false`.
+- **Fehlergrund sichtbar (ab v0.18.0):** `update_dir` auf eine Freigabe setzen, die
+  Benutzer lesen duerfen, das Computerkonto aber nicht. Kurz nach dem Speichern zeigt die
+  Karte "Update-Hinweis" `Zustand: Ablageordner nicht lesbar` und darunter den Grund
+  (erwartet: `Zugriff verweigert` mit dem Hinweis auf das Computerkonto); eine
+  Hinweisleiste erscheint dabei nicht. Leserecht fuer das Computerkonto geben, erneut
+  speichern: der Zustand wechselt auf `Aktuell` bzw. `Update verfügbar: <Version>`.
+- **Hinweisleiste auf jeder Ansicht (ab v0.18.0):** Mit einer echt hoeheren ZIP im
+  Ablageordner steht `Neue Fassung <Version> liegt bereit ...` unter der Kopfzeile des
+  Dashboards und ebenso in den Einstellungen, mit installierter Version und
+  Ablageordner.
+
+### Update per update.cmd (ab v0.18.0)
+
+Erstinstallation, Update und Rollback prueft schon der Windows-CI-Installtest
+(`windows-bundle.yml`, Schritte "Installtest 1/4" bis "4/4"). Hier bleibt, was keine CI
+kann: der UAC-Zweig (Runner arbeiten als Admin ohne UAC) und eine echte Freigabe, die der
+Dienst als Computerkonto liest.
+
+- **Doppelklick aus dem gemappten Laufwerk:** Als Benutzer, der Administrator ist, aber
+  nicht erhoeht arbeitet, den Ablageordner als Laufwerk verbinden und dort `update.cmd`
+  doppelklicken. Erwartet: die UAC-Abfrage erscheint; im erhoehten Fenster nennen die
+  Zeilen `Ablageordner:` den UNC-Pfad, nicht den Laufwerksbuchstaben; nach `J` laeuft das
+  Update durch (`Update auf <Version> abgeschlossen.`), `GET /api/system/status` meldet
+  in `appVersion` die neue Version, und
+  `C:\ProgramData\TestoSmartAbruf\klima-vor-update.db` ist vorhanden.
+- **NetworkService liest die echte Freigabe:** `update_dir` auf die UNC-Freigabe der IT
+  setzen, nicht auf einen lokalen Ordner. Die Karte "Update-Hinweis" zeigt `Aktuell` oder
+  `Update verfügbar: <Version>`, keinen Fehlergrund. Die CI prueft den Dienst nur an
+  einem lokalen Ordner.
 
 ### Keine externen Laufzeit-Abhaengigkeiten
 
