@@ -122,7 +122,7 @@ if ($Bundled) {
       if ($LASTEXITCODE -ne 0) { throw "npm ci exit $LASTEXITCODE" }
     } catch {
       Pop-Location
-      Fail "npm ci fehlgeschlagen ($($_.Exception.Message)). Ursachen: npm-Registry nicht erreichbar (Proxy/Allowlist); falsche Node-Version; oder Datei-Lock durch noch laufenden node.exe (Stop-ScheduledTask -TaskName $TaskName; taskkill /IM node.exe /F)."
+      Fail "npm ci fehlgeschlagen ($($_.Exception.Message)). Ursachen: npm-Registry nicht erreichbar (Proxy/Allowlist); falsche Node-Version; oder Datei-Lock durch noch laufenden node.exe (Admin-PowerShell: Stop-ScheduledTask -TaskName $TaskName; Get-CimInstance Win32_Process | Where-Object { `$_.Name -eq 'node.exe' -and `$_.CommandLine -match 'backend\\server\.js' } | Invoke-CimMethod -MethodName Terminate | Out-Null)."
     }
     Pop-Location
   }
@@ -194,6 +194,6 @@ if ($resp) {
 } else {
   $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
   Write-Host "  Server nach ~60s nicht erreichbar (LastTaskResult: $($info.LastTaskResult)). Log pruefen: $DataDir\logs\app.log" -ForegroundColor Yellow
-  Write-Host "  Haeufig: verwaister node.exe belegt Port $port -> Stop-ScheduledTask -TaskName $TaskName; taskkill /IM node.exe /F" -ForegroundColor Yellow
+  Write-Host "  Haeufig: verwaister node.exe belegt Port $port -> Admin-PowerShell: Stop-ScheduledTask -TaskName $TaskName; Get-CimInstance Win32_Process | Where-Object { `$_.Name -eq 'node.exe' -and `$_.CommandLine -match 'backend\\server\.js' } | Invoke-CimMethod -MethodName Terminate | Out-Null" -ForegroundColor Yellow
   Fail 'Smoke-Check fehlgeschlagen.'
 }
