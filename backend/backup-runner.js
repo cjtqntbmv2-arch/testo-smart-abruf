@@ -123,7 +123,7 @@ function runBackupScan(nowMs) {
   } catch (e) {
     const msg = `backup_dir nicht beschreibbar: ${e.message}`;
     writeHealth('error', { lastError: msg, dbSnapshotError: msg });
-    result.errors.push(e.message);
+    result.errors.push(msg); // wie in jedem Zweig: errors[0] === health.lastError
     return result;
   }
 
@@ -174,13 +174,29 @@ function runBackupScan(nowMs) {
   return result;
 }
 
+// Ein Lauf samt Tagesvermerk, ohne Drossel: "Jetzt sichern" (POST /api/backup) ruft ihn direkt.
+// Nur ein fehlerfreier Lauf verbraucht den Tagesversuch, nach einem Fehler versucht es der
+// naechste Sync-Zyklus erneut. Durchgehend synchron (fs.*Sync, better-sqlite3, deflateRawSync):
+// innerhalb des Prozesses kann ein Knopf-Lauf nie mit dem eines Zyklus ueberlappen.
+function runBackupNow(nowMs) {
+  const res = runBackupScan(nowMs);
+  if (res.errors.length === 0) saveSetting('last_backup_scan_date', localDateKey(nowMs));
+  return res;
+}
+
+// Der Tag gilt als gesichert, wenn heute ein Lauf gelang UND seither keiner scheiterte:
+// nach einem gescheiterten Knopf-Lauf steht der Tagesvermerk schon auf heute, trotzdem soll
+// jeder Zyklus es bis zur Behebung erneut versuchen, statt den Fehler bis morgen zu zeigen.
 function maybeRunBackupScan(nowMs) {
   if ((getSetting('backup_enabled') || '1') !== '1') return false;
-  const today = localDateKey(nowMs);
-  if ((getSetting('last_backup_scan_date') || '') === today) return false;
-  const res = runBackupScan(nowMs);
-  if (res.errors.length === 0) saveSetting('last_backup_scan_date', today); // retry next cycle on error
+  if ((getSetting('last_backup_scan_date') || '') === localDateKey(nowMs) && readHealth().status !== 'error') return false;
+  runBackupNow(nowMs);
   return true;
+}
+
+// Ergebnis des letzten Laufs in einer Zeile fuer app.log (Herzschlag und "Jetzt sichern").
+function backupSummary(h) {
+  return h.status === 'ok' ? `Abzug ${h.lastDbSnapshot}, ${h.written || 0} ZIP neu` : (h.lastError || 'unbekannter Fehler');
 }
 
 // Zeitpunkt, ab dem die Aufbewahrung nichts loeschen darf (scheduler.js Schritt 4 loescht nur
@@ -209,4 +225,4 @@ function computePruneFloor(nowMs) {
   return floor;
 }
 
-module.exports = { resolveBackupDir, monthStartMs, runBackupScan, maybeRunBackupScan, computePruneFloor };
+module.exports = { resolveBackupDir, monthStartMs, runBackupScan, runBackupNow, maybeRunBackupScan, computePruneFloor, readHealth, backupSummary };

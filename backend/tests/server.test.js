@@ -738,6 +738,70 @@ test('Error middleware logs a stack once per signature, not per occurrence', asy
     'ein anderer Fehler muss trotzdem seinen eigenen Stacktrace bekommen');
 });
 
+// ── „Jetzt sichern": POST /api/backup ────────────────────────────────────
+// Sofortlauf (ZIPs + Datenbank-Abzug) an der Tagesdrossel vorbei; genau eine Logzeile.
+// api_key leer und Leerlauf abwarten: kein Sync-Zyklus darf in das Log-Fenster schreiben.
+async function backupFixture(dir) {
+  saveSetting('api_key', '');
+  for (let i = 0; i < 100; i++) {
+    const s = await (await fetch('http://localhost:3001/api/system/status')).json();
+    if (!s.scheduler.isSyncing) break;
+    await new Promise(r => setTimeout(r, 20));
+  }
+  saveSetting('backup_dir', dir);
+  saveSetting('backup_health', '');
+}
+async function postBackupCapturingLog() {
+  const { format } = require('node:util');
+  const lines = [];
+  const orig = { log: console.log, warn: console.warn, error: console.error };
+  for (const k of Object.keys(orig)) console[k] = (...a) => lines.push(format(...a));
+  try {
+    const res = await fetch('http://localhost:3001/api/backup', { method: 'POST' });
+    return { res, body: await res.json(), lines };
+  } finally { Object.assign(console, orig); }
+}
+const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+test('POST /api/backup: sichert sofort - an Tagesdrossel und ausgeschaltetem Automatik-Backup vorbei - mit genau einer Logzeile', async () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'srv-jetzt-'));
+  await backupFixture(dir);
+  saveSetting('last_backup_scan_date', todayKey()); // Tageslauf schon gelaufen: die Drossel sperrt
+  saveSetting('backup_enabled', '0');                // Automatik aus: Einmal-Lauf trotzdem
+
+  const { res, body, lines } = await postBackupCapturingLog();
+  assert.strictEqual(res.status, 200, JSON.stringify(body));
+  assert.strictEqual(body.ok, true);
+  assert.strictEqual(body.snapshot, `klima-${todayKey()}.db`);
+  assert.strictEqual(typeof body.written, 'number');
+  assert.ok(fs.existsSync(path.join(dir, 'datenbank', body.snapshot)), 'Abzug liegt im Zielordner');
+  assert.strictEqual(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], /^\S+ Sicherung \(manuell\) ok: Abzug klima-\d{4}-\d\d-\d\d\.db, \d+ ZIP neu$/);
+  const status = await (await fetch('http://localhost:3001/api/system/status')).json();
+  assert.strictEqual(status.backup.health.status, 'ok');
+  saveSetting('backup_enabled', '1');
+});
+
+test('POST /api/backup: scheitert der Lauf - 500 mit Klartext, Tagesversuch bleibt offen, genau eine Logzeile', async () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'srv-jetzt-')), 'datei-statt-ordner');
+  fs.writeFileSync(file, 'x');
+  await backupFixture(file);
+  saveSetting('backup_enabled', '1');
+  saveSetting('last_backup_scan_date', '');
+
+  const { res, body, lines } = await postBackupCapturingLog();
+  assert.strictEqual(res.status, 500);
+  assert.match(body.error, /^backup_dir nicht beschreibbar: /);
+  assert.strictEqual(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], /^\S+ Sicherung \(manuell\) fehlgeschlagen: backup_dir nicht beschreibbar: /);
+  assert.strictEqual(getSetting('last_backup_scan_date'), '', 'der naechste Zyklus versucht es erneut');
+  const status = await (await fetch('http://localhost:3001/api/system/status')).json();
+  assert.strictEqual(status.backup.health.status, 'error');
+  assert.strictEqual(status.backup.health.lastError, body.error);
+});
+
 // ── Startup migration: legacy stored api_region self-heals to eu ──────────
 // This file requires ../server exactly once, at module load (top of this file) — a value
 // seeded into ITS database after that point can never reach the migration in server.js,

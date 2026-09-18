@@ -125,3 +125,41 @@ test('runBackupScan: unwritable dir => health error, scan-date not advanced', ()
   const health = JSON.parse(getSetting('backup_health') || '{}');
   assert.strictEqual(health.status, 'error');
 });
+
+// V27 (Funktionstest 2026-09-17: "Fehler bleibt bis zum Folgetag stehen") - widerlegt. Nur ein
+// fehlerfreier Lauf verbraucht den Tagesversuch; nach behobener Ursache heilt schon der naechste
+// Zyklus desselben Tages backup_health. Datei statt Ordner 'datenbank': scheitert ueberall.
+test('maybeRunBackupScan: ein gescheiterter Lauf verbraucht den Tagesversuch nicht, der naechste Zyklus heilt', () => {
+  const dir = tmpDir();
+  const now = Date.UTC(2026, 5, 10, 9, 0, 0);
+  const blocker = path.join(dir, 'datenbank');
+  fs.writeFileSync(blocker, 'kein Ordner');
+  assert.strictEqual(runner.maybeRunBackupScan(now), true);
+  assert.strictEqual(JSON.parse(getSetting('backup_health')).status, 'error');
+  assert.strictEqual(getSetting('last_backup_scan_date'), '');
+
+  fs.rmSync(blocker); // Ursache behoben
+  assert.strictEqual(runner.maybeRunBackupScan(now + 15 * 60 * 1000), true); // naechster Zyklus, selber Tag
+  assert.strictEqual(JSON.parse(getSetting('backup_health')).status, 'ok');
+  assert.strictEqual(runner.maybeRunBackupScan(now + 30 * 60 * 1000), false); // erst jetzt ist der Tag verbraucht
+});
+
+// Neu mit "Jetzt sichern": scheitert ein Knopf-Lauf NACH dem gelungenen Tageslauf, steht der
+// Tagesvermerk schon auf heute. Ohne Sonderregel versuchte es kein Zyklus mehr, der Fehler
+// bliebe nach Behebung bis zum Folgetag stehen (V27 auf neuem Weg).
+test('maybeRunBackupScan: nach einem gescheiterten Knopf-Lauf versucht es der naechste Zyklus erneut, auch wenn der Tag schon gesichert war', () => {
+  const dir = tmpDir();
+  const now = Date.UTC(2026, 5, 10, 9, 0, 0);
+  const HOUR = 3600 * 1000;
+  assert.strictEqual(runner.maybeRunBackupScan(now), true); // Tageslauf gelingt
+  fs.renameSync(path.join(dir, 'datenbank'), path.join(dir, 'datenbank-alt'));
+  const blocker = path.join(dir, 'datenbank');
+  fs.writeFileSync(blocker, 'kein Ordner');
+  assert.strictEqual(runner.runBackupNow(now + HOUR).errors.length, 1); // Knopf-Lauf scheitert
+  assert.strictEqual(runner.maybeRunBackupScan(now + 2 * HOUR), true, 'Fehlerzustand: Zyklus versucht es erneut');
+
+  fs.rmSync(blocker); // Ursache behoben
+  assert.strictEqual(runner.maybeRunBackupScan(now + 3 * HOUR), true);
+  assert.strictEqual(JSON.parse(getSetting('backup_health')).status, 'ok');
+  assert.strictEqual(runner.maybeRunBackupScan(now + 4 * HOUR), false);
+});

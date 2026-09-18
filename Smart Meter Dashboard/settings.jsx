@@ -214,7 +214,9 @@ function SettingsPage({ onClose }) {
   if (section === "database")      body = <DatabaseSection settings={settings} update={update} systemStatus={systemStatus} />;
   if (section === "stations")  body = <StationsSection />;
   if (section === "advanced")  body = <AdvancedSection {...ctx} systemStatus={systemStatus} onRefresh={loadStatus} onReset={() => setSettings(DEFAULT_SETTINGS)} />;
-  if (section === "export")    body = <ExportPanel />;
+  // systemStatus aus dem 10-s-Poll oben: der Sicherungskasten zeigt so einen neuen Fehler,
+  // ohne dass die Seite neu geladen werden muss (V26), und braucht keine eigene Poll-Schleife.
+  if (section === "export")    body = <ExportPanel systemStatus={systemStatus} onRefresh={loadStatus} />;
 
   return (
     <div className="settings-shell">
@@ -303,7 +305,7 @@ function OverviewSection({ settings, systemStatus, onNavigate, onRefresh }) {
     );
   }
 
-  const { database, scheduler, storage, api, limitsConflict } = systemStatus;
+  const { database, scheduler, storage, api, limitsConflict, backup } = systemStatus;
 
   // Resync-Button → POST /api/sync, danach Diagnose neu laden.
   const handleResync = () => {
@@ -396,6 +398,19 @@ function OverviewSection({ settings, systemStatus, onNavigate, onRefresh }) {
     limitsCause = `${names}: Messstellen melden unterschiedliche Grenzwerte — keine Schwellwertanzeige, bis behoben.`;
   }
 
+  // --- Datensicherung (V30) ---
+  // Ein gescheiterter Lauf war nur im Datenexport-Dialog zu sehen. Die Zeile nennt den
+  // letzten GELUNGENEN Abzug — er bleibt auch nach einem Fehler stehen, damit sichtbar ist,
+  // wie alt der neueste zurückspielbare Stand ist.
+  const backupState = window.explainBackupStatus(backup);
+  const bh = (backup && backup.health) || {};
+  const backupSub = bh.lastDbSnapshot
+    ? `Letzter Abzug: ${bh.lastDbSnapshot} · ${D.formatRelative(Date.parse(bh.lastDbSnapshotAt))}`
+    : 'Noch kein Datenbank-Abzug';
+  const backupActions = backupState.status === 'err' || backupState.status === 'warn'
+    ? [{ label: 'Sicherung öffnen →', onClick: () => onNavigate('export'), primary: true }]
+    : null;
+
   return (
     <>
       <SectionHead title="Systemübersicht" sub="Zustand aller verbundenen Dienste und Komponenten." />
@@ -459,6 +474,15 @@ function OverviewSection({ settings, systemStatus, onNavigate, onRefresh }) {
           sub="Schwellwerte aus den Messobjekten der testo-Cloud."
           icon="bell"
           cause={limitsCause}
+        />
+        <HealthCard
+          status={backupState.status}
+          label="Datensicherung"
+          value={backupState.label}
+          sub={backupSub}
+          icon="archive"
+          cause={backupState.cause}
+          actions={backupActions}
         />
       </div>
 

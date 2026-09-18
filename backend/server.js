@@ -9,7 +9,7 @@ const { startScheduler, runSyncCycle, getSchedulerStatus, stopScheduler } = requ
 const TestoClient = require('./testo-client');
 const { handleListenError } = require('./listen-error');
 const { getExportMetadata, exportStations } = require('./export-service');
-const { resolveBackupDir } = require('./backup-runner');
+const { resolveBackupDir, runBackupNow, readHealth, backupSummary } = require('./backup-runner');
 const { startUpdateCheck, runUpdateCheck, getUpdateStatus } = require('./update-check');
 const { info, error, logThrottled } = require('./log');
 
@@ -471,19 +471,15 @@ app.get('/api/system/status', (req, res) => {
       // this can never silently drift from what _mockModeActive() actually decides.
       mockActive: TestoClient.isMockCondition(apiKey)
     },
-    backup: (() => {
-      let health = {};
-      try { health = JSON.parse(getSetting('backup_health') || '{}'); } catch (_) {}
-      return {
-        enabled: (getSetting('backup_enabled') || '1') === '1',
-        dir: resolveBackupDir(),
-        lastScanDate: getSetting('last_backup_scan_date') || null,
-        health
-      };
-    })(),
+    backup: {
+      enabled: (getSetting('backup_enabled') || '1') === '1',
+      dir: resolveBackupDir(),
+      lastScanDate: getSetting('last_backup_scan_date') || null,
+      health: readHealth()
+    },
     // #10: which metrics currently have a conflicting threshold configuration across
     // measuring objects (dropped from `limits`, see parseAlarmConfiguration) — empty
-    // metrics array once resolved. Same getSetting/JSON.parse shape as `backup.health`.
+    // metrics array once resolved. Same getSetting/JSON.parse shape as readHealth() (backup-runner.js).
     limitsConflict: (() => {
       let info = {};
       try { info = JSON.parse(getSetting('limits_conflict') || '{}'); } catch (_) {}
@@ -531,6 +527,22 @@ app.post('/api/sync', (req, res) => {
   }
   runSyncCycle().catch(error);
   res.status(202).json({ started: true });
+});
+
+// POST /api/backup — "Jetzt sichern" (Datenexport → Datensicherung): ZIPs und Datenbank-Abzug
+// sofort, an der Tagesdrossel vorbei. Bewusst auch bei ausgeschaltetem backup_enabled: der
+// Schalter gilt dem taeglichen Automatik-Lauf, ein Knopfdruck ist eine ausdrueckliche
+// Einzelhandlung (z. B. vor einem Update). Synchron, also keine Ueberlappung mit dem Lauf
+// eines Sync-Zyklus (runBackupNow); genau eine Logzeile je Knopfdruck.
+app.post('/api/backup', (req, res) => {
+  const failed = runBackupNow(Date.now()).errors.length > 0;
+  const h = readHealth();
+  if (failed) {
+    error(`Sicherung (manuell) fehlgeschlagen: ${backupSummary(h)}`);
+    return res.status(500).json({ error: backupSummary(h) });
+  }
+  info(`Sicherung (manuell) ok: ${backupSummary(h)}`);
+  res.json({ ok: true, snapshot: h.lastDbSnapshot, written: h.written || 0 });
 });
 
 // Test-only route: lets the test suite prove the 4-arg error middleware works.

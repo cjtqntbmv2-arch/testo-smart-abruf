@@ -1,7 +1,7 @@
 const { getDb, getSetting, saveSetting } = require('./db');
 const TestoClient = require('./testo-client');
 const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText, measurementAlarmText } = require('./device-bridge');
-const { maybeRunBackupScan, computePruneFloor } = require('./backup-runner');
+const { maybeRunBackupScan, computePruneFloor, readHealth, backupSummary } = require('./backup-runner');
 const { reconcileEvents } = require('./event-reconcile');
 const { info, error, logThrottled, resetThrottled } = require('./log');
 
@@ -77,7 +77,7 @@ async function runSyncCycle(customClient = null) {
   // neuer instance-ID der Cloud (logThrottled rechnet die heraus).
   const startedAt = Date.now();
   const failedSteps = [];
-  let newMeasurements = 0, newAlarms = 0, measurementsSkipped = false;
+  let newMeasurements = 0, newAlarms = 0, measurementsSkipped = false, backupNote = '';
   const stepFailed = (step, e) => {
     failedSteps.push(step);
     logThrottled(`Sync ${step}: ${e.message || e}`);
@@ -433,11 +433,19 @@ async function runSyncCycle(customClient = null) {
     // catches up missed months). Runs BEFORE step 4 so that step 4 already sees today's
     // snapshot. Step 4 never deletes anything younger than the last SUCCESSFUL snapshot
     // (computePruneFloor); if today's fails, the floor stays at the previous one.
+    // runBackupScan wirft bei Datei-Fehlern nicht, er legt sie in backup_health ab: das
+    // Ergebnis steht also dort. Ein Fehler ist ein gescheiterter Schritt (Herzschlag +
+    // gedrosselte Ursache), und weil er den Tagesversuch nicht verbraucht, wiederholt ihn
+    // jeder Zyklus bis zur Behebung. Do NOT set hasError — a backup failure must not mark
+    // the data sync failed.
     try {
-      maybeRunBackupScan(Date.now());
+      if (maybeRunBackupScan(Date.now())) {
+        const h = readHealth();
+        if (h.status === 'error') stepFailed('Sicherung', backupSummary(h));
+        else backupNote = `, Sicherung ok (${backupSummary(h)})`;
+      }
     } catch (e) {
-      stepFailed('Monatssicherung', e);
-      // Do NOT set hasError — a backup failure must not mark the data sync failed; surfaced via backup_health.
+      stepFailed('Sicherung', e);
     }
 
     // 4. Data retention cleanup, clamped by computePruneFloor: with backups on, nothing that is
@@ -474,7 +482,7 @@ async function runSyncCycle(customClient = null) {
     // eigene), sonst ist im Log nicht zu sehen, ob der Dienst sammelt oder stillsteht.
     if (lastSyncStatus !== 'skipped') {
       const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
-      const figures = `${measurementsSkipped ? 'Messwerte übersprungen (keine Sensoren zu den Messstellen)' : `Messwerte +${newMeasurements}`}, Alarmmeldungen +${newAlarms}`;
+      const figures = `${measurementsSkipped ? 'Messwerte übersprungen (keine Sensoren zu den Messstellen)' : `Messwerte +${newMeasurements}`}, Alarmmeldungen +${newAlarms}${backupNote}`;
       if (failedSteps.length) {
         cyclesWithErrors++;
         info(`Sync mit Fehlern in ${secs} s (${failedSteps.join(', ')}): ${figures}`);

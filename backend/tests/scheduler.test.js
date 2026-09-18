@@ -1208,3 +1208,41 @@ test('Log: nach einem fehlerfreien Zyklus erscheint ein erneuter Ausfall wieder 
   assert.strictEqual(alarmFull.length, 2, `erster und erneuter Ausfall je eine volle Zeile:\n${lines.join('\n')}`);
   closeDb();
 });
+
+// ── Sicherungsfehler im Log (F7/V30) ──────────────────────────────────────────
+// runBackupScan wirft nicht, er legt Fehler in backup_health ab — der Herzschlag meldete
+// deshalb "Sync ok", waehrend die Sicherung Zyklus um Zyklus scheiterte.
+test('Log: scheiternde Sicherung ist ein gescheiterter Schritt im Herzschlag, Ursache gedrosselt, nach Behebung Erholungszeile', async () => {
+  freshDbWithStation();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sch-log-bkp-'));
+  saveSetting('backup_dir', dir);
+  const client = new MockTestoClient();
+  const base = await captureLog(() => schedulerModule.runSyncCycle(client)); // Ausgangslage: fehlerfrei
+  assert.match(base[0], /Sync ok in \d+\.\d s: .*, Sicherung ok \(Abzug klima-\d{4}-\d\d-\d\d\.db, \d+ ZIP neu\)/,
+    'ein gelungener Tageslauf steht im Herzschlag, keine eigene Zeile');
+
+  // Wie im Funktionstest: Tagesvermerk weg, Ziel unbrauchbar (Datei statt Ordner 'datenbank').
+  saveSetting('last_backup_scan_date', '');
+  fs.renameSync(path.join(dir, 'datenbank'), path.join(dir, 'datenbank-alt'));
+  const blocker = path.join(dir, 'datenbank');
+  fs.writeFileSync(blocker, 'kein Ordner');
+  const failing = await captureLog(async () => {
+    for (let i = 0; i < 12; i++) await schedulerModule.runSyncCycle(client);
+  });
+  const beats = failing.filter((l) => l.includes(' Sync mit Fehlern in '));
+  assert.strictEqual(beats.length, 12, `eine Herzschlagzeile je Zyklus:\n${failing.join('\n')}`);
+  for (const b of beats) assert.match(b, /\(Sicherung\): Messwerte/);
+  const cause = failing.filter((l) => l.includes(' Sync Sicherung: Datenbank-Abzug: '));
+  assert.strictEqual(cause.length, 2, `volle Zeile beim ersten Mal, dann nur "(10x)":\n${failing.join('\n')}`);
+  assert.match(cause[1], /\(10x\)$/);
+  assert.strictEqual(failing.length, 12 + 2, failing.join('\n'));
+  assert.strictEqual(getSetting('last_backup_scan_date'), '', 'jeder Zyklus versucht es erneut');
+
+  fs.rmSync(blocker); // Ursache behoben
+  const healed = await captureLog(() => schedulerModule.runSyncCycle(client));
+  assert.strictEqual(healed.length, 1, healed.join('\n'));
+  assert.match(healed[0], /Sync ok in .*, Sicherung ok \(Abzug klima-.*\) – wieder fehlerfrei nach 12 Zyklen mit Fehlern$/);
+  const later = await captureLog(() => schedulerModule.runSyncCycle(client));
+  assert.doesNotMatch(later[0], /Sicherung/, 'der Tag ist verbraucht: kein weiterer Lauf');
+  closeDb();
+});

@@ -275,6 +275,42 @@ Zum Datenbank-Abzug:
 - Jede Installation braucht ihren **eigenen** Sicherungsordner: die Abzuege heissen nur
   nach dem Datum, zwei Dienste im selben Ordner ueberschrieben sich gegenseitig.
 
+### Jetzt sichern
+
+Einstellungen -> Datenexport, Abschnitt "Datensicherung", Knopf **Jetzt sichern**
+(technisch `POST /api/backup`): fuehrt den Lauf sofort aus - Datenbank-Abzug und fehlende
+Monats-ZIPs -, unabhaengig von der Tagesdrossel und auch bei ausgeschaltetem automatischen
+Backup (der Schalter gilt nur dem taeglichen Lauf). Gedacht fuer die Sicherung vor einem
+Update und fuer den Nachweis nach einem behobenen Sicherungsfehler: die Fehleranzeige
+verschwindet sofort. Der Lauf **ersetzt den Abzug des heutigen Tages**, aeltere Abzuege
+bleiben; die Oberflaeche fragt deshalb vorher nach. `logs\app.log` erhaelt genau eine
+Zeile, `Sicherung (manuell) ok: Abzug klima-JJJJ-MM-TT.db, N ZIP neu` bzw.
+`Sicherung (manuell) fehlgeschlagen: <Ursache>`.
+
+**Nach einem Datenverlust nicht "Jetzt sichern" druecken** - das ersetzt den heutigen
+Abzug durch den beschaedigten Stand; aeltere Abzuege bleiben. Stattdessen zuruecksichern
+(naechster Abschnitt).
+
+### Sicherungsfehler erkennen
+
+Scheitert ein Lauf (z. B. Zielordner nicht beschreibbar), steht das an vier Stellen:
+
+- Hinweisleiste unter der Kopfzeile des Dashboards: `Datensicherung fehlgeschlagen: <Ursache>`.
+- Einstellungen -> Uebersicht, Karte "Datensicherung": `Fehler` mit Ursache und dem letzten
+  gelungenen Abzug; ebenso im Abschnitt "Datensicherung" unter Datenexport. Alle drei
+  aktualisieren sich alle 10 Sekunden.
+- `logs\app.log`: der Herzschlag des Zyklus lautet `Sync mit Fehlern ... (Sicherung): ...`,
+  die Ursache steht gedrosselt davor (`Sync Sicherung: ...` - beim ersten Mal voll, danach
+  nur bei 10, 100, 1000 Wiederholungen eine Zaehlzeile). Ein gelungener Tageslauf steht als
+  `Sicherung ok (Abzug ..., N ZIP neu)` im Herzschlag.
+- `GET /api/system/status`, Feld `backup.health.status` = `error`, Text in `lastError`.
+
+Ein gescheiterter Lauf - auch ein gescheitertes "Jetzt sichern" - verbraucht den
+Tagesversuch nicht: jeder Sync-Zyklus versucht es erneut. Nach Behebung der Ursache
+verschwindet die Meldung also spaetestens mit dem naechsten Zyklus (Abfrage-Intervall),
+sofort mit "Jetzt sichern"; im Log steht dann `Sync ok ..., Sicherung ok (...) - wieder
+fehlerfrei nach N Zyklen mit Fehlern`.
+
 ### Datenbank zuruecksichern
 
 Aus einer **Administrator**-PowerShell:
@@ -452,6 +488,16 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 - **Ruecksicherungsprobe:** den Weg aus "Datenbank zuruecksichern" einmal durchspielen.
   Danach zeigt das Dashboard dieselben Messstellen mit Werten wie vorher, und
   `logs\app.log` meldet `Sync ok ...`.
+- **Jetzt sichern:** Einstellungen -> Datenexport -> "Jetzt sichern", Rueckfrage
+  bestaetigen. Danach traegt der heutige `backups\datenbank\klima-JJJJ-MM-TT.db` die
+  aktuelle Uhrzeit (`LastWriteTime`), die Zeile "Letzter Datenbank-Abzug" zeigt
+  "gerade eben", und `logs\app.log` hat genau eine neue Zeile `Sicherung (manuell) ok: ...`.
+- **Sicherungsfehler sichtbar:** dem Dienstkonto (NetworkService) das Schreibrecht auf den
+  Sicherungsordner entziehen, "Jetzt sichern" druecken. Die Fehlermeldung erscheint am
+  Knopf, binnen 10 Sekunden auch als Hinweisleiste unter der Kopfzeile und als Karte
+  "Datensicherung" (`Fehler`) in der Uebersicht - ohne Neuladen der Seite; im Log
+  `Sicherung (manuell) fehlgeschlagen: ...`. Recht zurueckgeben, erneut "Jetzt sichern":
+  Hinweisleiste und Fehlerkarte verschwinden binnen 10 Sekunden.
 
 ### Versionscheck
 

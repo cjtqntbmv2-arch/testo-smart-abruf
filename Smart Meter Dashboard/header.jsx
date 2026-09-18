@@ -24,16 +24,24 @@ function Header({ editMode, onToggleEdit, onAdd, onReset, tileCount, view, onOpe
   // (app.jsx, dashboard view only), mock mode is a fact about the whole session,
   // not about one screen.
   const [mockActive, setMockActive] = hState(false);
+  // V30: eine gescheiterte Datensicherung stand nur im Datenexport-Dialog. Derselbe Poll
+  // liefert den Zustand mit; solange die Sicherung im Fehlerzustand ist, steht hier die Ursache.
+  const [backupCause, setBackupCause] = hState(null);
   hEff(() => {
     let cancelled = false;
-    function loadMockStatus() {
+    function loadSystemStatus() {
       fetch('/api/system/status')
         .then((res) => res.json())
-        .then((data) => { if (!cancelled) setMockActive(!!(data && data.api && data.api.mockActive)); })
+        .then((data) => {
+          if (cancelled) return;
+          setMockActive(!!(data && data.api && data.api.mockActive));
+          const backup = window.explainBackupStatus(data && data.backup);
+          setBackupCause(backup.status === 'err' ? backup.cause : null);
+        })
         .catch(() => {}); // transient fetch failure: keep the last known state, don't flicker
     }
-    loadMockStatus();
-    const intervalId = setInterval(loadMockStatus, 10000);
+    loadSystemStatus();
+    const intervalId = setInterval(loadSystemStatus, 10000);
     return () => { cancelled = true; clearInterval(intervalId); };
   }, []);
 
@@ -106,6 +114,17 @@ function Header({ editMode, onToggleEdit, onAdd, onReset, tileCount, view, onOpe
             <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
           <span>Mock-Modus aktiv — alle angezeigten Messwerte sind frei erfunden, keine echten testo-Daten.</span>
+        </div>
+      )}
+      {/* Warnfarbe der offline-banner-Klasse: die Messdaten stimmen, nur ihre Sicherung
+          fehlt. Auf jeder Ansicht, wie das Mock-Banner — der Zustand gilt der ganzen Anlage. */}
+      {backupCause && (
+        <div className="offline-banner backup-error-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <span>Datensicherung fehlgeschlagen: {backupCause} — Einstellungen → Datenexport.</span>
         </div>
       )}
     </>
