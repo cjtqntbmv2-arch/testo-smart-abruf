@@ -23,10 +23,7 @@ function ExportPanel({ systemStatus, onRefresh }) {
       setMeta(m);
       setStationIds(m.map(s => s.id)); // default: all stations
     }).catch(e => setError(e.message));
-    // default range = last month
-    const r = window.presetRange('lastMonth', Date.now());
-    setFromStr(new Date(r.fromTs).toISOString().slice(0, 10));
-    setToStr(new Date(r.toTs).toISOString().slice(0, 10));
+    applyPreset('lastMonth'); // Standard-Zeitraum: letzter Monat
     // Voreingestelltes CSV-Format. Scheitert das Laden, bleibt 'de' stehen — das darf
     // NICHT still passieren, sonst bekommt ein Nutzer mit RFC-Einstellung kommentarlos
     // das falsche Format angeboten.
@@ -41,8 +38,8 @@ function ExportPanel({ systemStatus, onRefresh }) {
     setPreset(key);
     if (key === 'custom') return;
     const r = window.presetRange(key, Date.now());
-    setFromStr(new Date(r.fromTs).toISOString().slice(0, 10));
-    setToStr(new Date(r.toTs).toISOString().slice(0, 10));
+    setFromStr(window.localDateKey(r.fromTs)); // Ortstag — toISOString waere UTC (V25)
+    setToStr(window.localDateKey(r.toTs));
   }
   function toggle(list, setList, id) {
     setList(list.includes(id) ? list.filter(x => x !== id) : [...list, id]);
@@ -53,10 +50,8 @@ function ExportPanel({ systemStatus, onRefresh }) {
   async function doExport() {
     setError(null); setBusy(true);
     try {
-      const fromTs = new Date(fromStr + 'T00:00:00').getTime();
-      const toTs = new Date(toStr + 'T23:59:59.999').getTime();
       if (!stationIds.length) throw new Error('Bitte mindestens eine Messstelle wählen');
-      if (!(fromTs <= toTs)) throw new Error('Zeitraum ungültig (von > bis)');
+      const { fromTs, toTs } = window.parseDateRange(fromStr, toStr); // wirft mit Meldung für den Dialog
       const payload = window.buildExportPayload({ stationIds, metricKeys, fromTs, toTs, includeEvents, dialect });
       await DASH_DATA.postExport(payload);
     } catch (e) { setError(e.message); }
