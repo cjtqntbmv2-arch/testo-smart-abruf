@@ -1,6 +1,6 @@
 # Offene Aufgaben aus dem Funktionstest v0.16.1
 
-Abgeleitet aus [funktionstest-2026-09-17.md](funktionstest-2026-09-17.md). **Stand: nichts davon ist umgesetzt** — am Anwendungscode wurde während des Tests nichts geändert.
+Abgeleitet aus [funktionstest-2026-09-17.md](funktionstest-2026-09-17.md). **Stand 2026-09-18: alle acht Aufgaben umgesetzt (v0.17.0)** — Ergebnis, Abweichungen und Offenes je Aufgabe im Abschnitt „Umsetzungsstand“ am Ende.
 
 Jede Aufgabe ist eigenständig formuliert und lässt sich ohne den Testlauf bearbeiten. Alle Zahlen stammen aus Messungen an der laufenden Anwendung, nicht aus Code-Lektüre.
 
@@ -143,3 +143,22 @@ Sie enthält echte Daten und einen echten Cloud-Schlüssel:
 - Vor Eingriffen sichern: `sqlite3 klima.db ".backup 'klima.backup-<zweck>-<zeit>.db'"` — nicht `cp`, die laufende WAL macht die Kopie sonst inkonsistent. Das Namensschema `klima.backup-*.db` ist git-ignoriert.
 - **Beim Zurückspielen:** Server per `SIGTERM` stoppen (nicht `kill -9`), prüfen dass `klima.db-wal`/`-shm` weg sind, **erst dann** einspielen. Ohne diesen Schritt: 48.563 statt 171.198 Messwerte und `integrity_check: malformed` — die Datei öffnet danach still und ohne Fehlermeldung.
 - Das Kachel-Layout liegt nur im `localStorage` (`dash-layout-v3`), eine Import-Funktion gibt es nicht.
+
+---
+
+## Umsetzungsstand (v0.17.0, 2026-09-18)
+
+Seriell abgearbeitet, je Aufgabe ein Subagent (erst Behauptungen am Code prüfen, dann umsetzen), jedes Ergebnis vom Orchestrator nachgeprüft. Tests: 330 → 394, alle grün.
+
+| # | Ergebnis | Commit |
+|---|---|---|
+| 4 | Scheduler und Update-Prüfung starten erst nach erfolgreichem Port-Bind; jeder Bindefehler gibt eine Zeile ohne Stacktrace aus | `6c84375` |
+| 6 | `backend/log.js`: Zeitstempel mit Offset, eine Herzschlagzeile je Zyklus, Scheduler-Fehler gedrosselt (wechselnde `instance`-ID herausgerechnet), Update-Prüfung loggt Zustandswechsel | `3a738a7` |
+| 1 | Täglicher `VACUUM INTO`-Abzug nach `<backup_dir>/datenbank/`, die neuesten 7 Tage; Rücksicherung in `deploy/windows/README.md`. Nach Gegenprüfung: Aufbewahrung löscht bei eingeschalteter Sicherung nichts, was in keinem Abzug steht | `48d4800`, `dbfbe66` |
+| 2 | Sicherungsfehler in Log, Systemübersicht, Kopfzeile und Dialog (aktualisiert sich); Knopf „Jetzt sichern“ (`POST /api/backup`). **V27 widerlegt:** ein Fehlschlag verbrauchte den Tagesversuch nie, gesehen wurde der veraltete Dialog (V26) | `b594f39` |
+| 5 | Regeltabelle für `POST /api/settings` (erst alles prüfen, dann speichern); Intervall 60–3600 s, zusätzlich im Scheduler geklemmt; kaputtes JSON → 400 an allen Endpunkten | `a5b793c` |
+| 3 | Datumsfelder im Ortstag statt UTC; dazu `presetRange` in Kalendertagen (Zeitumstellung) und V16 (leeres Datumsfeld) | `f024b0c` |
+| 7 | Dubletten verhindert: 409 mit Name der anderen Messstelle, Teil-UNIQUE-Index (bei Alt-Dublette Warnung statt Startabbruch), Zuordnung deterministisch, FK-Abbruch beim Löschen während eines Zyklus behoben, D7 behoben | `5e76ba2` |
+| 8 | **Beobachtung widerlegt:** die gemeldeten Skalenenden gab es in keinem Datenstand — die ungerundeten Beschriftungen wurden am Rand abgeschnitten, der Wert lag innerhalb. Skala jetzt aus den Grenzwerten (sonst Daten), Enden gerundet | `074b7c1` |
+
+**Bewusst offen:** 429-Backoff (`testo-client.js`); Fehler der Update-Prüfung nur im Log, nicht in der Oberfläche; keine fachliche Obergrenze für `retention_days`; `setup.ps1` empfiehlt in zwei Hinweistexten noch `taskkill /IM node.exe /F`; `backend/tests/server.test.js` erreicht mit Wegwerf-Schlüsseln die echte testo-Cloud; die neuen §9-Punkte brauchen die Abnahme auf einer Windows-Maschine.
