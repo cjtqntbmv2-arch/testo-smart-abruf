@@ -285,32 +285,17 @@
           abshumid:    finalA,
         };
 
+        // Keine Skala hier: die Tachometer-Skala rechnet gaugeScale() (chart-logic.js) beim
+        // Zeichnen aus Grenzwerten bzw. Reihe; Linien-/Sparkline-Diagramme skalieren selbst.
         const metrics = {};
         for (const mid of METRIC_IDS) {
           const mMeta = META[mid];
           const mData = stationMetrics[mid] || {};
-          const validNums = (allSeries[mid] || []).filter(v => typeof v === 'number' && !Number.isNaN(v));
-          let lo = validNums.length > 0 ? Math.min(...validNums) : 0;
-          let hi = validNums.length > 0 ? Math.max(...validNums) : 100;
-          
-          if (lo === hi) {
-            // Provide a default span if all values are identical to prevent division by zero
-            lo = lo - 1;
-            hi = hi + 1;
-          }
-
           metrics[mid] = {
             ...mMeta,
             series: allSeries[mid],
             unit: mData.unit || mMeta.unit,
-            domain: mMeta.domain || [lo, hi]
           };
-
-          // Adjust bounds slightly for derived metrics domain
-          if (mid === 'dewpoint' || mid === 'abshumid') {
-            const margin = mid === 'dewpoint' ? 2 : 1;
-            metrics[mid].domain = [Math.floor(lo - margin), Math.ceil(hi + margin)];
-          }
         }
 
         // Fetch backend events (alarms & system messages)
