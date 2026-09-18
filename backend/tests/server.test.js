@@ -11,10 +11,13 @@ globalThis.fetch = (url, opts) => String(url).startsWith('http://localhost:3001/
   ? realFetch(url, opts)
   : Promise.resolve(new Response('{"message":"Test-Stub: keine Cloud im Test"}', { status: 401 }));
 // Was trotzdem hinausginge, zählt undici unterhalb von fetch; der letzte Test verlangt die Liste
-// leer. So fiele auch ein umgangener Stub auf.
+// leer. So fiele auch ein umgangener Stub auf. localRequests belegt, dass der Zähler überhaupt
+// etwas sieht; ohne das bestünde der Test auch unter einem Node, das den Kanal nicht meldet.
+let localRequests = 0;
 const cloudRequests = [];
 require('node:diagnostics_channel').subscribe('undici:request:create', ({ request }) => {
-  if (request.origin !== 'http://localhost:3001') cloudRequests.push(`${request.method} ${request.origin}${request.path}`);
+  if (request.origin === 'http://localhost:3001') localRequests++;
+  else cloudRequests.push(`${request.method} ${request.origin}${request.path}`);
 });
 
 process.env.DB_PATH = ':memory:';
@@ -1127,6 +1130,7 @@ test('server.js startup: invalid stored api_region (legacy "us") is reset to eu'
 // Gegenprobe zum fetch-Stub am Dateianfang.
 test('keine Anfrage dieser Datei verlässt den Rechner', async () => {
   await waitSchedulerIdle();
+  assert.ok(localRequests > 0, 'Zähler blind: undici meldet keine Anfragen, die Gegenprobe prüfte nichts');
   assert.deepStrictEqual(cloudRequests, []);
 });
 
