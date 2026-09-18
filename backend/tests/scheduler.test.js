@@ -1034,7 +1034,7 @@ test('end_ts pairs only within a group — interleaved groups do not cross-pair'
 test('retention prune protects an un-backed-up month, deletes a backed-up one', () => {
   process.env.DB_PATH = ':memory:';
   const { getDb, saveSetting } = require('../db');
-  const { computePruneFloor } = require('../backup-runner');
+  const { computePruneFloor, runBackupScan } = require('../backup-runner');
   const { stationBase } = require('../export-service');
   const db = getDb();
   db.exec("DELETE FROM measurements; DELETE FROM events; DELETE FROM stations;");
@@ -1045,6 +1045,9 @@ test('retention prune protects an un-backed-up month, deletes a backed-up one', 
   const mayTs = Date.UTC(2026, 4, 15); // May  — NOT archived
   const ins = db.prepare("INSERT INTO measurements (uuid,station_id,timestamp,value,physical_property,unit) VALUES (?,?,?,1,'temperature','°C')");
   ins.run('a', 's1', aprTs); ins.run('m', 's1', mayTs);
+  // Gelungener Datenbank-Abzug am 20. Mai (der Mai lief noch, bekommt also kein ZIP): ohne
+  // gelungenen Abzug loescht die Aufbewahrung gar nichts.
+  assert.deepStrictEqual(runBackupScan(Date.UTC(2026, 4, 20, 12)).errors, []);
   // Simulate April's ZIP existing so computePruneFloor treats April as backed up (May stays un-backed).
   fs.writeFileSync(path.join(dir, `${stationBase({ id: 's1', name: 'S' })}_2026-04.zip`), 'x');
   const now = Date.UTC(2026, 5, 20);
@@ -1052,6 +1055,60 @@ test('retention prune protects an un-backed-up month, deletes a backed-up one', 
   db.prepare("DELETE FROM measurements WHERE timestamp < ?").run(effectiveCutoff);
   assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid='m'").get().c, 1); // un-backed May survives
   assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid='a'").get().c, 0); // backed-up April pruned
+});
+
+// ── Aufbewahrung loescht nur, was in einem gelungenen Datenbank-Abzug steht ──────
+// Nachgestellter Befund: retention_days=1 und ein scheiternder Abzug — Schritt 4 loeschte
+// trotzdem Messwerte, die in keinem Abzug standen (auch im laufenden Monat, den kein ZIP deckt).
+const DAY_MS = 24 * 3600 * 1000;
+const idleClient = {
+  async fetchDeviceProperties() { return []; },
+  async fetchDeviceStatus() { return []; },
+  async fetchMeasuringObjects() { return []; },
+  async fetchMeasurements() { return []; },
+  async fetchAlarms() { return []; }
+};
+function retentionFixture() {
+  closeDb(); // der Retention-Test oben laesst seine DB offen
+  initTestDb();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sch-ret-'));
+  saveSetting('backup_dir', dir);
+  saveSetting('api_key', 'mock-key');
+  saveSetting('retention_days', '1');
+  const db = getDb();
+  db.prepare("INSERT INTO stations (id, name) VALUES ('ret', 'Ret')").run();
+  const ins = db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES (?, 'ret', ?, 1, 'temperature', '°C')");
+  ins.run('vor-abzug', Date.now() - 5 * DAY_MS);  // aelter als der letzte Abzug: darf weg
+  ins.run('nach-abzug', Date.now() - 2 * DAY_MS); // juenger als der Abzug, aber aelter als 1 Tag
+  ins.run('frisch', Date.now() - 3600 * 1000);
+  return { dir, db };
+}
+// Eine Datei statt des Ordners: der heutige Abzug scheitert, auf jedem Betriebssystem.
+const breakSnapshotDir = (dir) => fs.writeFileSync(path.join(dir, 'datenbank'), 'kein Ordner');
+const uuids = (db) => db.prepare('SELECT uuid FROM measurements ORDER BY uuid').all().map((r) => r.uuid);
+
+test('Aufbewahrung: scheitert der Abzug, bleibt alles juenger als der letzte gelungene Abzug', async () => {
+  const { dir, db } = retentionFixture();
+  const { runBackupScan } = require('../backup-runner');
+  assert.deepStrictEqual(runBackupScan(Date.now() - 3 * DAY_MS).errors, []); // gelungen vor 3 Tagen
+  fs.renameSync(path.join(dir, 'datenbank'), path.join(dir, 'datenbank-alt'));
+  breakSnapshotDir(dir);
+
+  await schedulerModule.runSyncCycle(idleClient);
+
+  assert.ok(JSON.parse(getSetting('backup_health')).dbSnapshotError, 'der heutige Abzug ist gescheitert');
+  assert.deepStrictEqual(uuids(db), ['frisch', 'nach-abzug']);
+  closeDb();
+});
+
+test('Aufbewahrung: ohne einen gelungenen Abzug loescht sie gar nichts', async () => {
+  const { dir, db } = retentionFixture();
+  breakSnapshotDir(dir);
+
+  await schedulerModule.runSyncCycle(idleClient);
+
+  assert.deepStrictEqual(uuids(db), ['frisch', 'nach-abzug', 'vor-abzug']);
+  closeDb();
 });
 
 // ── Log für den Feldeinsatz: Herzschlag je Zyklus, gedrosselte Schrittfehler ──

@@ -140,11 +140,22 @@ Die manuelle Schritt-für-Schritt-Anleitung unten bleibt als Fallback/Transparen
 - **Reboot ohne Login** → Server wieder erreichbar.
 - Liveness/Health: `GET http://localhost:3000/api/system/status` (Scheduler/DB/Storage).
   In der Aufgabenplanung zusaetzlich Spalte "Letztes Ausfuehrungsergebnis".
-- Crash-Restart: `taskkill /IM node.exe /F` → Task startet Node binnen ~1 Min neu.
+- Crash-Restart: nur den Node-Prozess des Dienstes beenden (derselbe Befehl wie in
+  `setup.ps1`; andere Node-Programme der Maschine bleiben unberuehrt) → Task startet Node
+  binnen ~1 Min neu:
+  ```powershell
+  Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'backend\\server\.js' } | Invoke-CimMethod -MethodName Terminate | Out-Null
+  ```
+  Als Administrator ausfuehren: ohne Admin-Rechte liefert Windows die Kommandozeile des
+  Dienstprozesses nicht, der Filter faende ihn dann nicht.
 - Task immer ueber `Stop-ScheduledTask -TaskName TestoSmartAbruf` stoppen — das
-  beendet den Prozessbaum (cmd + node). Danach pruefen: `tasklist | findstr node`
-  zeigt **kein** verwaistes `node.exe`; sonst haelt es Port 3000 und der naechste
-  Start scheitert mit `EADDRINUSE` → ggf. `taskkill /IM node.exe /F`.
+  beendet den Prozessbaum (cmd + node). Danach pruefen, dass kein verwaistes `node.exe`
+  des Dienstes laeuft; diese Abfrage darf nichts ausgeben:
+  ```powershell
+  Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'backend\\server\.js' }
+  ```
+  Sonst haelt es Port 3000 und der naechste Start scheitert mit `EADDRINUSE` → mit dem
+  Befehl aus "Crash-Restart" beenden.
 
 ## LAN-Zugriff (optional, IT-Freigabe)
 
@@ -245,7 +256,14 @@ Zum Datenbank-Abzug:
   `lastDbSnapshotAt` (letzter gelungener Abzug), `dbSnapshotError`.
 - **Aufbewahrung:** die sieben neuesten Tage. Ein zweiter Lauf am selben Tag ersetzt die
   Datei dieses Tages. Aeltere Abzuege loescht der Dienst erst, nachdem ein neuer gelungen
-  ist; andere Dateien im Ordner fasst er nicht an.
+  ist, jeden einzeln (ein gesperrter haelt die uebrigen nicht auf; er steht dann in
+  `dbSnapshotPruneError`); andere Dateien im Ordner fasst er nicht an. Reste eines
+  abgebrochenen Abzugs (`klima-JJJJ-MM-TT.db.tmp`, `...tmp-journal`) raeumt der naechste
+  Lauf weg.
+- **Schutz der Messwerte:** Solange die Sicherung eingeschaltet ist, loescht die
+  Aufbewahrung (`retention_days`) nichts, was juenger ist als der letzte gelungene Abzug,
+  und vor dem ersten gelungenen Abzug gar nichts. Scheitern die Abzuege dauerhaft, waechst
+  die Datenbank also weiter, statt Ungesichertes zu loeschen.
 - **Platzbedarf:** etwa sieben mal die Datenbankgroesse, kurz vor dem Loeschen des
   aeltesten acht. Gemessen: 45 MB Datenbank ergeben einen Abzug von 44 MB, zusammen gut
   300 MB; waechst mit der Datenbank.
@@ -261,10 +279,13 @@ Zum Datenbank-Abzug:
 
 Aus einer **Administrator**-PowerShell:
 
-1. Dienst stoppen und pruefen, dass kein `node.exe` mehr laeuft:
+1. Dienst stoppen und einen verbliebenen Node-Prozess des Dienstes gezielt beenden (nur
+   den mit `backend\server.js`, andere Node-Programme bleiben unberuehrt; derselbe Befehl
+   wie in `setup.ps1`):
    ```powershell
    Stop-ScheduledTask -TaskName TestoSmartAbruf
-   tasklist | findstr node    # muss leer sein, sonst: taskkill /IM node.exe /F
+   Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'backend\\server\.js' } | Invoke-CimMethod -MethodName Terminate | Out-Null
+   Start-Sleep -Seconds 2     # Windows gibt die Dateien frei
    ```
 2. Den jetzigen Stand beiseitelegen - **alle drei Dateien zusammen verschieben**, nicht
    loeschen:
@@ -417,8 +438,8 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
   (kein Ueberschreiben, kein Duplikat) - erkennbar am unveraenderten Zeitstempel
   (`LastWriteTime`) der ZIP nach dem zweiten Lauf.
 - **Leer-Schutz:** Monate ohne Messdaten erzeugen keine ZIP.
-- **Prune-Sicherheit:** Messdaten werden erst geloescht, wenn sie in einer ZIP gesichert sind. Nicht gesicherte Monate (z. B. weil `backup_enabled=false` war) werden **nicht** vorzeitig geloescht (`effectiveCutoff = min(retentionCutoff, computePruneFloor)`).
-- Der laufende Monat wird nie als ZIP gesichert oder geloescht (Cutoff liegt immer vor Monatsbeginn des aktuellen Monats); gesichert ist er im taeglichen Datenbank-Abzug.
+- **Prune-Sicherheit:** Bei eingeschalteter Sicherung loescht die Aufbewahrung nur, was gesichert ist: nichts aus einem Monat ohne ZIP (z. B. weil `backup_enabled=false` war) und nichts, was juenger ist als der letzte gelungene Datenbank-Abzug (`backup.health.lastDbSnapshotAt`); vor dem ersten gelungenen Abzug gar nichts (`effectiveCutoff = min(retentionCutoff, computePruneFloor)`). Bei ausgeschalteter Sicherung gilt nur `retention_days`.
+- Der laufende Monat wird nie als ZIP gesichert. Die Aufbewahrung kann auch in ihm loeschen (bei kleiner `retention_days`), aber nur, was schon in einem gelungenen Datenbank-Abzug steht.
 
 ### Datenbank-Abzug
 

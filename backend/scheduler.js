@@ -430,8 +430,9 @@ async function runSyncCycle(customClient = null) {
     }
 
     // 3b. Monthly CSV backup + daily snapshot of the whole DB (throttled once per local day;
-    // catches up missed months). Must stay BEFORE step 4: the day's snapshot then still holds
-    // whatever the retention prune is about to delete.
+    // catches up missed months). Runs BEFORE step 4 so that step 4 already sees today's
+    // snapshot. Step 4 never deletes anything younger than the last SUCCESSFUL snapshot
+    // (computePruneFloor); if today's fails, the floor stays at the previous one.
     try {
       maybeRunBackupScan(Date.now());
     } catch (e) {
@@ -439,14 +440,15 @@ async function runSyncCycle(customClient = null) {
       // Do NOT set hasError — a backup failure must not mark the data sync failed; surfaced via backup_health.
     }
 
-    // 4. Data retention cleanup (clamped so un-backed-up months are never deleted)
+    // 4. Data retention cleanup, clamped by computePruneFloor: with backups on, nothing that is
+    // not in a backup is deleted (no ZIP for its month, or younger than the last snapshot).
     try {
       const daysSetting = getSetting('retention_days') || '365';
       const days = parseInt(daysSetting, 10);
       const validDays = isNaN(days) || days <= 0 ? 365 : days;
       const now = Date.now();
       const retentionCutoff = now - validDays * 24 * 3600 * 1000;
-      const backupFloor = computePruneFloor(now); // Infinity if backups disabled; window-bounded
+      const backupFloor = computePruneFloor(now); // Infinity if backups off; -Infinity before the first snapshot
       const effectiveCutoff = Math.min(retentionCutoff, backupFloor);
       db.prepare("DELETE FROM measurements WHERE timestamp < ?").run(effectiveCutoff);
       // Only purge closed (inactive) events; active alarms must survive regardless of age.

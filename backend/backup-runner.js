@@ -56,11 +56,15 @@ function zipPathFor(dir, station, year, monthIdx0) {
   return path.join(dir, `${stationBase(station)}_${year}-${pad2(monthIdx0 + 1)}.zip`);
 }
 
+function readHealth() {
+  try { return JSON.parse(getSetting('backup_health') || '{}') || {}; } catch (_) { return {}; }
+}
+
 function writeHealth(status, extra) {
   // Der letzte gelungene Datenbank-Abzug bleibt stehen, bis ein neuer gelingt: auch nach
-  // einem gescheiterten Lauf ist so sichtbar, wie alt der neueste zurueckspielbare Stand ist.
-  let prev = {};
-  try { prev = JSON.parse(getSetting('backup_health') || '{}') || {}; } catch (_) {}
+  // einem gescheiterten Lauf ist so sichtbar, wie alt der neueste zurueckspielbare Stand ist,
+  // und computePruneFloor weiss, bis wohin die Aufbewahrung loeschen darf.
+  const prev = readHealth();
   saveSetting('backup_health', JSON.stringify(Object.assign({
     status, lastScan: new Date().toISOString(),
     lastDbSnapshot: prev.lastDbSnapshot || null, lastDbSnapshotAt: prev.lastDbSnapshotAt || null,
@@ -74,6 +78,7 @@ function writeHealth(status, extra) {
 // eigenstaendige Datei ohne -wal.
 const SNAPSHOT_KEEP = 7;
 const SNAPSHOT_NAME = /^klima-\d{4}-\d{2}-\d{2}\.db$/;
+const SNAPSHOT_LEFTOVER = /^klima-\d{4}-\d{2}-\d{2}\.db\.tmp(-journal)?$/; // Reste abgebrochener Laeufe
 
 function writeDbSnapshot(dir, nowMs) {
   const snapDir = path.join(dir, 'datenbank');
@@ -82,11 +87,15 @@ function writeDbSnapshot(dir, nowMs) {
   const target = path.join(snapDir, name);
   const tmp = `${target}.tmp`;
   // VACUUM INTO scheitert an einem vorhandenen Ziel und hinterliesse bei einem Abbruch eine
-  // halbe Datei: darum in .tmp (Rest eines abgebrochenen Laufs vorher weg), dann umbenennen.
+  // halbe Datei: darum in .tmp, dann umbenennen. Ein harter Abbruch (Stop-ScheduledTask)
+  // laesst die .tmp und das -journal der Ausgabe liegen, womoeglich von einem anderen Tag:
+  // alle solchen Reste vorher weg, nichts sonst.
   // rename ersetzt den Abzug desselben Tages, unter Windows per MoveFileEx(REPLACE_EXISTING).
   // ponytail: synchron, 0,06 s fuer 45 MB auf lokaler SSD; auf einer langsamen Netzfreigabe
   // steht der Server einmal am Tag fuer die Schreibdauer. Stoert das: db.backup() (asynchron).
-  fs.rmSync(tmp, { force: true });
+  for (const f of fs.readdirSync(snapDir)) {
+    if (SNAPSHOT_LEFTOVER.test(f)) fs.rmSync(path.join(snapDir, f), { force: true });
+  }
   try {
     getDb().prepare('VACUUM INTO ?').run(tmp); // Pfad als Parameter, nie im SQL-Text
     fs.renameSync(tmp, target);
@@ -94,14 +103,15 @@ function writeDbSnapshot(dir, nowMs) {
     try { fs.rmSync(tmp, { force: true }); } catch (_) {} // der urspruengliche Fehler zaehlt
     throw e;
   }
-  // Aufbewahrung erst nach gelungenem Abzug, nur fuer genau dieses Namensmuster. Ein nicht
-  // loeschbarer Altabzug ist kein Sicherungsfehler (sonst liefe der Abzug jeden Zyklus neu).
-  let pruneError = null;
-  try {
-    const old = fs.readdirSync(snapDir).filter(f => SNAPSHOT_NAME.test(f)).sort().slice(0, -SNAPSHOT_KEEP);
-    for (const f of old) fs.rmSync(path.join(snapDir, f));
-  } catch (e) { pruneError = e.message; }
-  return { name, pruneError };
+  // Aufbewahrung erst nach gelungenem Abzug, nur fuer genau dieses Namensmuster, je Datei
+  // einzeln: ein gesperrter Altabzug haelt die uebrigen nicht auf. Ein nicht loeschbarer
+  // Altabzug ist kein Sicherungsfehler (sonst liefe der Abzug jeden Zyklus neu).
+  const pruneErrors = [];
+  const old = fs.readdirSync(snapDir).filter(f => SNAPSHOT_NAME.test(f)).sort().slice(0, -SNAPSHOT_KEEP);
+  for (const f of old) {
+    try { fs.rmSync(path.join(snapDir, f)); } catch (e) { pruneErrors.push(`${f}: ${e.message}`); }
+  }
+  return { name, pruneError: pruneErrors.join('; ') || null };
 }
 
 function runBackupScan(nowMs) {
@@ -173,14 +183,21 @@ function maybeRunBackupScan(nowMs) {
   return true;
 }
 
-// Oldest start-of-month that has data but no backup zip (or Infinity if none / disabled).
+// Zeitpunkt, ab dem die Aufbewahrung nichts loeschen darf (scheduler.js Schritt 4 loescht nur
+// unterhalb von min(retentionCutoff, floor)). Bei eingeschalteter Sicherung gilt: nichts, was
+// in keiner Sicherung steht. Also hoechstens der letzte gelungene Datenbank-Abzug (was
+// juenger ist, steht in keinem Abzug; gab es noch keinen, -Infinity = gar nichts loeschen)
+// und hoechstens der Beginn des aeltesten Datenmonats ohne ZIP. Sicherung aus: Infinity,
+// dann gilt nur retention_days.
 function computePruneFloor(nowMs) {
   if ((getSetting('backup_enabled') || '1') !== '1') return Infinity;
+  const lastSnapshotMs = Date.parse(readHealth().lastDbSnapshotAt);
+  if (Number.isNaN(lastSnapshotMs)) return -Infinity;
   const dir = resolveBackupDir();
   const db = getDb();
   const stations = db.prepare("SELECT id, name FROM stations").all();
   const months = candidateMonths(nowMs);
-  let floor = Infinity;
+  let floor = lastSnapshotMs;
   for (const mth of months) {
     const endMs = monthStartMs(mth.year, mth.monthIdx0 + 1);
     for (const st of stations) {

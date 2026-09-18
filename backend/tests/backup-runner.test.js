@@ -73,8 +73,27 @@ test('computePruneFloor: returns start of oldest un-backed-up data month', () =>
   tmpDir();
   const now = Date.UTC(2026, 5, 10, 9, 0, 0);
   seedMonth('s1', 'Serverraum', 2026, 4, 21.0); // May 2026, not yet backed up
+  // Gelungener Datenbank-Abzug am 20. Mai, als der Mai noch lief (also ohne Mai-ZIP):
+  // ohne ihn loescht die Aufbewahrung gar nichts (siehe Tests unten).
+  assert.deepStrictEqual(runner.runBackupScan(Date.UTC(2026, 4, 20, 12, 0, 0)).errors, []);
   const floor = runner.computePruneFloor(now);
   assert.strictEqual(floor, runner.monthStartMs(2026, 4)); // May 1 (local) — compare to the production helper, TZ-independent
+});
+
+test('computePruneFloor: nie juenger als der letzte gelungene Datenbank-Abzug', () => {
+  const db = getDb();
+  db.exec("DELETE FROM measurements; DELETE FROM events; DELETE FROM stations;");
+  tmpDir();
+  const snapAt = Date.UTC(2026, 5, 10, 9, 0, 0);
+  seedMonth('s1', 'Serverraum', 2026, 4, 21.0); // Mai: bekommt beim Lauf am 10. Juni sein ZIP
+  assert.deepStrictEqual(runner.runBackupScan(snapAt).errors, []);
+  // Alle Monate haben ihr ZIP; was nach dem Abzug entstand, steht aber in keinem Abzug.
+  assert.strictEqual(runner.computePruneFloor(Date.UTC(2026, 5, 20)), snapAt);
+});
+
+test('computePruneFloor: ohne gelungenen Datenbank-Abzug -Infinity, die Aufbewahrung loescht nichts', () => {
+  tmpDir(); // backup_health leer = noch kein Abzug
+  assert.strictEqual(runner.computePruneFloor(Date.UTC(2026, 5, 20)), -Infinity);
 });
 
 test('computePruneFloor: Infinity when backups disabled', () => {

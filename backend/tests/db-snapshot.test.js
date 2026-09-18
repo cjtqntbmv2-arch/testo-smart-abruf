@@ -105,6 +105,33 @@ test('Aufbewahrung: die sieben neuesten bleiben, fremde Dateien und ZIPs bleiben
   assert.ok(fs.existsSync(path.join(dir, 'Lager_s1_2026-08.zip')));
 });
 
+test('Aufbewahrung: ein nicht loeschbarer Altabzug haelt die uebrigen nicht auf', () => {
+  const dir = freshBackupDir();
+  fs.mkdirSync(snapDir(dir));
+  // Der aelteste "Abzug" ist ein Verzeichnis: rm scheitert daran wie an einer gesperrten Datei.
+  fs.mkdirSync(path.join(snapDir(dir), 'klima-2026-09-01.db'));
+  touch(snapDir(dir), Array.from({ length: 8 }, (_, i) => `klima-2026-09-0${i + 2}.db`)); // 02 bis 09
+
+  assert.deepStrictEqual(runner.runBackupScan(NOW).errors, []);
+  assert.deepStrictEqual(fs.readdirSync(snapDir(dir)).sort(),
+    ['klima-2026-09-01.db', 'klima-2026-09-04.db', 'klima-2026-09-05.db', 'klima-2026-09-06.db',
+      'klima-2026-09-07.db', 'klima-2026-09-08.db', 'klima-2026-09-09.db', TODAY]);
+  const h = health();
+  assert.strictEqual(h.status, 'ok'); // kein Sicherungsfehler: der neue Abzug ist da
+  assert.match(h.dbSnapshotPruneError, /^klima-2026-09-01\.db: /);
+});
+
+test('Reste abgebrochener Laeufe (.tmp, .tmp-journal) werden weggeraeumt, auch von anderen Tagen', () => {
+  const dir = freshBackupDir();
+  fs.mkdirSync(snapDir(dir));
+  const leftovers = ['klima-2026-09-10.db.tmp', 'klima-2026-09-10.db.tmp-journal', `${TODAY}.tmp`, `${TODAY}.tmp-journal`];
+  const foreign = ['klima-2026-09-10.db.tmp.bak', 'klima-2026-09-10.db.tmp-journal.alt', 'klima.db.tmp', 'notiz.tmp'];
+  touch(snapDir(dir), [...leftovers, ...foreign]);
+
+  assert.deepStrictEqual(runner.runBackupScan(NOW).errors, []);
+  assert.deepStrictEqual(fs.readdirSync(snapDir(dir)).sort(), [...foreign, TODAY].sort());
+});
+
 test('Zweiter Lauf am selben Tag ersetzt nur den Abzug dieses Tages', () => {
   const dir = freshBackupDir();
   fs.mkdirSync(snapDir(dir));
