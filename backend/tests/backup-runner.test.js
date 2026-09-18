@@ -102,6 +102,19 @@ test('computePruneFloor: Infinity when backups disabled', () => {
   saveSetting('backup_enabled', '1');
 });
 
+// Ohne Obergrenze lief candidateMonths() fuer ein riesiges retention_days synchron ueber
+// Millionen Monate und blockierte den Dienst. Auch ein direkt in die DB geschriebener Wert
+// schaut deshalb hoechstens 3650 + 62 Tage zurueck.
+test('computePruneFloor: retention_days ueber 3650 schaut nur 3650 + 62 Tage zurueck', () => {
+  tmpDir();
+  const now = Date.UTC(2026, 5, 10, 9, 0, 0);
+  assert.deepStrictEqual(runner.runBackupScan(now).errors, []); // gelungener Abzug, noch ohne Daten
+  seedMonth('s1', 'Serverraum', 2006, 4, 21.0); // Mai 2006: ausserhalb des Fensters
+  seedMonth('s1', 'Serverraum', 2016, 5, 21.0); // Juni 2016: innerhalb (Fenster ab April 2016)
+  saveSetting('retention_days', '100000');
+  assert.strictEqual(runner.computePruneFloor(now), runner.monthStartMs(2016, 5));
+});
+
 test('maybeRunBackupScan: throttled to once per local day', () => {
   const db = getDb();
   db.exec("DELETE FROM measurements; DELETE FROM events; DELETE FROM stations;");

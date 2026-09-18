@@ -1111,6 +1111,31 @@ test('Aufbewahrung: ohne einen gelungenen Abzug loescht sie gar nichts', async (
   closeDb();
 });
 
+// ── Obergrenze: retention_days aus der DB hoechstens 3650 Tage ────────────────
+// POST /api/settings nimmt hoechstens 3650 an; ein direkt in die DB geschriebener Wert (oder
+// RETENTION_DAYS beim Erststart) geht nur hier durch. SQLite speichert eine direkt
+// geschriebene Zahl 1e21 als Text "1.0e+21" — parseInt las das als 1 Tag, und die
+// Aufbewahrung loeschte alles, was aelter war.
+test('Aufbewahrung: retention_days ueber 3650 aus der DB gilt als 3650 Tage', async () => {
+  for (const stored of ['100000', '1.0e+21']) {
+    closeDb(); initTestDb();
+    saveSetting('api_key', 'mock-key');
+    saveSetting('backup_enabled', '0'); // nur retention_days zaehlt (computePruneFloor = Infinity)
+    saveSetting('retention_days', stored);
+    const db = getDb();
+    db.prepare("INSERT INTO stations (id, name) VALUES ('cap', 'Cap')").run();
+    const ins = db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES (?, 'cap', ?, 1, 'temperature', '°C')");
+    ins.run('vor-3660-tagen', Date.now() - 3660 * DAY_MS);
+    ins.run('vor-3640-tagen', Date.now() - 3640 * DAY_MS);
+    ins.run('frisch', Date.now() - 3600 * 1000);
+
+    await schedulerModule.runSyncCycle(idleClient);
+
+    assert.deepStrictEqual(uuids(db), ['frisch', 'vor-3640-tagen'], `gespeichert ${stored}`);
+  }
+  closeDb();
+});
+
 // ── Log für den Feldeinsatz: Herzschlag je Zyklus, gedrosselte Schrittfehler ──
 // app.log wird nur beim Dienststart rotiert. Vorher: Normalbetrieb schrieb nichts, ein
 // abgelaufener Schlüssel fünf Zeilen je Zyklus, ohne Zeitstempel.

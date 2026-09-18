@@ -721,11 +721,25 @@ test('POST /api/settings: retention_days ohne Teilparse, 1e21 wird nicht zu 1 Ta
   saveSetting('retention_days', '365');
   // parseInt(1e21) liest "1e+21" als 1: aus riesigen Aufbewahrungstagen wurde 1 Tag.
   for (const v of ['30abc', 1.5, 0, -5, 1e21, '99999999999999999999', '', null]) {
-    await expect400({ retention_days: v }, 'retention_days', /ganze Zahl ab 1/);
+    await expect400({ retention_days: v }, 'retention_days', /ganze Zahl von 1 bis 3650/);
   }
   const res = await postSettings({ retention_days: '730' });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(getSetting('retention_days'), '730');
+}));
+
+// Ohne Obergrenze lief candidateMonths() (backup-runner.js) für ein riesiges retention_days
+// synchron über Millionen Monate: der Dienst stand. Das Dashboard bietet 30 bis 730 Tage an.
+test('POST /api/settings: retention_days höchstens 3650 Tage', () => withSettings(['retention_days'], async () => {
+  saveSetting('retention_days', '365');
+  for (const v of [3651, '3651', 100000, Number.MAX_SAFE_INTEGER]) {
+    await expect400({ retention_days: v }, 'retention_days', /ganze Zahl von 1 bis 3650/);
+  }
+  for (const v of [3650, '3650']) {
+    const res = await postSettings({ retention_days: v });
+    assert.strictEqual(res.status, 200, JSON.stringify(v));
+    assert.strictEqual(getSetting('retention_days'), '3650');
+  }
 }));
 
 test('POST /api/settings: api_key nur als Text, getrimmt; nur Leerzeichen, null oder Zahl -> 400', () => withSettings([], async () => {
@@ -824,6 +838,18 @@ test('GET /api/settings meldet das wirksame Intervall, auch wenn die DB einen We
     saveSetting('poll_interval_sec', stored);
     const body = await (await fetch('http://localhost:3001/api/settings')).json();
     assert.strictEqual(body.poll_interval_sec, effective, `gespeichert ${stored}`);
+  }
+}));
+
+// Ebenso die Aufbewahrung: ein Wert außerhalb 1-3650 in der DB (direkt geschrieben,
+// RETENTION_DAYS beim Erststart, vor der Obergrenze per API gesetzt) ließe sonst jedes
+// Speichern am 400 scheitern. SQLite speichert eine direkt geschriebene Zahl 1e21 als Text
+// "1.0e+21" — parseInt las das als 1 Tag.
+test('GET /api/settings meldet die wirksame Aufbewahrung, auch wenn die DB einen Wert außerhalb 1-3650 hält', () => withSettings(['retention_days'], async () => {
+  for (const [stored, effective] of [['100000', 3650], ['1.0e+21', 3650], ['0', 365], ['-5', 365], ['abc', 365], ['730', 730]]) {
+    saveSetting('retention_days', stored);
+    const body = await (await fetch('http://localhost:3001/api/settings')).json();
+    assert.strictEqual(body.retention_days, effective, `gespeichert ${stored}`);
   }
 }));
 

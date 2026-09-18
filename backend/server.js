@@ -9,7 +9,7 @@ const { startScheduler, runSyncCycle, getSchedulerStatus, stopScheduler, pollInt
 const TestoClient = require('./testo-client');
 const { handleListenError } = require('./listen-error');
 const { getExportMetadata, exportStations } = require('./export-service');
-const { resolveBackupDir, runBackupNow, readHealth, backupSummary } = require('./backup-runner');
+const { resolveBackupDir, runBackupNow, readHealth, backupSummary, retentionDays, RETENTION_DAYS_MAX } = require('./backup-runner');
 const { startUpdateCheck, runUpdateCheck, getUpdateStatus } = require('./update-check');
 const { info, error, logThrottled } = require('./log');
 
@@ -68,7 +68,8 @@ app.get('/api/settings', (req, res) => {
     // jedem automatischen Speichern mit, ein Rohwert ausserhalb 60-3600 s liesse daher
     // jedes Speichern der Seite am 400 unten scheitern (wie frueher die Region 'us').
     poll_interval_sec: pollIntervalSec(),
-    retention_days: parseInt(getSetting('retention_days') || '365', 10),
+    // Ebenso die wirksame Aufbewahrung (1-3650 Tage) statt des Rohwerts.
+    retention_days: retentionDays(),
     backup_enabled: (getSetting('backup_enabled') || '1') === '1',
     backup_dir: getSetting('backup_dir') || '',
     update_dir: getSetting('update_dir') || '',
@@ -105,8 +106,8 @@ const SETTING_RULES = {
     : invalid(`api_region must be one of: ${VALID_API_REGIONS.join(', ')}`)),
   poll_interval_sec: (v) => wholeNumber(v, POLL_INTERVAL_MIN_SEC, POLL_INTERVAL_MAX_SEC,
     `Abfrage-Intervall (poll_interval_sec) muss eine ganze Zahl von ${POLL_INTERVAL_MIN_SEC} bis ${POLL_INTERVAL_MAX_SEC} Sekunden sein.`),
-  retention_days: (v) => wholeNumber(v, 1, Number.MAX_SAFE_INTEGER,
-    'Aufbewahrungszeit (retention_days) muss eine ganze Zahl ab 1 (Tage) sein.'),
+  retention_days: (v) => wholeNumber(v, 1, RETENTION_DAYS_MAX,
+    `Aufbewahrungszeit (retention_days) muss eine ganze Zahl von 1 bis ${RETENTION_DAYS_MAX} Tagen sein.`),
   csv_format: (v) => {
     const s = String(v);
     return s === 'de' || s === 'rfc' ? s : invalid("csv_format must be 'de' or 'rfc'");

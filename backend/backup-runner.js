@@ -22,9 +22,16 @@ function resolveBackupDir() {
 function monthStartMs(year, monthIdx0) { return new Date(year, monthIdx0, 1, 0, 0, 0, 0).getTime(); }
 function localDateKey(epochMs) { const d = new Date(epochMs); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
 
+// Aufbewahrung in Tagen, wie sie wirklich gilt: fuer das Scan-Fenster hier, die Aufbewahrung
+// (scheduler.js Schritt 4) und GET /api/settings. POST /api/settings nimmt nur 1-3650 an; ein
+// anders gespeicherter Wert (direkt in der DB, RETENTION_DAYS beim Erststart, frueher per API)
+// wird hier geklemmt. Ohne Obergrenze lief candidateMonths() synchron ueber Millionen Monate und
+// blockierte den Dienst. Number statt parseInt: SQLite speichert eine direkt geschriebene Zahl
+// 1e21 als Text "1.0e+21", parseInt las das als 1 Tag. Nie 0/NaN (sonst brechen Fenster und Prune).
+const RETENTION_DAYS_MAX = 3650;
 function retentionDays() {
-  const n = parseInt(getSetting('retention_days') || '365', 10);
-  return (Number.isNaN(n) || n <= 0) ? 365 : n; // same guard as scheduler.js — never 0/NaN (else window/prune break)
+  const n = Math.floor(Number(getSetting('retention_days') || '365'));
+  return n >= 1 ? Math.min(RETENTION_DAYS_MAX, n) : 365;
 }
 function lookbackMs() { return (retentionDays() + 62) * DAY_MS; }
 
@@ -225,4 +232,4 @@ function computePruneFloor(nowMs) {
   return floor;
 }
 
-module.exports = { resolveBackupDir, monthStartMs, runBackupScan, runBackupNow, maybeRunBackupScan, computePruneFloor, readHealth, backupSummary };
+module.exports = { resolveBackupDir, monthStartMs, retentionDays, RETENTION_DAYS_MAX, runBackupScan, runBackupNow, maybeRunBackupScan, computePruneFloor, readHealth, backupSummary };
