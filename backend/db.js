@@ -117,6 +117,10 @@ function initDb() {
     )
   `);
 
+  // Schema-Regel: Migrationen nur ergaenzend (neue Tabellen, neue Spalten), nie umbenennen,
+  // loeschen oder umdeuten. Scheitert ein Update, setzt install.cmd nur den Code auf die
+  // Vorversion zurueck, nicht die Daten: die Vorversion laeuft dann auf dem Schema, das die
+  // neue schon angelegt hat, und muss es vertragen.
   // Idempotent column addition — already present on fresh DBs created after this change;
   // the guard makes it a no-op re-run for existing databases.
   const eventsCols = db.pragma('table_info(events)').map(c => c.name);

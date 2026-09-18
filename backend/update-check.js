@@ -273,6 +273,10 @@ async function cli(argv) {
   say(`Ordner lesbar:        ${error ? 'nein' : 'ja'}`);
   if (error) {
     say(`Ergebnis: ${describeReadError(dir, error)}`);
+    // describeReadError spricht vom Dienst (NetworkService, Computerkonto). Hier liest aber
+    // das Konto, das die Kommandozeile gestartet hat - bei update.cmd ein Administrator.
+    say('Hinweis: Diese Prüfung lief unter dem Konto, das sie gestartet hat, nicht als Dienst. '
+      + 'Fehlt ein Leserecht, dann diesem Konto.');
     return 2;
   }
   say(entries.length ? 'Einträge:' : 'Einträge: keine');

@@ -485,6 +485,10 @@ test('CLI: Ordner nicht lesbar -> Exit 2 mit Klartext, keine Uebergabedatei', ()
   assert.ok(!fs.existsSync(dir), 'das CLI legt den Ordner nicht an');
   assert.ok(r.stdout.includes(dir), r.stdout);
   assert.match(r.stdout, /nicht lesbar.*ENOENT/);
+  // Der Fehlertext spricht vom Dienst (NetworkService, Computerkonto). Die Kommandozeile
+  // liest aber unter dem Konto, das update.cmd startet; ohne diesen Satz suchte die IT
+  // ein fehlendes Leserecht am falschen Konto.
+  assert.match(r.stdout, /^Hinweis: .*Konto, das .* gestartet hat.*nicht .*Dienst/m);
 });
 
 test('CLI: falscher Aufruf -> Exit 3 (ohne Ordner, fremder Schalter, Schalter ohne Wert, Uebergabedatei im Ablageordner)', () => {
