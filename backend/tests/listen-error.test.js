@@ -87,6 +87,40 @@ test('server.js bei belegtem Port: Exit 1 mit klarer Meldung, weder Scheduler no
   }
 });
 
+// Standard-Logger ohne deps.log: auch diese Zeile landet in app.log und braucht den Zeitstempel.
+test('Standard-Logger: Meldung mit Zeitstempel in Ortszeit mit Offset', () => {
+  const lines = [];
+  const orig = console.error;
+  console.error = (...a) => lines.push(util.format(...a));
+  try {
+    handleListenError({ code: 'EADDRINUSE' }, { exit: () => {}, port: 3000 });
+  } finally {
+    console.error = orig;
+  }
+  assert.strictEqual(lines.length, 1);
+  assert.match(lines[0], /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d Port 3000 ist bereits belegt/);
+});
+
+// Alles, was der Dienst beim Start nach app.log schreibt — eigene Zeilen wie die von
+// dotenv —, muss mit Zeitstempel beginnen. Gewartet wird auf die letzte Startzeile:
+// die Update-Pruefung (aus) und den ersten, mangels Schluessel uebersprungenen Zyklus.
+test('server.js beim Start: jede Zeile im Log beginnt mit einem Zeitstempel', async () => {
+  const srv = startServer(0);
+  try {
+    const deadline = Date.now() + 8000;
+    while (!(/Skipping sync/.test(srv.output()) && /Update-Prüfung/.test(srv.output()))) {
+      assert.ok(Date.now() < deadline, `Startzeilen unvollständig, Ausgabe:\n${srv.output()}`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  } finally {
+    srv.child.kill('SIGTERM');
+    await srv.closed;
+  }
+  const lines = srv.output().split(/\r?\n/).filter(Boolean);
+  const bare = lines.filter((l) => !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d /.test(l));
+  assert.deepStrictEqual(bare, [], `Zeilen ohne Zeitstempel:\n${bare.join('\n')}`);
+});
+
 test('server.js bei freiem Port: Scheduler startet, und zwar erst nach dem Bind', async () => {
   const srv = startServer(0);
   try {

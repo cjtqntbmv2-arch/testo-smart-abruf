@@ -1053,3 +1053,101 @@ test('retention prune protects an un-backed-up month, deletes a backed-up one', 
   assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid='m'").get().c, 1); // un-backed May survives
   assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid='a'").get().c, 0); // backed-up April pruned
 });
+
+// ── Log für den Feldeinsatz: Herzschlag je Zyklus, gedrosselte Schrittfehler ──
+// app.log wird nur beim Dienststart rotiert. Vorher: Normalbetrieb schrieb nichts, ein
+// abgelaufener Schlüssel fünf Zeilen je Zyklus, ohne Zeitstempel.
+const util = require('node:util');
+const crypto = require('node:crypto');
+const STAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d /;
+
+async function captureLog(fn) {
+  const lines = [];
+  const orig = { log: console.log, warn: console.warn, error: console.error };
+  for (const k of Object.keys(orig)) console[k] = (...a) => lines.push(util.format(...a));
+  try { await fn(); } finally { Object.assign(console, orig); }
+  return lines;
+}
+
+// Frische DB mit einer Messstelle auf dev-1. closeDb() zuerst: der Retention-Test
+// oben lässt seine DB offen, und initDb() kehrt bei offener DB sofort zurück.
+function freshDbWithStation() {
+  closeDb();
+  initTestDb();
+  saveSetting('api_key', 'mock-key');
+  getDb().prepare("INSERT INTO stations (id, name, device_uuid) VALUES ('log','Log','dev-1')").run();
+}
+
+// Wie ein abgelaufener Schlüssel: jeder Cloud-Abruf scheitert mit 401, und die Cloud
+// hängt eine je Anfrage neue instance-ID an (testo-client.js übernimmt den rohen Body).
+function expiredKeyClient() {
+  const fail = (p) => async () => {
+    throw new Error(`HTTP error! status: 401 on ${p}: {"title":"UNAUTHORIZED","instance":"/${crypto.randomUUID()}"}`);
+  };
+  return {
+    fetchDeviceProperties: fail('/v3/devices/properties'),
+    fetchDeviceStatus: fail('/v3/devices/status'),
+    fetchMeasurements: fail('/v2/measurements'),
+    fetchMeasuringObjects: fail('/v1/measuring-objects'),
+    fetchAlarms: fail('/v3/alarms'),
+  };
+}
+
+test('Log: jeder Sync-Zyklus hinterlässt genau eine Herzschlagzeile mit Zeitstempel und Kennzahlen', async () => {
+  freshDbWithStation();
+  const client = new MockTestoClient([{
+    uuid: 'alarm-hb', serial_no: 'SN123', alarm_source_uuid: 'sensor-1', alarm_type: 'measurement alarm',
+    alarm_severity: 'Alarm', alarm_status: 'Alarm', alarm_condition_type: 'Upper limit', alarm_value: '28.5',
+    physical_property_name: 'Temperature', physical_extension: 'Unknown',
+    alarm_time: isoMinutesAgo(30), last_status_change_time: isoMinutesAgo(30)
+  }]);
+
+  const first = await captureLog(() => schedulerModule.runSyncCycle(client));
+  assert.strictEqual(first.length, 1, `eine Zeile je Zyklus erwartet:\n${first.join('\n')}`);
+  assert.match(first[0], STAMP);
+  assert.match(first[0], /Sync ok in \d+\.\d s: Messwerte \+1, Alarmmeldungen \+1\b/);
+
+  // Derselbe Abruf noch einmal: alles schon gespeichert, also nichts Neues.
+  const second = await captureLog(() => schedulerModule.runSyncCycle(client));
+  assert.strictEqual(second.length, 1, second.join('\n'));
+  assert.match(second[0], /Sync ok in \d+\.\d s: Messwerte \+0, Alarmmeldungen \+0\b/);
+  closeDb();
+});
+
+test('Log: Dauerfehler mit wechselnder instance-ID – je Schritt eine volle Zeile, danach nur Zählerstände, Herzschlag je Zyklus', async () => {
+  freshDbWithStation();
+  const lines = await captureLog(async () => {
+    for (let i = 0; i < 12; i++) await schedulerModule.runSyncCycle(expiredKeyClient());
+  });
+
+  assert.ok(lines.every((l) => STAMP.test(l)), `jede Zeile mit Zeitstempel:\n${lines.join('\n')}`);
+  const beats = lines.filter((l) => l.includes(' Sync mit Fehlern in '));
+  assert.strictEqual(beats.length, 12, `eine Herzschlagzeile je Zyklus:\n${lines.join('\n')}`);
+  assert.match(beats[0], /\(Geräteeigenschaften, Gerätestatus, Grenzwerte, Alarme\): Messwerte übersprungen/);
+  for (const p of ['/v3/devices/properties', '/v3/devices/status', '/v1/measuring-objects', '/v3/alarms']) {
+    const own = lines.filter((l) => l.includes(`status: 401 on ${p}:`));
+    assert.strictEqual(own.length, 2, `${p}: volle Zeile beim ersten Mal, dann nur "(10x)":\n${own.join('\n')}`);
+    assert.match(own[1], /\(10x\)$/);
+  }
+  assert.strictEqual(lines.length, 12 + 4 * 2, `vorher 5 Zeilen je Zyklus, jetzt Herzschlag + Drosselung:\n${lines.join('\n')}`);
+  closeDb();
+});
+
+test('Log: nach einem fehlerfreien Zyklus erscheint ein erneuter Ausfall wieder mit voller Zeile', async () => {
+  freshDbWithStation();
+  const ok = new MockTestoClient();
+  await captureLog(() => schedulerModule.runSyncCycle(ok)); // Ausgangslage: fehlerfrei
+
+  const lines = await captureLog(async () => {
+    for (let i = 0; i < 3; i++) await schedulerModule.runSyncCycle(expiredKeyClient());
+    await schedulerModule.runSyncCycle(ok);
+    await schedulerModule.runSyncCycle(expiredKeyClient());
+  });
+
+  const recovered = lines.filter((l) => l.includes(' Sync ok in '));
+  assert.strictEqual(recovered.length, 1, lines.join('\n'));
+  assert.match(recovered[0], /wieder fehlerfrei nach 3 Zyklen mit Fehlern/);
+  const alarmFull = lines.filter((l) => l.includes('status: 401 on /v3/alarms:'));
+  assert.strictEqual(alarmFull.length, 2, `erster und erneuter Ausfall je eine volle Zeile:\n${lines.join('\n')}`);
+  closeDb();
+});

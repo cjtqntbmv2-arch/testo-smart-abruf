@@ -1,7 +1,8 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
-require('dotenv').config({ path: path.join(__dirname, '../.env') });
+// quiet: dotenv 17 schreibt sonst bei jedem Start eine Zeile ohne Zeitstempel ins Log.
+require('dotenv').config({ path: path.join(__dirname, '../.env'), quiet: true });
 
 let db = null;
 

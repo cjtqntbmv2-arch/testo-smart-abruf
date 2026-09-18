@@ -3,8 +3,10 @@ const TestoClient = require('./testo-client');
 const { mapPhysicalProperty, buildDeviceBridge, buildSensorFilter, deriveOnline, deriveSystemConditions, classifyAlarm, alarmConditionDirection, parseAlarmConfiguration, systemAlarmText, measurementAlarmText } = require('./device-bridge');
 const { maybeRunBackupScan, computePruneFloor } = require('./backup-runner');
 const { reconcileEvents } = require('./event-reconcile');
+const { info, error, logThrottled, resetThrottled } = require('./log');
 
 let isSyncing = false;
+let cyclesWithErrors = 0; // Zyklen mit Fehlern seit dem letzten fehlerfreien — nur fuers Log
 let lastSyncTime = null;
 let lastSyncStatus = 'never';
 let lastSyncError = null;
@@ -70,12 +72,22 @@ async function runSyncCycle(customClient = null) {
   let hasError = false;
   let errorMsg = null;
   const diag = { devicesSeen: 0, sensorsSeen: 0, measurementsFetched: 0, measurementsUnmatched: 0, alarmsUnmatched: 0 };
+  // Fuers Log: Herzschlagzeile am Zyklusende (finally) und gedrosselte Schrittfehler —
+  // ein abgelaufener Schluessel schriebe sonst je Zyklus dieselben Zeilen, jede mit
+  // neuer instance-ID der Cloud (logThrottled rechnet die heraus).
+  const startedAt = Date.now();
+  const failedSteps = [];
+  let newMeasurements = 0, newAlarms = 0, measurementsSkipped = false;
+  const stepFailed = (step, e) => {
+    failedSteps.push(step);
+    logThrottled(`Sync ${step}: ${e.message || e}`);
+  };
 
   try {
     const apiKey = getSetting('api_key');
     const region = getSetting('api_region') || 'eu';
     if (!apiKey) {
-      console.log('Skipping sync: No API Key configured.');
+      info('Skipping sync: No API Key configured.');
       lastSyncTime = Date.now();
       lastSyncStatus = 'skipped';
       lastSyncError = 'No API Key configured';
@@ -91,7 +103,7 @@ async function runSyncCycle(customClient = null) {
     const deviceToStation = new Map();
     for (const s of stationRows) {
       if (deviceToStation.has(s.device_uuid)) {
-        console.warn(`Multiple stations share device_uuid ${s.device_uuid}; station '${s.id}' overrides '${deviceToStation.get(s.device_uuid)}'. One device maps to one station.`);
+        logThrottled(`Multiple stations share device_uuid ${s.device_uuid}; station '${s.id}' overrides '${deviceToStation.get(s.device_uuid)}'. One device maps to one station.`);
       }
       deviceToStation.set(s.device_uuid, s.id);
     }
@@ -104,7 +116,7 @@ async function runSyncCycle(customClient = null) {
       diag.devicesSeen = bridge.devices.size;
       diag.sensorsSeen = bridge.sensorToDevice.size;
     } catch (e) {
-      console.error('Error fetching device properties:', e.message);
+      stepFailed('Geräteeigenschaften', e);
       hasError = true; errorMsg = e.message;
     }
 
@@ -137,7 +149,7 @@ async function runSyncCycle(customClient = null) {
         }
       })();
     } catch (e) {
-      console.error('Error syncing device status:', e.message);
+      stepFailed('Gerätestatus', e);
       hasError = true; errorMsg = e.message;
     }
 
@@ -157,7 +169,7 @@ async function runSyncCycle(customClient = null) {
       }
       const filter = buildSensorFilter(assignedSensors);
       if (!filter) {
-        console.log('Skipping measurement sync: no sensors resolved for assigned devices.');
+        measurementsSkipped = true; // steht im Herzschlag, keine eigene Zeile je Zyklus
       } else {
         // Window starts at the most-lagging assigned station so none is under-fetched.
         // INSERT OR IGNORE dedupes rows re-fetched for fresher stations.
@@ -183,20 +195,24 @@ async function runSyncCycle(customClient = null) {
         });
         diag.measurementsFetched = measurements.length;
 
-        db.transaction(() => {
+        // Rueckgabe = tatsaechlich neu gespeicherte Zeilen (INSERT OR IGNORE zaehlt Dubletten
+        // nicht), erst nach dem Commit uebernommen — ein Rollback zaehlt nichts.
+        newMeasurements = db.transaction(() => {
+          let inserted = 0;
           for (const m of measurements) {
             const dev = bridge.sensorToDevice.get(m.sensor_uuid);
             const stationId = dev ? deviceToStation.get(dev) : null;
             const prop = mapPhysicalProperty(m.physical_property_name, m.physical_extension);
             if (!stationId || !prop) { diag.measurementsUnmatched++; continue; }
-            insertMeasurementStmt.run(
+            inserted += insertMeasurementStmt.run(
               m.uuid, stationId, parseTimestamp(m.timestamp), m.timestamp_local, m.measurement,
-              prop, m.physical_unit, m.channel_no, m.sensor_uuid, m.serial_no, m.model_code, m.processed_at);
+              prop, m.physical_unit, m.channel_no, m.sensor_uuid, m.serial_no, m.model_code, m.processed_at).changes;
           }
+          return inserted;
         })();
       }
     } catch (e) {
-      console.error('Error syncing measurements:', e.message);
+      stepFailed('Messwerte', e);
       hasError = true; errorMsg = e.message;
     }
 
@@ -235,7 +251,7 @@ async function runSyncCycle(customClient = null) {
         updatedAt: new Date().toISOString()
       }));
     } catch (e) {
-      console.error('Error syncing measuring-object limits:', e.message);
+      stepFailed('Grenzwerte', e);
       hasError = true; errorMsg = e.message;
     }
 
@@ -250,7 +266,7 @@ async function runSyncCycle(customClient = null) {
     try {
       const limitRows = db.prepare("SELECT metric, direction, severity, limit_value FROM limits").all();
       for (const r of limitRows) limitsCache.set(`${r.metric}:${r.direction}:${r.severity}`, r.limit_value);
-    } catch (e) { console.error('Could not load limits cache:', e.message); }
+    } catch (e) { stepFailed('Grenzwert-Cache', e); }
 
     const insertAlarmStmt = db.prepare(`
       INSERT INTO events (
@@ -297,6 +313,10 @@ async function runSyncCycle(customClient = null) {
         date_time_until: new Date(alarmUntil).toISOString()
       });
 
+      // Neue Alarmmeldungen fuer den Herzschlag: ON CONFLICT DO UPDATE meldet auch ein
+      // Update als Aenderung, daher Zeilenzahl vorher/nachher (der Schritt loescht nichts).
+      const countEvents = db.prepare('SELECT count(*) AS n FROM events');
+      const eventsBefore = countEvents.get().n;
       db.transaction(() => {
         for (const a of alarms) {
           const dev = bridge.serialToDevice.get(a.serial_no)
@@ -362,6 +382,7 @@ async function runSyncCycle(customClient = null) {
             a.serial_no || null);
         }
       })();
+      newAlarms = countEvents.get().n - eventsBefore;
 
       // Reconcile the transition-log feed: active flags and episode end_ts, both over
       // the same group key. See backend/event-reconcile.js for the grouping rationale.
@@ -375,7 +396,7 @@ async function runSyncCycle(customClient = null) {
         saveSetting('last_alarm_sync_time', String(alarmUntil));
       }
     } catch (e) {
-      console.error('Error syncing alarms:', e.message);
+      stepFailed('Alarme', e);
       hasError = true; errorMsg = e.message;
     }
 
@@ -403,7 +424,7 @@ async function runSyncCycle(customClient = null) {
           }
         })();
       } catch (e) {
-        console.error('Error backfilling thresholds:', e.message);
+        stepFailed('Schwellwert-Nachtrag', e);
         // Non-fatal: a backfill failure does not affect this cycle's primary data.
       }
     }
@@ -412,7 +433,7 @@ async function runSyncCycle(customClient = null) {
     try {
       maybeRunBackupScan(Date.now());
     } catch (e) {
-      console.error('Error running monthly backup scan:', e.message);
+      stepFailed('Monatssicherung', e);
       // Do NOT set hasError — a backup failure must not mark the data sync failed; surfaced via backup_health.
     }
 
@@ -429,7 +450,7 @@ async function runSyncCycle(customClient = null) {
       // Only purge closed (inactive) events; active alarms must survive regardless of age.
       db.prepare("DELETE FROM events WHERE start_ts < ? AND active = 0").run(effectiveCutoff);
     } catch (e) {
-      console.error('Error executing database retention cleanup:', e.message);
+      stepFailed('Aufbewahrung', e);
       hasError = true; errorMsg = e.message;
     }
 
@@ -438,13 +459,29 @@ async function runSyncCycle(customClient = null) {
     lastSyncError = hasError ? errorMsg : null;
     lastSyncDiag = diag;
   } catch (outerError) {
-    console.error('Unhandled error in sync cycle:', outerError.message);
+    stepFailed('Zyklus', outerError);
     lastSyncTime = Date.now();
     lastSyncStatus = 'error';
     lastSyncError = outerError.message;
     lastSyncDiag = diag;
   } finally {
     isSyncing = false;
+    // Herzschlag: genau eine Zeile je Zyklus (der uebersprungene ohne Schluessel hat seine
+    // eigene), sonst ist im Log nicht zu sehen, ob der Dienst sammelt oder stillsteht.
+    if (lastSyncStatus !== 'skipped') {
+      const secs = ((Date.now() - startedAt) / 1000).toFixed(1);
+      const figures = `${measurementsSkipped ? 'Messwerte übersprungen (keine Sensoren zu den Messstellen)' : `Messwerte +${newMeasurements}`}, Alarmmeldungen +${newAlarms}`;
+      if (failedSteps.length) {
+        cyclesWithErrors++;
+        info(`Sync mit Fehlern in ${secs} s (${failedSteps.join(', ')}): ${figures}`);
+      } else {
+        // Fehlerfrei: gedrosselte Schrittfehler freigeben, damit ein spaeterer neuer
+        // Ausfall wieder mit voller Zeile erscheint statt als Zaehlerstand.
+        resetThrottled('Sync ');
+        info(`Sync ok in ${secs} s: ${figures}${cyclesWithErrors ? ` – wieder fehlerfrei nach ${cyclesWithErrors} Zyklen mit Fehlern` : ''}`);
+        cyclesWithErrors = 0;
+      }
+    }
   }
 }
 
@@ -454,10 +491,10 @@ function startScheduler() {
   const intervalSetting = getSetting('poll_interval_sec') || '900';
   const intervalSec = parseInt(intervalSetting, 10);
   const validIntervalSec = isNaN(intervalSec) || intervalSec <= 0 ? 900 : intervalSec;
-  console.log(`Scheduler started. Syncing every ${validIntervalSec} seconds.`);
-  runSyncCycle().catch(console.error);
+  info(`Scheduler started. Syncing every ${validIntervalSec} seconds.`);
+  runSyncCycle().catch(error);
   timer = setInterval(() => {
-    runSyncCycle().catch(console.error);
+    runSyncCycle().catch(error);
   }, validIntervalSec * 1000);
 }
 

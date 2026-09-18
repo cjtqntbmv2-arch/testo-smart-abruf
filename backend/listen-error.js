@@ -1,8 +1,10 @@
 // Übersetzt ein 'error'-Event des HTTP-Servers in eine klare Logzeile + Exit≠0,
 // damit der Windows-Task-Scheduler ("Bei Fehler neu starten") auf einen
 // Port-Konflikt reagieren kann statt einen unklaren Stacktrace zu werfen.
+const { error } = require('./log');
+
 function handleListenError(err, deps = {}) {
-  const log = deps.log || console.error;
+  const log = deps.log || error;
   const exit = deps.exit || process.exit;
   const port = deps.port || process.env.PORT || 3000;
   const code = (err && err.code) || 'ohne Code';

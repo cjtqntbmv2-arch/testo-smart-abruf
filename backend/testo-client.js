@@ -1,4 +1,5 @@
 const zlib = require('zlib');
+const { warn } = require('./log');
 
 class TestoClient {
   constructor(apiKey, region = 'eu', opts = {}) {
@@ -66,7 +67,7 @@ class TestoClient {
   _mockModeActive() {
     if (!TestoClient.isMockCondition(this.apiKey)) return false;
     if (process.env.NODE_ENV !== 'test' && process.env.TESTO_MOCK === '1') {
-      console.warn('[testo-client] TESTO_MOCK=1 is set: returning fabricated mock data instead of real testo cloud data.');
+      warn('[testo-client] TESTO_MOCK=1 is set: returning fabricated mock data instead of real testo cloud data.');
     }
     return true;
   }

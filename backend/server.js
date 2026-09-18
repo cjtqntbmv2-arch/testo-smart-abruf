@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '../.env') });
+// quiet: dotenv 17 schreibt sonst bei jedem Start eine Zeile ohne Zeitstempel ins Log.
+require('dotenv').config({ path: path.join(__dirname, '../.env'), quiet: true });
 const dns = require('dns');
 dns.setDefaultResultOrder('ipv4first');
 const { initDb, getDb, getSetting, saveSetting, closeDb } = require('./db');
@@ -10,6 +11,7 @@ const { handleListenError } = require('./listen-error');
 const { getExportMetadata, exportStations } = require('./export-service');
 const { resolveBackupDir } = require('./backup-runner');
 const { startUpdateCheck, runUpdateCheck, getUpdateStatus } = require('./update-check');
+const { info, error, logThrottled } = require('./log');
 
 // Read application version from VERSION file; fall back to package.json
 const fs = require('fs');
@@ -43,20 +45,9 @@ if (storedApiRegion && !VALID_API_REGIONS.includes(storedApiRegion)) {
 const app = express();
 app.use(express.json());
 
-// app.log wird nur beim Dienststart rotiert, der Dienst läuft monatelang durch.
 // Fehler auf Request-Pfaden wiederholen sich mit dem Poll des Dashboards (alle 5 s,
-// 3 + 2×Messstellen Requests; die Systemansicht zusätzlich alle 10 s) — derselbe
-// Eintrag käme sonst zehntausendfach. Erstes Auftreten je Signatur: volle Ausgabe,
-// danach nur bei 10, 100, 1000, … Vorkommnissen eine Zählzeile. Das Log wächst
-// damit logarithmisch statt linear, ohne den Informationsgehalt zu verlieren.
-const logCounts = new Map(); // Signatur -> Anzahl
-function logThrottled(signature, firstLine = signature) {
-  if (logCounts.size > 200) logCounts.clear(); // Obergrenze für den Dauerbetrieb
-  const count = (logCounts.get(signature) || 0) + 1;
-  logCounts.set(signature, count);
-  if (count === 1) console.error(firstLine);
-  else if (/^10*$/.test(String(count))) console.error(`${signature} (${count}x)`);
-}
+// 3 + 2×Messstellen Requests; die Systemansicht zusätzlich alle 10 s) — sie laufen
+// deshalb über logThrottled() (backend/log.js), das auch der Scheduler nutzt.
 
 // Serve static frontend files
 app.use(express.static(path.join(__dirname, '../Smart Meter Dashboard')));
@@ -190,7 +181,7 @@ app.post('/api/stations', (req, res) => {
   `).run(id, name, location ?? null, mo_uuid ?? null, device_uuid ?? null);
 
   // Trigger immediate sync for the new station
-  runSyncCycle().catch(console.error);
+  runSyncCycle().catch(error);
   res.json({ success: true });
 });
 
@@ -538,7 +529,7 @@ app.post('/api/sync', (req, res) => {
   if (getSchedulerStatus().isSyncing) {
     return res.json({ started: false, reason: 'already-running' });
   }
-  runSyncCycle().catch(console.error);
+  runSyncCycle().catch(error);
   res.status(202).json({ started: true });
 });
 
@@ -571,7 +562,7 @@ const PORT = process.env.PORT || 3000;
 // Set HOST=0.0.0.0 (e.g. in .env) for opt-in LAN/tablet access (+ firewall rule).
 const HOST = process.env.HOST || '127.0.0.1';
 const server = app.listen(PORT, HOST, () => {
-  console.log(`Klima Dashboard server running on http://${HOST}:${PORT}`);
+  info(`Klima Dashboard ${appVersion} server running on http://${HOST}:${PORT}`);
   // Hintergrundjobs erst nach erfolgreichem Bind: eine zweite Instanz, die am belegten
   // Port scheitert (Windows-Task-Neustart, doppelter Start), darf vorher weder einen
   // Sync-Zyklus gegen die testo-Cloud noch Schreibzugriffe auf die gemeinsame DB anstoßen.

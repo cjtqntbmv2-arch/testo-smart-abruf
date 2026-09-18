@@ -298,7 +298,9 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 - `http://localhost:3000` zeigt das Dashboard ohne JS-Fehler in der Konsole.
 - `C:\ProgramData\TestoSmartAbruf\klima.db` existiert; WAL-Dateien (`-wal`, `-shm`) tauchen auf.
-- Logs werden nach `C:\ProgramData\TestoSmartAbruf\logs\app.log` geschrieben.
+- Logs werden nach `C:\ProgramData\TestoSmartAbruf\logs\app.log` geschrieben. Jede Zeile
+  beginnt mit einem Zeitstempel in Ortszeit mit Offset (`2026-09-18T14:03:12+02:00`), und
+  je Sync-Zyklus steht genau eine Zeile `Sync ok ...` bzw. `Sync mit Fehlern ...` darin.
 - **Reboot ohne Login** → Dienst startet automatisch, Server ist danach erreichbar.
 - `GET http://localhost:3000/api/system/status` liefert `200 OK` mit `scheduler`, `db`, `storage` alle ohne Fehler.
 
