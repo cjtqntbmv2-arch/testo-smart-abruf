@@ -12,6 +12,7 @@
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { getSetting } = require('./db');
+const { info, warn } = require('./log');
 
 // Genau der Name, den .github/workflows/windows-bundle.yml baut:
 //   testo-smart-abruf-<version>-win-x64.zip
@@ -40,8 +41,9 @@ function compareVersions(a, b) {
 
 // Hoechste Version im Ordner, die echt neuer ist als currentVersion - sonst null.
 // Wirft nie: fehlender Ordner, fehlende Rechte, totes Netzlaufwerk, kaputter Eintrag
-// ergeben alle "kein Update bekannt". Der Dienst hat Vorrang.
-async function findNewerVersion(dir, currentVersion) {
+// ergeben alle "kein Update bekannt". Der Dienst hat Vorrang. onError erfaehrt den
+// Grund, wenn der Ordner selbst nicht lesbar ist (fuers Log).
+async function findNewerVersion(dir, currentVersion, onError) {
   const current = parseVersion(currentVersion);
   if (!current) return null; // eigene Version unlesbar -> nichts melden
   let best = null;
@@ -59,7 +61,8 @@ async function findNewerVersion(dir, currentVersion) {
       const v = [Number(m[1]), Number(m[2]), Number(m[3])];
       if (compareVersions(v, current) > 0 && (!best || compareVersions(v, best) > 0)) best = v;
     }
-  } catch (_e) {
+  } catch (e) {
+    if (onError) onError(e);
     return null;
   }
   return best ? best.join('.') : null;
@@ -70,6 +73,16 @@ let timer = null;
 
 function getUpdateStatus() { return { ...state }; }
 
+// Ins Log nur, wenn sich der Zustand aendert (Pruefung alle 6 h, zusaetzlich bei jedem
+// Speichern des Ordners): so steht "nicht lesbar" mit Grund genau einmal da, und
+// "erreichbar, nichts Neueres" unterscheidet sich im Log vom toten Netzlaufwerk.
+let loggedState = null;
+function logOnChange(key, line, log = info) {
+  if (key === loggedState) return;
+  loggedState = key;
+  log(line);
+}
+
 // Einmalige Pruefung. Liest den Ablageordner bei jedem Lauf neu aus den Einstellungen,
 // damit eine Aenderung ohne Dienstneustart greift.
 async function runUpdateCheck(currentVersion) {
@@ -77,13 +90,24 @@ async function runUpdateCheck(currentVersion) {
     const dir = (getSetting('update_dir') || '').trim();
     if (!dir) {
       state = { enabled: false, updateAvailable: false, latestVersion: null, checkedAt: Date.now() };
+      logOnChange('aus', 'Update-Prüfung aus (kein Ablageordner eingestellt)');
       return getUpdateStatus();
     }
-    const newer = await findNewerVersion(dir, currentVersion);
+    let readError = null;
+    const newer = await findNewerVersion(dir, currentVersion, (e) => { readError = e; });
     state = { enabled: true, updateAvailable: !!newer, latestVersion: newer, checkedAt: Date.now() };
-  } catch (_e) {
+    if (readError) {
+      logOnChange(`fehler|${dir}|${readError.code || readError.message}`,
+        `Update-Prüfung: Ablageordner "${dir}" nicht lesbar (${readError.message})`, warn);
+    } else if (newer) {
+      logOnChange(`neu|${dir}|${newer}`, `Update-Prüfung: neuere Fassung ${newer} im Ablageordner "${dir}" (laufend ${currentVersion})`);
+    } else {
+      logOnChange(`aktuell|${dir}`, `Update-Prüfung: Ablageordner "${dir}" erreichbar, nichts Neueres als ${currentVersion}`);
+    }
+  } catch (e) {
     // Auch ein Fehler beim Lesen der Einstellung darf den Dienst nicht stoeren.
     state = { ...state, checkedAt: Date.now() };
+    logOnChange(`fehler|${e.message}`, `Update-Prüfung fehlgeschlagen: ${e.message}`, warn);
   }
   return getUpdateStatus();
 }

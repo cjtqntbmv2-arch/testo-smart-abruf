@@ -69,3 +69,75 @@ test('Cascade delete testing', () => {
 
   closeDb();
 });
+
+// ── Aufgabe 7 (V28): ein Gerät gehört zu höchstens einer Messstelle ─────────
+// Eine Installation von vor dem UNIQUE-Index kann schon eine Dublette tragen; der Dienst muss
+// trotzdem starten. Datei-DB, damit ein zweiter Start dieselben Daten sieht. Die settings-Zeile
+// vorab verhindert den Erststart-Seed (er schriebe TESTO_API_KEY aus der Umgebung hinein).
+const UNIQ_INDEX = 'idx_stations_device_uuid';
+function withFileDb(fn) {
+  const os = require('node:os');
+  const Database = require('better-sqlite3');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dbuniq-'));
+  const file = path.join(dir, 'alt.db');
+  const raw = new Database(file);
+  raw.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT); INSERT INTO settings VALUES ('api_key', '')");
+  raw.close();
+  const prev = process.env.DB_PATH;
+  closeDb();
+  process.env.DB_PATH = file;
+  try { return fn(); } finally {
+    closeDb();
+    process.env.DB_PATH = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+// Ein Dienststart: initDb() auf der Datei, Warnzeilen mitgeschnitten.
+function start() {
+  closeDb();
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  try { initDb(); } finally { console.warn = orig; }
+  return warned;
+}
+const hasIndex = () => !!getDb().prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").get(UNIQ_INDEX);
+
+test('initDb: Bestand mit doppelter device_uuid startet trotzdem – Warnung nennt UUID und Messstellen, Index fehlt; nach Bereinigung entsteht er beim nächsten Start', () => withFileDb(() => {
+  start();
+  const db = getDb();
+  db.exec(`DROP INDEX IF EXISTS ${UNIQ_INDEX}`); // Stand vor diesem Index
+  const ins = db.prepare('INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)');
+  ins.run('uwl', 'UWL', 'dev-dup');
+  ins.run('pruef-06', 'Teststelle', 'dev-dup');
+  ins.run('essbro', 'Büro', 'dev-solo');
+
+  let warned;
+  assert.doesNotThrow(() => { warned = start(); }, 'eine Alt-Dublette darf den Dienststart nicht verhindern');
+  assert.strictEqual(hasIndex(), false, 'mit Dublette kein Index');
+  const line = warned.find((l) => l.includes('dev-dup'));
+  assert.ok(line, `Warnzeile mit der UUID erwartet, bekommen: ${JSON.stringify(warned)}`);
+  assert.match(line, /uwl \(UWL\), pruef-06 \(Teststelle\)/, 'nennt beide Messstellen, zuerst angelegte vorn');
+  assert.ok(!line.includes('essbro'), line);
+
+  // Bereinigt (Teststelle vom Gerät gelöst) → der nächste Start legt den Index an.
+  getDb().prepare("UPDATE stations SET device_uuid = NULL WHERE id = 'pruef-06'").run();
+  assert.deepStrictEqual(start(), []);
+  assert.strictEqual(hasIndex(), true);
+}));
+
+test('initDb: ohne Dublette entsteht der Teil-UNIQUE-Index, ein zweiter Start ist idempotent; "kein Gerät" (NULL, "", Leerzeichen) bleibt mehrfach erlaubt', () => withFileDb(() => {
+  assert.deepStrictEqual(start(), []);
+  assert.strictEqual(hasIndex(), true, 'Index nach dem ersten Start');
+  const ins = getDb().prepare('INSERT INTO stations (id, name, device_uuid) VALUES (?, ?, ?)');
+  ins.run('a', 'A', 'dev-1');
+  // Altbestände tragen für "kein Gerät" teils '' statt NULL: nichts davon darf kollidieren.
+  for (const [id, uuid] of [['n1', null], ['n2', null], ['e1', ''], ['e2', ''], ['w1', '  '], ['w2', '  ']]) {
+    assert.doesNotThrow(() => ins.run(id, id, uuid), `${id}: ${JSON.stringify(uuid)}`);
+  }
+  assert.throws(() => ins.run('b', 'B', 'dev-1'), { code: 'SQLITE_CONSTRAINT_UNIQUE' });
+
+  assert.deepStrictEqual(start(), [], 'zweiter Start: keine Warnung');
+  assert.strictEqual(hasIndex(), true, 'Index nach dem zweiten Start');
+  assert.strictEqual(getDb().prepare('SELECT count(*) c FROM stations').get().c, 7);
+}));

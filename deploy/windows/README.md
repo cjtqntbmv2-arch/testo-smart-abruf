@@ -140,11 +140,22 @@ Die manuelle Schritt-für-Schritt-Anleitung unten bleibt als Fallback/Transparen
 - **Reboot ohne Login** → Server wieder erreichbar.
 - Liveness/Health: `GET http://localhost:3000/api/system/status` (Scheduler/DB/Storage).
   In der Aufgabenplanung zusaetzlich Spalte "Letztes Ausfuehrungsergebnis".
-- Crash-Restart: `taskkill /IM node.exe /F` → Task startet Node binnen ~1 Min neu.
+- Crash-Restart: nur den Node-Prozess des Dienstes beenden (derselbe Befehl wie in
+  `setup.ps1`; andere Node-Programme der Maschine bleiben unberuehrt) → Task startet Node
+  binnen ~1 Min neu:
+  ```powershell
+  Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'backend\\server\.js' } | Invoke-CimMethod -MethodName Terminate | Out-Null
+  ```
+  Als Administrator ausfuehren: ohne Admin-Rechte liefert Windows die Kommandozeile des
+  Dienstprozesses nicht, der Filter faende ihn dann nicht.
 - Task immer ueber `Stop-ScheduledTask -TaskName TestoSmartAbruf` stoppen — das
-  beendet den Prozessbaum (cmd + node). Danach pruefen: `tasklist | findstr node`
-  zeigt **kein** verwaistes `node.exe`; sonst haelt es Port 3000 und der naechste
-  Start scheitert mit `EADDRINUSE` → ggf. `taskkill /IM node.exe /F`.
+  beendet den Prozessbaum (cmd + node). Danach pruefen, dass kein verwaistes `node.exe`
+  des Dienstes laeuft; diese Abfrage darf nichts ausgeben:
+  ```powershell
+  Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'backend\\server\.js' }
+  ```
+  Sonst haelt es Port 3000 und der naechste Start scheitert mit `EADDRINUSE` → mit dem
+  Befehl aus "Crash-Restart" beenden.
 
 ## LAN-Zugriff (optional, IT-Freigabe)
 
@@ -221,6 +232,144 @@ Der Meldungstext eines Alarms behaelt absichtlich die alte Schreibweise
 (`Luftfeuchte zu hoch`, `Druck zu niedrig`): diese Texte sind in der Datenbank
 gespeichert, eine Umbenennung wuerde die Historie nicht mitziehen.
 
+## Datensicherung und Ruecksicherung
+
+Der Dienst sichert auf zwei Wegen, beide im Backup-Verzeichnis (Standard
+`C:\ProgramData\TestoSmartAbruf\backups`, abweichend per Einstellung `backup_dir`):
+
+- **Monats-ZIPs** (`<safeName>_<stationId>_<YYYY-MM>.zip`): CSV je Messstelle und
+  abgeschlossenem Monat, zum Lesen in Excel. **Kein Backup** - aus ihnen laesst sich keine
+  Datenbank wiederherstellen (es fehlen Einstellungen, Grenzwerte, Geraetezuordnung und
+  die IDs der Messwerte).
+- **Taeglicher Datenbank-Abzug** im Unterordner `datenbank`: eine vollstaendige Kopie der
+  Datenbank - Messwerte bis zum Zeitpunkt des Abzugs (auch des laufenden Monats),
+  Meldungen, Grenzwerte, Messstellen samt Geraetezuordnung, Einstellungen. **Nur dieser
+  Abzug ist zurueckspielbar.**
+
+Zum Datenbank-Abzug:
+
+- **Name:** `klima-JJJJ-MM-TT.db`, Datum in Ortszeit, eine Datei je Tag.
+- **Zeitpunkt:** mit dem taeglichen Backup-Lauf im ersten Sync-Zyklus eines Tages, noch
+  vor dem Loeschen alter Messwerte (Aufbewahrung); nur bei eingeschalteter Sicherung
+  (`backup_enabled`). Scheitert er, versucht der Dienst es im naechsten Zyklus erneut.
+  Zustand unter `GET /api/system/status`, Feld `backup.health`: `lastDbSnapshot` und
+  `lastDbSnapshotAt` (letzter gelungener Abzug), `dbSnapshotError`.
+- **Aufbewahrung:** die sieben neuesten Tage. Ein zweiter Lauf am selben Tag ersetzt die
+  Datei dieses Tages. Aeltere Abzuege loescht der Dienst erst, nachdem ein neuer gelungen
+  ist, jeden einzeln (ein gesperrter haelt die uebrigen nicht auf; er steht dann in
+  `dbSnapshotPruneError`); andere Dateien im Ordner fasst er nicht an. Reste eines
+  abgebrochenen Abzugs (`klima-JJJJ-MM-TT.db.tmp`, `...tmp-journal`) raeumt der naechste
+  Lauf weg.
+- **Schutz der Messwerte:** Solange die Sicherung eingeschaltet ist, loescht die
+  Aufbewahrung (`retention_days`) nichts, was juenger ist als der letzte gelungene Abzug,
+  und vor dem ersten gelungenen Abzug gar nichts. Scheitern die Abzuege dauerhaft, waechst
+  die Datenbank also weiter, statt Ungesichertes zu loeschen.
+- **Platzbedarf:** etwa sieben mal die Datenbankgroesse, kurz vor dem Loeschen des
+  aeltesten acht. Gemessen: 45 MB Datenbank ergeben einen Abzug von 44 MB, zusammen gut
+  300 MB; waechst mit der Datenbank.
+- **Schutz:** Der Abzug enthaelt alle Einstellungen **einschliesslich des API-Schluessels**
+  - gewollt, damit nach dem Zurueckspielen alles ohne Nacharbeit laeuft. Den
+  Sicherungsordner deshalb schuetzen wie die Datenbank selbst; liegt er auf einer
+  Netzfreigabe, diese nur fuer Berechtigte lesbar freigeben. Die Freigabe ist fuer den
+  Sicherungsordner erlaubt, die Datenbank selbst muss auf der lokalen Platte bleiben (WAL).
+- Jede Installation braucht ihren **eigenen** Sicherungsordner: die Abzuege heissen nur
+  nach dem Datum, zwei Dienste im selben Ordner ueberschrieben sich gegenseitig.
+
+### Jetzt sichern
+
+Einstellungen -> Datenexport, Abschnitt "Datensicherung", Knopf **Jetzt sichern**
+(technisch `POST /api/backup`): fuehrt den Lauf sofort aus - Datenbank-Abzug und fehlende
+Monats-ZIPs -, unabhaengig von der Tagesdrossel und auch bei ausgeschaltetem automatischen
+Backup (der Schalter gilt nur dem taeglichen Lauf). Gedacht fuer die Sicherung vor einem
+Update und fuer den Nachweis nach einem behobenen Sicherungsfehler: die Fehleranzeige
+verschwindet sofort. Der Lauf **ersetzt den Abzug des heutigen Tages**, aeltere Abzuege
+bleiben; die Oberflaeche fragt deshalb vorher nach. `logs\app.log` erhaelt genau eine
+Zeile, `Sicherung (manuell) ok: Abzug klima-JJJJ-MM-TT.db, N ZIP neu` bzw.
+`Sicherung (manuell) fehlgeschlagen: <Ursache>`.
+
+**Nach einem Datenverlust nicht "Jetzt sichern" druecken** - das ersetzt den heutigen
+Abzug durch den beschaedigten Stand; aeltere Abzuege bleiben. Stattdessen zuruecksichern
+(naechster Abschnitt).
+
+### Sicherungsfehler erkennen
+
+Scheitert ein Lauf (z. B. Zielordner nicht beschreibbar), steht das an vier Stellen:
+
+- Hinweisleiste unter der Kopfzeile des Dashboards: `Datensicherung fehlgeschlagen: <Ursache>`.
+- Einstellungen -> Uebersicht, Karte "Datensicherung": `Fehler` mit Ursache und dem letzten
+  gelungenen Abzug; ebenso im Abschnitt "Datensicherung" unter Datenexport. Alle drei
+  aktualisieren sich alle 10 Sekunden.
+- `logs\app.log`: der Herzschlag des Zyklus lautet `Sync mit Fehlern ... (Sicherung): ...`,
+  die Ursache steht gedrosselt davor (`Sync Sicherung: ...` - beim ersten Mal voll, danach
+  nur bei 10, 100, 1000 Wiederholungen eine Zaehlzeile). Ein gelungener Tageslauf steht als
+  `Sicherung ok (Abzug ..., N ZIP neu)` im Herzschlag.
+- `GET /api/system/status`, Feld `backup.health.status` = `error`, Text in `lastError`.
+
+Ein gescheiterter Lauf - auch ein gescheitertes "Jetzt sichern" - verbraucht den
+Tagesversuch nicht: jeder Sync-Zyklus versucht es erneut. Nach Behebung der Ursache
+verschwindet die Meldung also spaetestens mit dem naechsten Zyklus (Abfrage-Intervall),
+sofort mit "Jetzt sichern"; im Log steht dann `Sync ok ..., Sicherung ok (...) - wieder
+fehlerfrei nach N Zyklen mit Fehlern`.
+
+### Datenbank zuruecksichern
+
+Aus einer **Administrator**-PowerShell:
+
+1. Dienst stoppen und einen verbliebenen Node-Prozess des Dienstes gezielt beenden (nur
+   den mit `backend\server.js`, andere Node-Programme bleiben unberuehrt; derselbe Befehl
+   wie in `setup.ps1`):
+   ```powershell
+   Stop-ScheduledTask -TaskName TestoSmartAbruf
+   Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'backend\\server\.js' } | Invoke-CimMethod -MethodName Terminate | Out-Null
+   Start-Sleep -Seconds 2     # Windows gibt die Dateien frei
+   ```
+2. Den jetzigen Stand beiseitelegen - **alle drei Dateien zusammen verschieben**, nicht
+   loeschen:
+   ```powershell
+   cd C:\ProgramData\TestoSmartAbruf
+   mkdir vor-ruecksicherung
+   Move-Item klima.db, klima.db-wal, klima.db-shm vor-ruecksicherung -ErrorAction SilentlyContinue
+   dir klima.db*              # muss leer sein
+   ```
+   Warum: `Stop-ScheduledTask` beendet Node hart, ohne dass die Datenbank sauber
+   geschlossen wird; `klima.db-wal` und `klima.db-shm` bleiben liegen und gehoeren zur
+   **alten** Datenbank. Laege die alte `-wal` neben dem eingespielten Abzug, spielte
+   SQLite sie beim naechsten Oeffnen in ihn hinein: die Datei oeffnet ohne Fehlermeldung,
+   ist aber beschaedigt (im Funktionstest: 48.563 statt 171.198 Messwerte,
+   `integrity_check` meldet `malformed`). Zusammen verschoben bleibt der alte Stand
+   dagegen vollstaendig lesbar.
+3. Gewuenschten Abzug als `klima.db` einspielen - **kopieren**, nicht verschieben: der
+   Abzug bleibt erhalten, und die Kopie erbt die Rechte des Datenordners fuer
+   NetworkService (bei eigenem `backup_dir` den Quellpfad anpassen):
+   ```powershell
+   Copy-Item backups\datenbank\klima-2026-09-18.db klima.db
+   ```
+4. Dienst starten und pruefen:
+   ```powershell
+   Start-ScheduledTask -TaskName TestoSmartAbruf
+   ```
+   Das Dashboard zeigt die Messstellen mit Werten, `logs\app.log` meldet nach dem ersten
+   Zyklus `Sync ok ...`, `GET http://localhost:3000/api/system/status` ist ohne Fehler.
+   Dieser erste Zyklus schreibt auch den Abzug des heutigen Tages neu (eine vorhandene
+   Datei dieses Tages wird ersetzt) - der Stand vor der Ruecksicherung liegt in
+   `vor-ruecksicherung`. Den Ordner erst loeschen, wenn alles stimmt.
+
+**Was zwischen Abzug und Ruecksicherung geschah:**
+
+- Messwerte holt der erste Sync-Zyklus nach dem Start aus der testo-Cloud nach, soweit
+  die Cloud sie noch liefert: er fragt ab dem letzten gespeicherten Messwert bis jetzt an
+  (bei mehreren Messstellen ab dem am weitesten zurueckliegenden).
+- Alarme und Meldungen ebenso, ab dem Abrufstand, der mit dem Abzug zurueckkommt
+  (`last_alarm_sync_time`), mindestens 26 Stunden zurueck. Geraetestatus und Grenzwerte
+  liest ohnehin jeder Zyklus neu.
+- **Nicht** nachgeholt wird, was nur lokal entstand: Einstellungen sowie seit dem Abzug
+  angelegte oder geaenderte Messstellen und Zuordnungen stehen wieder auf dem Stand des
+  Abzugs und sind von Hand zu wiederholen.
+- **Achtung Aufbewahrung:** Der Abzug bringt auch die Aufbewahrungsdauer
+  (`retention_days`) mit. Wer zuruecksichert, weil eine zu kleine Aufbewahrung Messwerte
+  geloescht hat, waehlt einen Abzug von **vor** dieser Aenderung - sonst loescht der erste
+  Zyklus nach dem Start erneut.
+
 ## Deinstallation
 
 `deploy\windows\uninstall-task.ps1` entfernt den geplanten Task wieder (stoppt ihn,
@@ -240,7 +389,8 @@ powershell -ExecutionPolicy Bypass -File deploy\windows\uninstall-task.ps1
   `C:\ProgramData\TestoSmartAbruf\klima.db` (+ `-wal`/`-shm`).
 - Die Logs: `C:\ProgramData\TestoSmartAbruf\logs\app.log` (plus rotierte
   `.bak`-Dateien) und `logs\setup.log`.
-- Die monatlichen Backup-ZIPs: standardmaessig `C:\ProgramData\TestoSmartAbruf\backups`,
+- Die monatlichen Backup-ZIPs und im Unterordner `datenbank` die taeglichen
+  Datenbank-Abzuege: standardmaessig `C:\ProgramData\TestoSmartAbruf\backups`,
   abweichend falls unter Einstellungen ein eigener `backup_dir` gesetzt wurde.
 - Eine eingerichtete Firewall-Regel fuer LAN-Zugriff (Abschnitt "LAN-Zugriff",
   `New-NetFirewallRule -DisplayName "TestoSmartAbruf 3000"`).
@@ -298,7 +448,9 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
 
 - `http://localhost:3000` zeigt das Dashboard ohne JS-Fehler in der Konsole.
 - `C:\ProgramData\TestoSmartAbruf\klima.db` existiert; WAL-Dateien (`-wal`, `-shm`) tauchen auf.
-- Logs werden nach `C:\ProgramData\TestoSmartAbruf\logs\app.log` geschrieben.
+- Logs werden nach `C:\ProgramData\TestoSmartAbruf\logs\app.log` geschrieben. Jede Zeile
+  beginnt mit einem Zeitstempel in Ortszeit mit Offset (`2026-09-18T14:03:12+02:00`), und
+  je Sync-Zyklus steht genau eine Zeile `Sync ok ...` bzw. `Sync mit Fehlern ...` darin.
 - **Reboot ohne Login** → Dienst startet automatisch, Server ist danach erreichbar.
 - `GET http://localhost:3000/api/system/status` liefert `200 OK` mit `scheduler`, `db`, `storage` alle ohne Fehler.
 
@@ -322,12 +474,34 @@ Diese Punkte muessen auf der Zielmaschine (Windows 11 x64, NetworkService) erfue
   (kein Ueberschreiben, kein Duplikat) - erkennbar am unveraenderten Zeitstempel
   (`LastWriteTime`) der ZIP nach dem zweiten Lauf.
 - **Leer-Schutz:** Monate ohne Messdaten erzeugen keine ZIP.
-- **Prune-Sicherheit:** Messdaten werden erst geloescht, wenn sie in einer ZIP gesichert sind. Nicht gesicherte Monate (z. B. weil `backup_enabled=false` war) werden **nicht** vorzeitig geloescht (`effectiveCutoff = min(retentionCutoff, computePruneFloor)`).
-- Der laufende Monat wird nie gesichert oder geloescht (Cutoff liegt immer vor Monatsbeginn des aktuellen Monats).
+- **Prune-Sicherheit:** Bei eingeschalteter Sicherung loescht die Aufbewahrung nur, was gesichert ist: nichts aus einem Monat ohne ZIP (z. B. weil `backup_enabled=false` war) und nichts, was juenger ist als der letzte gelungene Datenbank-Abzug (`backup.health.lastDbSnapshotAt`); vor dem ersten gelungenen Abzug gar nichts (`effectiveCutoff = min(retentionCutoff, computePruneFloor)`). Bei ausgeschalteter Sicherung gilt nur `retention_days`.
+- Der laufende Monat wird nie als ZIP gesichert. Die Aufbewahrung kann auch in ihm loeschen (bei kleiner `retention_days`), aber nur, was schon in einem gelungenen Datenbank-Abzug steht.
+
+### Datenbank-Abzug
+
+- Nach dem ersten Backup-Lauf eines Tages liegt `backups\datenbank\klima-JJJJ-MM-TT.db`
+  mit dem heutigen Datum (Ortszeit) vor; `GET /api/system/status` zeigt ihn unter
+  `backup.health.lastDbSnapshot`. Nach einem Update erscheint der erste Abzug erst am
+  Folgetag, wenn der Backup-Lauf des Tages schon vor dem Update stattfand.
+- Ab dem achten Abzug bleibt es bei sieben Dateien im Ordner `datenbank`: der aelteste
+  Tag verschwindet, sobald der neue geschrieben ist.
+- **Ruecksicherungsprobe:** den Weg aus "Datenbank zuruecksichern" einmal durchspielen.
+  Danach zeigt das Dashboard dieselben Messstellen mit Werten wie vorher, und
+  `logs\app.log` meldet `Sync ok ...`.
+- **Jetzt sichern:** Einstellungen -> Datenexport -> "Jetzt sichern", Rueckfrage
+  bestaetigen. Danach traegt der heutige `backups\datenbank\klima-JJJJ-MM-TT.db` die
+  aktuelle Uhrzeit (`LastWriteTime`), die Zeile "Letzter Datenbank-Abzug" zeigt
+  "gerade eben", und `logs\app.log` hat genau eine neue Zeile `Sicherung (manuell) ok: ...`.
+- **Sicherungsfehler sichtbar:** dem Dienstkonto (NetworkService) das Schreibrecht auf den
+  Sicherungsordner entziehen, "Jetzt sichern" druecken. Die Fehlermeldung erscheint am
+  Knopf, binnen 10 Sekunden auch als Hinweisleiste unter der Kopfzeile und als Karte
+  "Datensicherung" (`Fehler`) in der Uebersicht - ohne Neuladen der Seite; im Log
+  `Sicherung (manuell) fehlgeschlagen: ...`. Recht zurueckgeben, erneut "Jetzt sichern":
+  Hinweisleiste und Fehlerkarte verschwinden binnen 10 Sekunden.
 
 ### Versionscheck
 
-- `GET /api/system/status` → Feld `appVersion` lautet `0.16.1`.
+- `GET /api/system/status` → Feld `appVersion` lautet `0.17.0`.
 - Alle App-`<script src="…?v=…">`-Tags **und der `dashboard.css`-`<link>`** im `Klima Dashboard.html` tragen dieselbe Version wie `appVersion` (Browserkonsole: keine 404 auf `.js`/`.jsx`/`.css`-Ressourcen). Die drei `vendor/`-Tags tragen bewusst keinen Cache-Buster. **Ein 404 auf `dashboard.css` ist der schlimmste Fall dieser Liste** — die Seite laedt dann vollstaendig unformatiert, ohne Fehlermeldung.
 
 ### Update-Hinweis (ab v0.15.0)

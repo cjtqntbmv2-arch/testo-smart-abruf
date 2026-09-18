@@ -1,4 +1,4 @@
-// Pure, side-effect-free SVG-Pfadmathematik der Diagramme.
+// Pure, side-effect-free SVG-Pfad- und Skalenmathematik der Diagramme.
 // Browser: als <script> vor charts.jsx geladen, haengt an window.
 // Node: per require() in Tests genutzt. Kein DOM / React / fetch / timer hier.
 (function () {
@@ -56,11 +56,46 @@
     return d;
   }
 
-  const api = { xPositions, buildPath, buildAreaPath };
+  // Skalenenden { lo, hi } des Tachometers.
+  // Sind fuer die Messgroesse Grenzwerte konfiguriert (GET /api/limits - sie gelten je
+  // Messgroesse, nicht je Messstelle), spannt die Skala diese auf, sonst die gueltigen
+  // Messwerte. Der angezeigte Wert (letztes Element der Reihe) liegt immer innerhalb.
+  // Dazu 10 % Rand je Seite, dann nach aussen auf einen runden Schritt (1/2/5 x 10^k,
+  // nie feiner als `decimals`): die Enden sind als Text mit den Dezimalstellen der
+  // Messgroesse exakt - frueher standen hier Rohwerte wie 21.461187, deren erste und
+  // letzte Ziffer am SVG-Rand abgeschnitten wurden. Nichts da: 0..100 wie bisher.
+  function gaugeScale(series, limits, metricId, decimals) {
+    const values = (series || []).filter(Number.isFinite);
+    const limitValues = (Array.isArray(limits) ? limits : [])
+      .filter((l) => l && l.metric === metricId && Number.isFinite(l.limitValue))
+      .map((l) => l.limitValue);
+    const v = series && series[series.length - 1];
+    const points = limitValues.length ? limitValues.concat(Number.isFinite(v) ? [v] : []) : values;
+    if (!points.length) return { lo: 0, hi: 100 };
+    let lo = points.reduce((a, b) => Math.min(a, b));
+    let hi = points.reduce((a, b) => Math.max(a, b));
+    if (lo === hi) { lo -= 1; hi += 1; }
+    const margin = (hi - lo) * 0.1;
+    lo -= margin;
+    hi += margin;
+    const raw = (hi - lo) / 5;
+    const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+    const f = raw / pow;
+    const step = Math.max((f >= 5 ? 5 : f >= 2 ? 2 : 1) * pow, Math.pow(10, -decimals));
+    // floor/ceil runden nach aussen; toFixed entfernt nur das Gleitkomma-Rauschen der
+    // Multiplikation (21.200000000000003), der Rand haelt den Wert weit davon weg.
+    return {
+      lo: Number((Math.floor(lo / step) * step).toFixed(decimals)),
+      hi: Number((Math.ceil(hi / step) * step).toFixed(decimals)),
+    };
+  }
+
+  const api = { xPositions, buildPath, buildAreaPath, gaugeScale };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') {
     window.xPositions = xPositions;
     window.buildPath = buildPath;
     window.buildAreaPath = buildAreaPath;
+    window.gaugeScale = gaugeScale;
   }
 })();

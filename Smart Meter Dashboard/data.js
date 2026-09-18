@@ -122,6 +122,26 @@
     }
   }
 
+  // Gegenstück für POST mit JSON-Body: bei einem Nicht-2xx gewinnt der Klartext des
+  // Backends ({ error }), sonst errorMsg. Antwort: geparstes JSON, bei leerem Body {}.
+  async function postJson(url, body, errorMsg) {
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      throw friendlyError(e, errorMsg);
+    }
+    if (!res.ok) {
+      let msg = errorMsg;
+      try { msg = (await res.json()).error || msg; } catch (_) {}
+      throw new Error(msg, { cause: { status: res.status, statusText: res.statusText } });
+    }
+    return res.json().catch(() => ({}));
+  }
+
   // Map one backend events-row to the frontend event shape. Single source of truth
   // for both the 5s poll and on-demand history fetches.
   function mapBackendEvent(e) {
@@ -265,32 +285,17 @@
           abshumid:    finalA,
         };
 
+        // Keine Skala hier: die Tachometer-Skala rechnet gaugeScale() (chart-logic.js) beim
+        // Zeichnen aus Grenzwerten bzw. Reihe; Linien-/Sparkline-Diagramme skalieren selbst.
         const metrics = {};
         for (const mid of METRIC_IDS) {
           const mMeta = META[mid];
           const mData = stationMetrics[mid] || {};
-          const validNums = (allSeries[mid] || []).filter(v => typeof v === 'number' && !Number.isNaN(v));
-          let lo = validNums.length > 0 ? Math.min(...validNums) : 0;
-          let hi = validNums.length > 0 ? Math.max(...validNums) : 100;
-          
-          if (lo === hi) {
-            // Provide a default span if all values are identical to prevent division by zero
-            lo = lo - 1;
-            hi = hi + 1;
-          }
-
           metrics[mid] = {
             ...mMeta,
             series: allSeries[mid],
             unit: mData.unit || mMeta.unit,
-            domain: mMeta.domain || [lo, hi]
           };
-
-          // Adjust bounds slightly for derived metrics domain
-          if (mid === 'dewpoint' || mid === 'abshumid') {
-            const margin = mid === 'dewpoint' ? 2 : 1;
-            metrics[mid].domain = [Math.floor(lo - margin), Math.ceil(hi + margin)];
-          }
         }
 
         // Fetch backend events (alarms & system messages)
@@ -495,26 +500,12 @@
     },
 
     async saveSettings(patch) {
-      let res;
-      try {
-        res = await fetch('/api/settings', {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(patch),
-        });
-      } catch (e) {
-        throw friendlyError(e, 'Speichern fehlgeschlagen');
-      }
-      if (!res.ok) {
-        let msg = 'Speichern fehlgeschlagen';
-        try { msg = (await res.json()).error || msg; } catch (_) {}
-        throw new Error(msg, { cause: { status: res.status, statusText: res.statusText } });
-      }
-      return res.json().catch(() => ({}));
+      return postJson('/api/settings', patch, 'Speichern fehlgeschlagen');
     },
 
-    async fetchBackupStatus() {
-      const s = await fetchJson('/api/system/status', 'Status konnte nicht geladen werden');
-      return s.backup || {};
+    // "Jetzt sichern": { ok, snapshot, written }; wirft mit dem Klartext des Backends.
+    async runBackup() {
+      return postJson('/api/backup', {}, 'Sicherung fehlgeschlagen');
     },
 
     // Extra helpers to allow external calls from components (Zuweisungsmanager / Settings)

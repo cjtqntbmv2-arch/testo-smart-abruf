@@ -160,6 +160,87 @@ test('POST /api/stations accepts valid id and name (optional fields null)', asyn
   assert.strictEqual(station.name, 'Valid Station');
 });
 
+// ── Aufgabe 7 (V28): ein Gerät gehört zu höchstens einer Messstelle ───────
+// Vorher speicherte die API eine zweite Messstelle auf derselben device_uuid; der Scheduler
+// schrieb die echten Daten dann unter nur eine, und das Löschen der anderen nahm sie per Kaskade mit.
+const postStation = (body) => fetch('http://localhost:3001/api/stations', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+});
+const uuidOf = (id) => getDb().prepare('SELECT device_uuid FROM stations WHERE id = ?').get(id)?.device_uuid;
+
+test('POST /api/stations: device_uuid einer anderen Messstelle → 409 mit deren Name und ID, nichts gespeichert; Umbenennen mit eigener UUID bleibt erlaubt', async () => {
+  saveSetting('api_key', ''); // kein Hintergrund-Sync
+  const db = getDb();
+  try {
+    assert.strictEqual((await postStation({ id: 'a7-besitz', name: 'Besitzer', device_uuid: 'dev-a7' })).status, 200);
+
+    for (const uuid of ['dev-a7', '  dev-a7\t']) { // getrimmt verglichen
+      const res = await postStation({ id: 'a7-zweit', name: 'Zweite', device_uuid: uuid });
+      const body = await res.json();
+      assert.strictEqual(res.status, 409, `${JSON.stringify(uuid)}: ${JSON.stringify(body)}`);
+      assert.match(body.error, /„Besitzer“ \(a7-besitz\)/, body.error);
+      assert.match(body.error, /dev-a7/, body.error);
+    }
+    assert.strictEqual(db.prepare("SELECT count(*) c FROM stations WHERE id = 'a7-zweit'").get().c, 0, 'nichts gespeichert');
+
+    // Umbenennen = dieselbe Messstelle mit ihrer eigenen UUID erneut speichern.
+    assert.strictEqual((await postStation({ id: 'a7-besitz', name: 'Umbenannt', device_uuid: 'dev-a7' })).status, 200);
+    assert.strictEqual(db.prepare("SELECT name FROM stations WHERE id = 'a7-besitz'").get().name, 'Umbenannt');
+
+    // Eine bestehende Messstelle auf ein vergebenes Gerät umstellen: ebenfalls 409, ihre Zuordnung bleibt.
+    assert.strictEqual((await postStation({ id: 'a7-andere', name: 'Andere', device_uuid: 'dev-a7-b' })).status, 200);
+    const res = await postStation({ id: 'a7-andere', name: 'Andere', device_uuid: 'dev-a7' });
+    assert.strictEqual(res.status, 409);
+    assert.strictEqual(uuidOf('a7-andere'), 'dev-a7-b');
+  } finally {
+    db.prepare("DELETE FROM stations WHERE id LIKE 'a7-%'").run();
+  }
+});
+
+test('POST /api/stations: "kein Gerät" ("", nur Leerzeichen, null, fehlend) wird NULL und ist beliebig oft erlaubt; UUID getrimmt; kein Text → 400', async () => {
+  saveSetting('api_key', '');
+  const db = getDb();
+  try {
+    for (const [id, uuid] of [['a7-leer1', ''], ['a7-leer2', ''], ['a7-blank', ' \t '], ['a7-null', null], ['a7-ohne', undefined]]) {
+      const res = await postStation({ id, name: id, device_uuid: uuid });
+      assert.strictEqual(res.status, 200, `${id}: ${await res.text()}`);
+      assert.strictEqual(uuidOf(id), null, `${id}: als NULL gespeichert`);
+    }
+    assert.strictEqual((await postStation({ id: 'a7-trim', name: 'Trim', device_uuid: '  dev-a7-trim \n' })).status, 200);
+    assert.strictEqual(uuidOf('a7-trim'), 'dev-a7-trim');
+
+    for (const bad of [123, true, {}, ['dev-a7-trim']]) {
+      const res = await postStation({ id: 'a7-typ', name: 'Typ', device_uuid: bad });
+      const body = await res.json();
+      assert.strictEqual(res.status, 400, `${JSON.stringify(bad)}: ${res.status} ${JSON.stringify(body)}`);
+      assert.match(body.error, /device_uuid/);
+    }
+    assert.strictEqual(uuidOf('a7-typ'), undefined, 'nichts gespeichert');
+  } finally {
+    db.prepare("DELETE FROM stations WHERE id LIKE 'a7-%'").run();
+  }
+});
+
+test('POST /api/stations: greift der UNIQUE-Index trotz Vorprüfung, antwortet die API mit derselben 409 statt 500', async () => {
+  saveSetting('api_key', '');
+  const db = getDb();
+  db.prepare("INSERT INTO stations (id, name) VALUES ('a7-rivale', 'Rivale')").run();
+  // Ein Schreiber, der zwischen Vorprüfung und Speichern dieselbe UUID vergibt. Im Betrieb nur
+  // über eine zweite Verbindung denkbar; hier stellt ein Temp-Trigger das nach.
+  db.exec(`CREATE TEMP TRIGGER a7_rennen BEFORE INSERT ON stations WHEN NEW.id = 'a7-spaet'
+           BEGIN UPDATE stations SET device_uuid = NEW.device_uuid WHERE id = 'a7-rivale'; END`);
+  try {
+    const res = await postStation({ id: 'a7-spaet', name: 'Später', device_uuid: 'dev-a7-rennen' });
+    const body = await res.json();
+    assert.strictEqual(res.status, 409, JSON.stringify(body));
+    assert.match(body.error, /Das Gerät dev-a7-rennen ist bereits .* zugewiesen/, body.error);
+    assert.strictEqual(uuidOf('a7-spaet'), undefined, 'nichts gespeichert');
+  } finally {
+    db.exec('DROP TRIGGER IF EXISTS temp.a7_rennen');
+    db.prepare("DELETE FROM stations WHERE id LIKE 'a7-%'").run();
+  }
+});
+
 // ── DELETE /api/stations/:id (destructive route, was untested) ────────────
 test('DELETE /api/stations/:id removes the station and cascades its measurements and events', async () => {
   const db = getDb();
@@ -568,6 +649,165 @@ test('POST /api/sync startet einen Sync und respektiert den laufenden-Sync-Guard
   }
 });
 
+// ── Aufgabe 5: Eingabeprüfung POST /api/settings (V4, V15, V21, V22, C2, C15) ──
+// Jede Ablehnung ist ein 400 mit Klartext, der das Feld unverändert lässt. api_key bleibt
+// leer, wo gespeichert wird: der dadurch angestoßene Zyklus bricht dann sofort ab und
+// erreicht keine Cloud.
+const postSettings = (body, raw) => fetch('http://localhost:3001/api/settings', {
+  method: 'POST', headers: { 'content-type': 'application/json' }, body: raw ?? JSON.stringify(body),
+});
+async function expect400(body, field, pattern) {
+  const before = getSetting(field);
+  const res = await postSettings(body);
+  const json = await res.json();
+  assert.strictEqual(res.status, 400, `${JSON.stringify(body)} -> ${res.status} ${JSON.stringify(json)}`);
+  assert.match(json.error, pattern);
+  assert.strictEqual(getSetting(field), before, `${JSON.stringify(body)} darf ${field} nicht ändern`);
+}
+async function waitSchedulerIdle() {
+  for (let i = 0; i < 100; i++) {
+    const s = await (await fetch('http://localhost:3001/api/system/status')).json();
+    if (!s.scheduler.isSyncing) return;
+    await new Promise(r => setTimeout(r, 20));
+  }
+}
+// Leerer api_key für die Testdauer, danach die angefassten Einstellungen zurück und den
+// Scheduler angehalten — auch wenn der Test scheitert. Sonst schlüge eine Regression in
+// fremde Tests durch: ein übernommenes 999999999 s liefe als 1-ms-Takt weiter, ein
+// übernommenes retention_days prunte deren Fixtures.
+async function withSettings(keys, fn) {
+  const saved = ['api_key', ...keys].map((k) => [k, getSetting(k)]);
+  saveSetting('api_key', '');
+  try { await fn(); } finally {
+    await waitSchedulerIdle();
+    stopScheduler();
+    for (const [k, v] of saved) saveSetting(k, v ?? '');
+  }
+}
+
+test('POST /api/settings: poll_interval_sec nur als ganze Zahl von 60 bis 3600', () => withSettings(['poll_interval_sec'], async () => {
+  saveSetting('poll_interval_sec', '900');
+  // 999999999 s lief als setInterval-Überlauf auf 1 ms: ein Anfragesturm gegen die Cloud.
+  for (const v of [999999999, 3601, 59, 1.5, '900abc', '', null, true]) {
+    await expect400({ poll_interval_sec: v }, 'poll_interval_sec', /60 bis 3600/);
+  }
+  for (const [v, stored] of [[60, '60'], [3600, '3600'], ['3600', '3600']]) {
+    const res = await postSettings({ poll_interval_sec: v });
+    assert.strictEqual(res.status, 200, JSON.stringify(v));
+    assert.strictEqual(getSetting('poll_interval_sec'), stored);
+  }
+}));
+
+test('POST /api/settings: retention_days ohne Teilparse, 1e21 wird nicht zu 1 Tag', () => withSettings(['retention_days'], async () => {
+  saveSetting('retention_days', '365');
+  // parseInt(1e21) liest "1e+21" als 1: aus riesigen Aufbewahrungstagen wurde 1 Tag.
+  for (const v of ['30abc', 1.5, 0, -5, 1e21, '99999999999999999999', '', null]) {
+    await expect400({ retention_days: v }, 'retention_days', /ganze Zahl ab 1/);
+  }
+  const res = await postSettings({ retention_days: '730' });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(getSetting('retention_days'), '730');
+}));
+
+test('POST /api/settings: api_key nur als Text, getrimmt; nur Leerzeichen, null oder Zahl -> 400', () => withSettings([], async () => {
+  saveSetting('api_key', 'bisheriger-schluessel');
+  for (const v of ['   ', '\t\n', null, 12345, true]) {
+    await expect400({ api_key: v }, 'api_key', /API-Schlüssel/);
+  }
+  // Getrimmt gespeichert. Erst getrimmt ist es der Mock-Schlüssel: der angestoßene Zyklus
+  // läuft im Mock-Modus (NODE_ENV=test) und erreicht keine Cloud.
+  const res = await postSettings({ api_key: '  mock-api-key \n' });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(getSetting('api_key'), 'mock-api-key');
+}));
+
+test('POST mit kaputtem JSON: 400 mit allgemeiner Meldung an allen POST-Endpunkten, keine Parser-Interna', () => withSettings([], async () => {
+  for (const p of ['/api/settings', '/api/export', '/api/stations', '/api/sync', '/api/backup']) {
+    const res = await fetch(`http://localhost:3001${p}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"poll_interval_sec": 60,',
+    });
+    const body = await res.json();
+    assert.strictEqual(res.status, 400, `${p}: ${res.status} ${JSON.stringify(body)}`);
+    assert.strictEqual(body.error, 'Ungültige Anfrage: Der Inhalt ist kein gültiges JSON.');
+  }
+}));
+
+test('POST /api/settings ohne bekanntes Feld: 400 und kein Scheduler-Neustart', () => withSettings([], async () => {
+  const { format } = require('node:util');
+  for (const raw of ['{}', '{"unbekannt":1}', '[]']) {
+    const lines = [];
+    const orig = { log: console.log, warn: console.warn, error: console.error };
+    for (const k of Object.keys(orig)) console[k] = (...a) => lines.push(format(...a));
+    let res, body;
+    try {
+      res = await postSettings(null, raw);
+      body = await res.json();
+    } finally { Object.assign(console, orig); }
+    assert.strictEqual(res.status, 400, `${raw}: ${JSON.stringify(body)}`);
+    assert.match(body.error, /Keine bekannte Einstellung/);
+    assert.ok(!lines.some((l) => l.includes('Scheduler started')), `${raw} darf den Scheduler nicht neu starten:\n${lines.join('\n')}`);
+  }
+}));
+
+test('POST /api/settings: backup_enabled nur true/false, 1/0, "1"/"0", "true"/"false"', () => withSettings(['backup_enabled'], async () => {
+  for (const [v, stored] of [[true, '1'], [1, '1'], ['1', '1'], ['true', '1'], [false, '0'], [0, '0'], ['0', '0'], ['false', '0']]) {
+    saveSetting('backup_enabled', stored === '1' ? '0' : '1');
+    const res = await postSettings({ backup_enabled: v });
+    assert.strictEqual(res.status, 200, JSON.stringify(v));
+    assert.strictEqual(getSetting('backup_enabled'), stored, JSON.stringify(v));
+  }
+  for (const v of [null, 123, 2, 'nein', 'yes', '']) {
+    await expect400({ backup_enabled: v }, 'backup_enabled', /backup_enabled/);
+  }
+}));
+
+test('POST /api/settings: backup_dir/update_dir erst typgeprüft, relativer backup_dir -> 400, kein Ordner', () => withSettings(['backup_dir', 'update_dir'], async () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const cwd = process.cwd();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'srv-cwd-'));
+  process.chdir(tmp); // fiele die Prüfung zurück, entstünde ./12345 hier und nicht im Repo
+  try {
+    for (const v of [12345, null, true, { pfad: 'D:\\Sicherung' }]) {
+      await expect400({ backup_dir: v }, 'backup_dir', /backup_dir/);
+    }
+    // Relativ hieße: relativ zum Arbeitsverzeichnis des Dienstes (fremd, oft C:\Windows\system32).
+    await expect400({ backup_dir: '12345' }, 'backup_dir', /absolut/);
+    assert.deepStrictEqual(fs.readdirSync(tmp), [], 'es darf kein Ordner angelegt werden');
+    for (const v of [12345, null]) {
+      await expect400({ update_dir: v }, 'update_dir', /update_dir/);
+    }
+
+    // Gültiges bleibt gültig: ein absoluter Pfad wird angelegt, leer heißt Standardordner.
+    const target = path.join(tmp, 'neu', 'sicherung');
+    let res = await postSettings({ backup_dir: target });
+    assert.strictEqual(res.status, 200);
+    assert.ok(fs.statSync(target).isDirectory());
+    res = await postSettings({ backup_dir: '  ' });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(getSetting('backup_dir'), '');
+  } finally {
+    process.chdir(cwd);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}));
+
+test('POST /api/settings: ein ungültiges Feld lässt auch die gültigen ungespeichert', () => withSettings(['poll_interval_sec', 'backup_enabled'], async () => {
+  saveSetting('poll_interval_sec', '900');
+  await expect400({ poll_interval_sec: 120, csv_format: 'xml' }, 'poll_interval_sec', /csv_format/);
+  await expect400({ backup_enabled: false, retention_days: 'x' }, 'backup_enabled', /retention_days/);
+}));
+
+// Das Dashboard schickt das geladene Intervall bei jedem automatischen Speichern mit. Meldete
+// GET einen Wert außerhalb 60-3600 (direkt in der DB, POLL_INTERVAL_SEC beim Erststart),
+// scheiterte jedes Speichern der Seite am neuen 400 — wie früher an der Region 'us'.
+test('GET /api/settings meldet das wirksame Intervall, auch wenn die DB einen Wert außerhalb 60-3600 hält', () => withSettings(['poll_interval_sec'], async () => {
+  for (const [stored, effective] of [['999999999', 3600], ['5', 60], ['900', 900]]) {
+    saveSetting('poll_interval_sec', stored);
+    const body = await (await fetch('http://localhost:3001/api/settings')).json();
+    assert.strictEqual(body.poll_interval_sec, effective, `gespeichert ${stored}`);
+  }
+}));
+
 test('GET /api/stations/:id/events supports limit, active and compound (start_ts,rowid) cursor', async () => {
   const db = getDb();
   db.prepare("INSERT OR IGNORE INTO stations (id, name) VALUES ('evpag', 'Pagination Test')").run();
@@ -736,6 +976,70 @@ test('Error middleware logs a stack once per signature, not per occurrence', asy
   const bStacks = captured.filter((l) => l.includes('flood-b') && STACK_FRAME.test(l));
   assert.strictEqual(bStacks.length, 1,
     'ein anderer Fehler muss trotzdem seinen eigenen Stacktrace bekommen');
+});
+
+// ── „Jetzt sichern": POST /api/backup ────────────────────────────────────
+// Sofortlauf (ZIPs + Datenbank-Abzug) an der Tagesdrossel vorbei; genau eine Logzeile.
+// api_key leer und Leerlauf abwarten: kein Sync-Zyklus darf in das Log-Fenster schreiben.
+async function backupFixture(dir) {
+  saveSetting('api_key', '');
+  for (let i = 0; i < 100; i++) {
+    const s = await (await fetch('http://localhost:3001/api/system/status')).json();
+    if (!s.scheduler.isSyncing) break;
+    await new Promise(r => setTimeout(r, 20));
+  }
+  saveSetting('backup_dir', dir);
+  saveSetting('backup_health', '');
+}
+async function postBackupCapturingLog() {
+  const { format } = require('node:util');
+  const lines = [];
+  const orig = { log: console.log, warn: console.warn, error: console.error };
+  for (const k of Object.keys(orig)) console[k] = (...a) => lines.push(format(...a));
+  try {
+    const res = await fetch('http://localhost:3001/api/backup', { method: 'POST' });
+    return { res, body: await res.json(), lines };
+  } finally { Object.assign(console, orig); }
+}
+const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+
+test('POST /api/backup: sichert sofort - an Tagesdrossel und ausgeschaltetem Automatik-Backup vorbei - mit genau einer Logzeile', async () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'srv-jetzt-'));
+  await backupFixture(dir);
+  saveSetting('last_backup_scan_date', todayKey()); // Tageslauf schon gelaufen: die Drossel sperrt
+  saveSetting('backup_enabled', '0');                // Automatik aus: Einmal-Lauf trotzdem
+
+  const { res, body, lines } = await postBackupCapturingLog();
+  assert.strictEqual(res.status, 200, JSON.stringify(body));
+  assert.strictEqual(body.ok, true);
+  assert.strictEqual(body.snapshot, `klima-${todayKey()}.db`);
+  assert.strictEqual(typeof body.written, 'number');
+  assert.ok(fs.existsSync(path.join(dir, 'datenbank', body.snapshot)), 'Abzug liegt im Zielordner');
+  assert.strictEqual(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], /^\S+ Sicherung \(manuell\) ok: Abzug klima-\d{4}-\d\d-\d\d\.db, \d+ ZIP neu$/);
+  const status = await (await fetch('http://localhost:3001/api/system/status')).json();
+  assert.strictEqual(status.backup.health.status, 'ok');
+  saveSetting('backup_enabled', '1');
+});
+
+test('POST /api/backup: scheitert der Lauf - 500 mit Klartext, Tagesversuch bleibt offen, genau eine Logzeile', async () => {
+  const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'srv-jetzt-')), 'datei-statt-ordner');
+  fs.writeFileSync(file, 'x');
+  await backupFixture(file);
+  saveSetting('backup_enabled', '1');
+  saveSetting('last_backup_scan_date', '');
+
+  const { res, body, lines } = await postBackupCapturingLog();
+  assert.strictEqual(res.status, 500);
+  assert.match(body.error, /^backup_dir nicht beschreibbar: /);
+  assert.strictEqual(lines.length, 1, lines.join('\n'));
+  assert.match(lines[0], /^\S+ Sicherung \(manuell\) fehlgeschlagen: backup_dir nicht beschreibbar: /);
+  assert.strictEqual(getSetting('last_backup_scan_date'), '', 'der naechste Zyklus versucht es erneut');
+  const status = await (await fetch('http://localhost:3001/api/system/status')).json();
+  assert.strictEqual(status.backup.health.status, 'error');
+  assert.strictEqual(status.backup.health.lastError, body.error);
 });
 
 // ── Startup migration: legacy stored api_region self-heals to eu ──────────

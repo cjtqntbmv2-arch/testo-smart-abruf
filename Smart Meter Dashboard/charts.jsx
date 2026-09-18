@@ -211,14 +211,15 @@ function LineChart({ metricIds, stationId, timestamps, showGrid = true, showAxes
   );
 }
 
-// Radial gauge for current value within a domain.
+// Radial gauge for the current value. Scale: the metric's limits (GET /api/limits) with a
+// margin, else the data; rounded ends, current value always inside (gaugeScale, chart-logic.js).
 function Gauge({ metricId, stationId, size }) {
   const station = stationId ? window.DASH_DATA.stations[stationId] : window.DASH_DATA.activeStation;
   const m = station.metrics[metricId];
   if (!m) return null;
   const v = m.series[m.series.length - 1];
   const vFinite = typeof v === "number" && Number.isFinite(v);
-  const [lo, hi] = m.domain;
+  const { lo, hi } = gaugeScale(m.series, window.DASH_DATA.limits, metricId, m.decimals);
   // Clamp t to 0 when v is non-finite so NaN never reaches the SVG arc path.
   const t = vFinite ? Math.max(0, Math.min(1, (v - lo) / (hi - lo))) : 0;
 
@@ -269,8 +270,10 @@ function Gauge({ metricId, stationId, size }) {
           {vFinite ? v.toFixed(m.decimals) : "—"}
         </text>
         <text x={cx} y={cy - r * 0.25 + 18} textAnchor="middle" className="g-unit">{m.unit}</text>
-        <text x={cx - r} y={cy + 16} textAnchor="middle" className="g-bound">{lo}</text>
-        <text x={cx + r} y={cy + 16} textAnchor="middle" className="g-bound">{hi}</text>
+        {/* Enden bündig zur Außenkante des Bogens statt mittig: mittig ragte die Beschriftung
+            über den SVG-Rand, die erste bzw. letzte Ziffer wurde abgeschnitten. */}
+        <text x={cx - r - stroke / 2} y={cy + 16} textAnchor="start" className="g-bound">{lo.toFixed(m.decimals)}</text>
+        <text x={cx + r + stroke / 2} y={cy + 16} textAnchor="end" className="g-bound">{hi.toFixed(m.decimals)}</text>
       </svg>
     </div>
   );

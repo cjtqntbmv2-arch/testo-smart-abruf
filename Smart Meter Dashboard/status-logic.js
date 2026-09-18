@@ -1,4 +1,4 @@
-// Pure, side-effect-free Übersetzung roher Sync-Fehler in Klartext.
+// Pure, side-effect-free Übersetzung roher Sync-Fehler und Zustände in Klartext.
 // Browser: als <script> vor settings.jsx geladen, hängt an window.
 // Node: per require() in Tests genutzt. Kein DOM / fetch / timer / Date.
 (function () {
@@ -29,10 +29,28 @@
       + 'Neuladen der Seite verloren (Browser-Speicher voll oder gesperrt).';
   }
 
-  const api = { explainSyncError, explainLayoutSaveError };
+  // Zustand der Datensicherung aus dem backup-Block von GET /api/system/status
+  // ({ enabled, health }) — eine Abbildung fuer Systemuebersicht, Kopfzeile und
+  // Sicherungskasten, damit die drei nie Verschiedenes zeigen.
+  // Rueckgabe: { status: 'ok'|'warn'|'err'|'unknown' (HealthCard/StatusPill), label, cause }.
+  function explainBackupStatus(backup) {
+    if (!backup) return { status: 'unknown', label: 'Unbekannt', cause: null };
+    // Aus schlaegt einen Fehler: ein gescheiterter Einmal-Lauf ("Jetzt sichern") ist dann
+    // keine laufende Stoerung — gemeldet wird, dass gar nicht automatisch gesichert wird.
+    if (backup.enabled === false) {
+      return { status: 'warn', label: 'Aus', cause: 'Automatische Sicherung ist ausgeschaltet — es entsteht kein täglicher Datenbank-Abzug.' };
+    }
+    const h = backup.health || {};
+    if (h.status === 'error') return { status: 'err', label: 'Fehler', cause: h.lastError || 'Sicherung fehlgeschlagen (ohne Meldung).' };
+    if (h.status === 'ok') return { status: 'ok', label: 'Aktiv', cause: null };
+    return { status: 'unknown', label: 'Noch kein Lauf', cause: null };
+  }
+
+  const api = { explainSyncError, explainLayoutSaveError, explainBackupStatus };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window !== 'undefined') {
     window.explainSyncError = explainSyncError;
     window.explainLayoutSaveError = explainLayoutSaveError;
+    window.explainBackupStatus = explainBackupStatus;
   }
 })();

@@ -1034,7 +1034,7 @@ test('end_ts pairs only within a group — interleaved groups do not cross-pair'
 test('retention prune protects an un-backed-up month, deletes a backed-up one', () => {
   process.env.DB_PATH = ':memory:';
   const { getDb, saveSetting } = require('../db');
-  const { computePruneFloor } = require('../backup-runner');
+  const { computePruneFloor, runBackupScan } = require('../backup-runner');
   const { stationBase } = require('../export-service');
   const db = getDb();
   db.exec("DELETE FROM measurements; DELETE FROM events; DELETE FROM stations;");
@@ -1045,6 +1045,9 @@ test('retention prune protects an un-backed-up month, deletes a backed-up one', 
   const mayTs = Date.UTC(2026, 4, 15); // May  — NOT archived
   const ins = db.prepare("INSERT INTO measurements (uuid,station_id,timestamp,value,physical_property,unit) VALUES (?,?,?,1,'temperature','°C')");
   ins.run('a', 's1', aprTs); ins.run('m', 's1', mayTs);
+  // Gelungener Datenbank-Abzug am 20. Mai (der Mai lief noch, bekommt also kein ZIP): ohne
+  // gelungenen Abzug loescht die Aufbewahrung gar nichts.
+  assert.deepStrictEqual(runBackupScan(Date.UTC(2026, 4, 20, 12)).errors, []);
   // Simulate April's ZIP existing so computePruneFloor treats April as backed up (May stays un-backed).
   fs.writeFileSync(path.join(dir, `${stationBase({ id: 's1', name: 'S' })}_2026-04.zip`), 'x');
   const now = Date.UTC(2026, 5, 20);
@@ -1052,4 +1055,312 @@ test('retention prune protects an un-backed-up month, deletes a backed-up one', 
   db.prepare("DELETE FROM measurements WHERE timestamp < ?").run(effectiveCutoff);
   assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid='m'").get().c, 1); // un-backed May survives
   assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid='a'").get().c, 0); // backed-up April pruned
+});
+
+// ── Aufbewahrung loescht nur, was in einem gelungenen Datenbank-Abzug steht ──────
+// Nachgestellter Befund: retention_days=1 und ein scheiternder Abzug — Schritt 4 loeschte
+// trotzdem Messwerte, die in keinem Abzug standen (auch im laufenden Monat, den kein ZIP deckt).
+const DAY_MS = 24 * 3600 * 1000;
+const idleClient = {
+  async fetchDeviceProperties() { return []; },
+  async fetchDeviceStatus() { return []; },
+  async fetchMeasuringObjects() { return []; },
+  async fetchMeasurements() { return []; },
+  async fetchAlarms() { return []; }
+};
+function retentionFixture() {
+  closeDb(); // der Retention-Test oben laesst seine DB offen
+  initTestDb();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sch-ret-'));
+  saveSetting('backup_dir', dir);
+  saveSetting('api_key', 'mock-key');
+  saveSetting('retention_days', '1');
+  const db = getDb();
+  db.prepare("INSERT INTO stations (id, name) VALUES ('ret', 'Ret')").run();
+  const ins = db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES (?, 'ret', ?, 1, 'temperature', '°C')");
+  ins.run('vor-abzug', Date.now() - 5 * DAY_MS);  // aelter als der letzte Abzug: darf weg
+  ins.run('nach-abzug', Date.now() - 2 * DAY_MS); // juenger als der Abzug, aber aelter als 1 Tag
+  ins.run('frisch', Date.now() - 3600 * 1000);
+  return { dir, db };
+}
+// Eine Datei statt des Ordners: der heutige Abzug scheitert, auf jedem Betriebssystem.
+const breakSnapshotDir = (dir) => fs.writeFileSync(path.join(dir, 'datenbank'), 'kein Ordner');
+const uuids = (db) => db.prepare('SELECT uuid FROM measurements ORDER BY uuid').all().map((r) => r.uuid);
+
+test('Aufbewahrung: scheitert der Abzug, bleibt alles juenger als der letzte gelungene Abzug', async () => {
+  const { dir, db } = retentionFixture();
+  const { runBackupScan } = require('../backup-runner');
+  assert.deepStrictEqual(runBackupScan(Date.now() - 3 * DAY_MS).errors, []); // gelungen vor 3 Tagen
+  fs.renameSync(path.join(dir, 'datenbank'), path.join(dir, 'datenbank-alt'));
+  breakSnapshotDir(dir);
+
+  await schedulerModule.runSyncCycle(idleClient);
+
+  assert.ok(JSON.parse(getSetting('backup_health')).dbSnapshotError, 'der heutige Abzug ist gescheitert');
+  assert.deepStrictEqual(uuids(db), ['frisch', 'nach-abzug']);
+  closeDb();
+});
+
+test('Aufbewahrung: ohne einen gelungenen Abzug loescht sie gar nichts', async () => {
+  const { dir, db } = retentionFixture();
+  breakSnapshotDir(dir);
+
+  await schedulerModule.runSyncCycle(idleClient);
+
+  assert.deepStrictEqual(uuids(db), ['frisch', 'nach-abzug', 'vor-abzug']);
+  closeDb();
+});
+
+// ── Log für den Feldeinsatz: Herzschlag je Zyklus, gedrosselte Schrittfehler ──
+// app.log wird nur beim Dienststart rotiert. Vorher: Normalbetrieb schrieb nichts, ein
+// abgelaufener Schlüssel fünf Zeilen je Zyklus, ohne Zeitstempel.
+const util = require('node:util');
+const crypto = require('node:crypto');
+const STAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d /;
+
+async function captureLog(fn) {
+  const lines = [];
+  const orig = { log: console.log, warn: console.warn, error: console.error };
+  for (const k of Object.keys(orig)) console[k] = (...a) => lines.push(util.format(...a));
+  try { await fn(); } finally { Object.assign(console, orig); }
+  return lines;
+}
+
+// Frische DB mit einer Messstelle auf dev-1. closeDb() zuerst: der Retention-Test
+// oben lässt seine DB offen, und initDb() kehrt bei offener DB sofort zurück.
+function freshDbWithStation() {
+  closeDb();
+  initTestDb();
+  saveSetting('api_key', 'mock-key');
+  getDb().prepare("INSERT INTO stations (id, name, device_uuid) VALUES ('log','Log','dev-1')").run();
+}
+
+// Wie ein abgelaufener Schlüssel: jeder Cloud-Abruf scheitert mit 401, und die Cloud
+// hängt eine je Anfrage neue instance-ID an (testo-client.js übernimmt den rohen Body).
+function expiredKeyClient() {
+  const fail = (p) => async () => {
+    throw new Error(`HTTP error! status: 401 on ${p}: {"title":"UNAUTHORIZED","instance":"/${crypto.randomUUID()}"}`);
+  };
+  return {
+    fetchDeviceProperties: fail('/v3/devices/properties'),
+    fetchDeviceStatus: fail('/v3/devices/status'),
+    fetchMeasurements: fail('/v2/measurements'),
+    fetchMeasuringObjects: fail('/v1/measuring-objects'),
+    fetchAlarms: fail('/v3/alarms'),
+  };
+}
+
+test('Log: jeder Sync-Zyklus hinterlässt genau eine Herzschlagzeile mit Zeitstempel und Kennzahlen', async () => {
+  freshDbWithStation();
+  const client = new MockTestoClient([{
+    uuid: 'alarm-hb', serial_no: 'SN123', alarm_source_uuid: 'sensor-1', alarm_type: 'measurement alarm',
+    alarm_severity: 'Alarm', alarm_status: 'Alarm', alarm_condition_type: 'Upper limit', alarm_value: '28.5',
+    physical_property_name: 'Temperature', physical_extension: 'Unknown',
+    alarm_time: isoMinutesAgo(30), last_status_change_time: isoMinutesAgo(30)
+  }]);
+
+  const first = await captureLog(() => schedulerModule.runSyncCycle(client));
+  assert.strictEqual(first.length, 1, `eine Zeile je Zyklus erwartet:\n${first.join('\n')}`);
+  assert.match(first[0], STAMP);
+  assert.match(first[0], /Sync ok in \d+\.\d s: Messwerte \+1, Alarmmeldungen \+1\b/);
+
+  // Derselbe Abruf noch einmal: alles schon gespeichert, also nichts Neues.
+  const second = await captureLog(() => schedulerModule.runSyncCycle(client));
+  assert.strictEqual(second.length, 1, second.join('\n'));
+  assert.match(second[0], /Sync ok in \d+\.\d s: Messwerte \+0, Alarmmeldungen \+0\b/);
+  closeDb();
+});
+
+test('Log: Dauerfehler mit wechselnder instance-ID – je Schritt eine volle Zeile, danach nur Zählerstände, Herzschlag je Zyklus', async () => {
+  freshDbWithStation();
+  const lines = await captureLog(async () => {
+    for (let i = 0; i < 12; i++) await schedulerModule.runSyncCycle(expiredKeyClient());
+  });
+
+  assert.ok(lines.every((l) => STAMP.test(l)), `jede Zeile mit Zeitstempel:\n${lines.join('\n')}`);
+  const beats = lines.filter((l) => l.includes(' Sync mit Fehlern in '));
+  assert.strictEqual(beats.length, 12, `eine Herzschlagzeile je Zyklus:\n${lines.join('\n')}`);
+  assert.match(beats[0], /\(Geräteeigenschaften, Gerätestatus, Grenzwerte, Alarme\): Messwerte übersprungen/);
+  for (const p of ['/v3/devices/properties', '/v3/devices/status', '/v1/measuring-objects', '/v3/alarms']) {
+    const own = lines.filter((l) => l.includes(`status: 401 on ${p}:`));
+    assert.strictEqual(own.length, 2, `${p}: volle Zeile beim ersten Mal, dann nur "(10x)":\n${own.join('\n')}`);
+    assert.match(own[1], /\(10x\)$/);
+  }
+  assert.strictEqual(lines.length, 12 + 4 * 2, `vorher 5 Zeilen je Zyklus, jetzt Herzschlag + Drosselung:\n${lines.join('\n')}`);
+  closeDb();
+});
+
+test('Log: nach einem fehlerfreien Zyklus erscheint ein erneuter Ausfall wieder mit voller Zeile', async () => {
+  freshDbWithStation();
+  const ok = new MockTestoClient();
+  await captureLog(() => schedulerModule.runSyncCycle(ok)); // Ausgangslage: fehlerfrei
+
+  const lines = await captureLog(async () => {
+    for (let i = 0; i < 3; i++) await schedulerModule.runSyncCycle(expiredKeyClient());
+    await schedulerModule.runSyncCycle(ok);
+    await schedulerModule.runSyncCycle(expiredKeyClient());
+  });
+
+  const recovered = lines.filter((l) => l.includes(' Sync ok in '));
+  assert.strictEqual(recovered.length, 1, lines.join('\n'));
+  assert.match(recovered[0], /wieder fehlerfrei nach 3 Zyklen mit Fehlern/);
+  const alarmFull = lines.filter((l) => l.includes('status: 401 on /v3/alarms:'));
+  assert.strictEqual(alarmFull.length, 2, `erster und erneuter Ausfall je eine volle Zeile:\n${lines.join('\n')}`);
+  closeDb();
+});
+
+// ── Sicherungsfehler im Log (F7/V30) ──────────────────────────────────────────
+// runBackupScan wirft nicht, er legt Fehler in backup_health ab — der Herzschlag meldete
+// deshalb "Sync ok", waehrend die Sicherung Zyklus um Zyklus scheiterte.
+test('Log: scheiternde Sicherung ist ein gescheiterter Schritt im Herzschlag, Ursache gedrosselt, nach Behebung Erholungszeile', async () => {
+  freshDbWithStation();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sch-log-bkp-'));
+  saveSetting('backup_dir', dir);
+  const client = new MockTestoClient();
+  const base = await captureLog(() => schedulerModule.runSyncCycle(client)); // Ausgangslage: fehlerfrei
+  assert.match(base[0], /Sync ok in \d+\.\d s: .*, Sicherung ok \(Abzug klima-\d{4}-\d\d-\d\d\.db, \d+ ZIP neu\)/,
+    'ein gelungener Tageslauf steht im Herzschlag, keine eigene Zeile');
+
+  // Wie im Funktionstest: Tagesvermerk weg, Ziel unbrauchbar (Datei statt Ordner 'datenbank').
+  saveSetting('last_backup_scan_date', '');
+  fs.renameSync(path.join(dir, 'datenbank'), path.join(dir, 'datenbank-alt'));
+  const blocker = path.join(dir, 'datenbank');
+  fs.writeFileSync(blocker, 'kein Ordner');
+  const failing = await captureLog(async () => {
+    for (let i = 0; i < 12; i++) await schedulerModule.runSyncCycle(client);
+  });
+  const beats = failing.filter((l) => l.includes(' Sync mit Fehlern in '));
+  assert.strictEqual(beats.length, 12, `eine Herzschlagzeile je Zyklus:\n${failing.join('\n')}`);
+  for (const b of beats) assert.match(b, /\(Sicherung\): Messwerte/);
+  const cause = failing.filter((l) => l.includes(' Sync Sicherung: Datenbank-Abzug: '));
+  assert.strictEqual(cause.length, 2, `volle Zeile beim ersten Mal, dann nur "(10x)":\n${failing.join('\n')}`);
+  assert.match(cause[1], /\(10x\)$/);
+  assert.strictEqual(failing.length, 12 + 2, failing.join('\n'));
+  assert.strictEqual(getSetting('last_backup_scan_date'), '', 'jeder Zyklus versucht es erneut');
+
+  fs.rmSync(blocker); // Ursache behoben
+  const healed = await captureLog(() => schedulerModule.runSyncCycle(client));
+  assert.strictEqual(healed.length, 1, healed.join('\n'));
+  assert.match(healed[0], /Sync ok in .*, Sicherung ok \(Abzug klima-.*\) – wieder fehlerfrei nach 12 Zyklen mit Fehlern$/);
+  const later = await captureLog(() => schedulerModule.runSyncCycle(client));
+  assert.doesNotMatch(later[0], /Sicherung/, 'der Tag ist verbraucht: kein weiterer Lauf');
+  closeDb();
+});
+
+// ── Aufgabe 5 (V4): Intervall aus der DB auf 60-3600 s klemmen ────────────────
+// POST /api/settings prüft, ein direkt in die DB geschriebener Wert (oder POLL_INTERVAL_SEC
+// beim Erststart) geht aber nur hier durch. api_key leer: jeder Zyklus bricht sofort mit
+// "Skipping sync" ab — eine Zeile je Zyklus, ohne Cloud.
+const skips = (lines) => lines.filter((l) => l.includes('Skipping sync')).length;
+
+test('startScheduler: 999999999 s aus der DB wird auf 3600 s geklemmt statt auf 1 ms zu fallen, mit Warnzeile', async () => {
+  closeDb(); initTestDb();
+  saveSetting('api_key', '');
+  saveSetting('poll_interval_sec', '999999999');
+  let status;
+  const lines = await captureLog(async () => {
+    schedulerModule.startScheduler();
+    await new Promise((r) => setTimeout(r, 50)); // der alte 1-ms-Takt schaffte hier Dutzende Zyklen
+    status = schedulerModule.getSchedulerStatus();
+    schedulerModule.stopScheduler();
+  });
+  assert.strictEqual(skips(lines), 1, `nur der Sofortlauf:\n${lines.join('\n')}`);
+  const warns = lines.filter((l) => l.includes('poll_interval_sec='));
+  assert.strictEqual(warns.length, 1, lines.join('\n'));
+  assert.match(warns[0], /poll_interval_sec=999999999 .*60-3600 s.* 3600 s/);
+  assert.strictEqual(status.pollIntervalSec, 3600, 'die Systemübersicht zeigt das wirksame Intervall');
+  closeDb();
+});
+
+test('startScheduler: 5 s aus der DB wird auf 60 s angehoben; ein gültiger Wert bleibt ohne Warnung', async (t) => {
+  closeDb(); initTestDb();
+  saveSetting('api_key', '');
+  saveSetting('poll_interval_sec', '5');
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const start = await captureLog(async () => {
+    schedulerModule.startScheduler();
+    t.mock.timers.tick(59_000);
+  });
+  const at60 = await captureLog(async () => { t.mock.timers.tick(1_000); });
+  schedulerModule.stopScheduler();
+  assert.strictEqual(skips(start), 1, `bis 59 s nur der Sofortlauf:\n${start.join('\n')}`);
+  assert.match(start.find((l) => l.includes('poll_interval_sec=')) || '', /poll_interval_sec=5 .* 60 s/);
+  assert.strictEqual(skips(at60), 1, 'der zweite Zyklus nach 60 s');
+
+  saveSetting('poll_interval_sec', '900');
+  const valid = await captureLog(async () => { schedulerModule.startScheduler(); schedulerModule.stopScheduler(); });
+  assert.ok(!valid.some((l) => l.includes('poll_interval_sec=')), valid.join('\n'));
+  assert.ok(valid.some((l) => l.includes('Syncing every 900 seconds')), valid.join('\n'));
+  closeDb();
+});
+
+// ── Aufgabe 7 (V28): Zuordnung Gerät → Messstelle ─────────────────────────
+const measAlarm = (uuid, serial) => ({
+  uuid, serial_no: serial, alarm_type: 'measurement alarm', alarm_severity: 'Alarm', alarm_status: 'Alarm',
+  alarm_condition_type: 'Upper limit', alarm_value: '28.5', physical_property_name: 'Temperature',
+  physical_extension: 'Unknown', alarm_time: isoMinutesAgo(30), last_status_change_time: isoMinutesAgo(30)
+});
+
+test('Alt-Dublette auf einer device_uuid: die zuerst angelegte Messstelle erhält Messwerte und Alarme, mit Warnzeile; die andere hält das Abruffenster nicht zurück', async () => {
+  closeDb(); initTestDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  // Installation von vor dem UNIQUE-Index: db.js legt ihn bei vorhandener Dublette nicht an.
+  db.exec('DROP INDEX IF EXISTS idx_stations_device_uuid');
+  // IDs gegen die Anlagereihenfolge benannt, damit weder "zuletzt gelesen gewinnt" noch eine
+  // Sortierung nach ID zufällig das richtige Ergebnis liefert.
+  db.prepare("INSERT INTO stations (id, name, device_uuid) VALUES ('zz-alt', 'Zuerst angelegt', 'dev-1')").run();
+  db.prepare("INSERT INTO stations (id, name, device_uuid) VALUES ('aa-neu', 'Dublette', 'dev-1')").run();
+  // Die Dublette bekommt keine Daten mehr; ihr alter Stand darf das Messwertfenster nicht
+  // Tag für Tag weiter zurückziehen (es beginnt bei der am weitesten zurückliegenden Messstelle).
+  db.prepare("INSERT INTO measurements (uuid, station_id, timestamp, value, physical_property, unit) VALUES ('alt-1', 'aa-neu', ?, 20, 'temperature', '°C')")
+    .run(Date.now() - 5 * 24 * 3600 * 1000);
+
+  const client = new MockTestoClient([measAlarm('alarm-dup', 'SN123')]);
+  const lines = await captureLog(() => schedulerModule.runSyncCycle(client));
+
+  assert.strictEqual(db.prepare("SELECT station_id FROM measurements WHERE uuid = 'meas-123'").get()?.station_id, 'zz-alt');
+  assert.strictEqual(db.prepare("SELECT station_id FROM events WHERE uuid = 'alarm-dup'").get()?.station_id, 'zz-alt');
+  const warnLine = lines.find((l) => l.includes('dev-1') && l.includes('zz-alt') && l.includes('aa-neu'));
+  assert.ok(warnLine, `Warnzeile zur Dublette erwartet:\n${lines.join('\n')}`);
+  const from = Date.parse(client.lastMeasurementParams.date_time_from);
+  assert.ok(Date.now() - from <= 24 * 3600 * 1000 + 60_000, `Fenster ab ${client.lastMeasurementParams.date_time_from}, erwartet höchstens 24 h zurück`);
+  closeDb();
+});
+
+test('Messstelle, die während des Zyklus gelöscht wird: kein FOREIGN-KEY-Abbruch, die übrigen Messstellen bekommen Status, Messwerte und Alarme', async () => {
+  closeDb(); initTestDb();
+  saveSetting('api_key', 'mock-key');
+  const db = getDb();
+  db.prepare("INSERT INTO stations (id, name, device_uuid) VALUES ('bleibt', 'Bleibt', 'dev-1')").run();
+  db.prepare("INSERT INTO stations (id, name, device_uuid) VALUES ('weg', 'Weg', 'dev-2')").run();
+  const client = {
+    async fetchDeviceProperties() {
+      // Erste await-Pause nach dem Einlesen der Messstellen: hier läuft im Betrieb DELETE /api/stations.
+      db.prepare("DELETE FROM stations WHERE id = 'weg'").run();
+      return [
+        { device_uuid: 'dev-1', device_serial_no: 'SN1', sensor_uuid: 's-1', sensor_serial_no: 'SN1-A', channel_physical_property_name: 'Temperature' },
+        { device_uuid: 'dev-2', device_serial_no: 'SN2', sensor_uuid: 's-2', sensor_serial_no: 'SN2-A', channel_physical_property_name: 'Temperature' }
+      ];
+    },
+    // Batterie 10 % öffnet ein Systemereignis – auch für die gelöschte Messstelle.
+    async fetchDeviceStatus() { return ['dev-1', 'dev-2'].map((d) => ({ device_uuid: d, battery_level_percent: 10, radio_level_percent: 90 })); },
+    async fetchMeasuringObjects() { return []; },
+    async fetchMeasurements() {
+      return [['m-1', 's-1'], ['m-2', 's-2']].map(([uuid, s]) => ({ uuid, sensor_uuid: s, timestamp: isoMinutesAgo(60), measurement: 21, physical_property_name: 'Temperature', physical_unit: '°C' }));
+    },
+    async fetchAlarms() { return [measAlarm('al-1', 'SN1'), measAlarm('al-2', 'SN2')]; }
+  };
+
+  const lines = await captureLog(() => schedulerModule.runSyncCycle(client));
+
+  assert.ok(!lines.some((l) => /FOREIGN KEY/.test(l)), lines.join('\n'));
+  assert.strictEqual(schedulerModule.getSchedulerStatus().lastSyncStatus, 'success', lines.join('\n'));
+  assert.strictEqual(db.prepare("SELECT battery FROM stations WHERE id = 'bleibt'").get().battery, 10, 'Status der übrigen Messstelle');
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM events WHERE uuid = 'sys-battery-bleibt'").get().c, 1);
+  assert.strictEqual(db.prepare("SELECT station_id FROM measurements WHERE uuid = 'm-1'").get()?.station_id, 'bleibt');
+  assert.strictEqual(db.prepare("SELECT station_id FROM events WHERE uuid = 'al-1'").get()?.station_id, 'bleibt');
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM measurements WHERE uuid = 'm-2'").get().c, 0);
+  assert.strictEqual(db.prepare("SELECT count(*) c FROM events WHERE uuid = 'al-2'").get().c, 0);
+  closeDb();
 });

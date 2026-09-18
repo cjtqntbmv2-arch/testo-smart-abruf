@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { explainSyncError, explainLayoutSaveError } = require('../status-logic');
+const { explainSyncError, explainLayoutSaveError, explainBackupStatus } = require('../status-logic');
 
 test('explainSyncError: fehlender API-Schlüssel', () => {
   const r = explainSyncError('No API Key configured');
@@ -66,4 +66,34 @@ test('explainLayoutSaveError: voller und gesperrter Speicher ergeben denselben S
   const gesperrt = new Error('The operation is insecure.');
   gesperrt.name = 'SecurityError';
   assert.strictEqual(explainLayoutSaveError(voll), explainLayoutSaveError(gesperrt));
+});
+
+// Sicherungszustand aus dem backup-Block von GET /api/system/status (V26/V30): dieselbe
+// Abbildung fuer Systemuebersicht, Kopfzeile und Sicherungskasten.
+const EACCES = "backup_dir nicht beschreibbar: EACCES: permission denied, access 'D:\\Sicherung'";
+
+test('explainBackupStatus: eingeschaltet, letzter Lauf gelungen -> ok, Aktiv, ohne Ursache', () => {
+  assert.deepStrictEqual(explainBackupStatus({ enabled: true, health: { status: 'ok', lastDbSnapshot: 'klima-2026-09-18.db' } }),
+    { status: 'ok', label: 'Aktiv', cause: null });
+});
+
+test('explainBackupStatus: letzter Lauf gescheitert -> err, Fehler, Ursache im Klartext', () => {
+  assert.deepStrictEqual(explainBackupStatus({ enabled: true, health: { status: 'error', lastError: EACCES } }),
+    { status: 'err', label: 'Fehler', cause: EACCES });
+  // Ohne Text trotzdem eine Ursache, nie eine leere Fehlerkarte.
+  assert.ok(explainBackupStatus({ enabled: true, health: { status: 'error' } }).cause);
+});
+
+test('explainBackupStatus: ausgeschaltet -> warn, Aus - auch wenn ein Einmal-Lauf zuletzt scheiterte', () => {
+  const off = explainBackupStatus({ enabled: false, health: { status: 'error', lastError: EACCES } });
+  assert.strictEqual(off.status, 'warn');
+  assert.strictEqual(off.label, 'Aus');
+  assert.match(off.cause, /ausgeschaltet/);
+});
+
+test('explainBackupStatus: noch kein Lauf oder kein Block -> neutral, keine Fehlerkarte', () => {
+  assert.deepStrictEqual(explainBackupStatus({ enabled: true, health: {} }),
+    { status: 'unknown', label: 'Noch kein Lauf', cause: null });
+  assert.strictEqual(explainBackupStatus(undefined).status, 'unknown');
+  assert.strictEqual(explainBackupStatus(null).status, 'unknown');
 });

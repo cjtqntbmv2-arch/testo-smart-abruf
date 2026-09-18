@@ -1,7 +1,9 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
-require('dotenv').config({ path: path.join(__dirname, '../.env') });
+const { warn } = require('./log');
+// quiet: dotenv 17 schreibt sonst bei jedem Start eine Zeile ohne Zeitstempel ins Log.
+require('dotenv').config({ path: path.join(__dirname, '../.env'), quiet: true });
 
 let db = null;
 
@@ -47,6 +49,31 @@ function initDb() {
       next_communication INTEGER
     )
   `);
+
+  // Ein Geraet gehoert zu hoechstens einer Messstelle (Funktionstest 2026-09-17, V28): bei
+  // zweien schrieb der Scheduler die Daten unter nur eine, und das Loeschen der anderen nahm
+  // echte Messwerte und Alarme per Kaskade mit. Teilindex, weil "kein Geraet" beliebig oft
+  // vorkommen darf: NULL (trim(NULL) != '' ist NULL, die Zeile faellt heraus), '' aus
+  // Altbestaenden und reine Leerzeichen. Eine Installation von vor diesem Index kann schon
+  // eine Dublette tragen — dann KEIN Index, sondern eine Warnzeile, denn der Dienst muss
+  // starten. POST /api/stations verhindert neue Dubletten auch ohne Index, der Scheduler gibt
+  // das Geraet der zuerst angelegten Messstelle; nach der Bereinigung legt der naechste Start
+  // den Index an.
+  try {
+    const dupes = db.prepare(`
+      SELECT device_uuid, group_concat(id || ' (' || name || ')', ', ' ORDER BY rowid) AS stations
+      FROM stations WHERE trim(device_uuid) != ''
+      GROUP BY device_uuid HAVING count(*) > 1
+    `).all();
+    for (const d of dupes) {
+      warn(`Mehrere Messstellen auf device_uuid ${d.device_uuid}: ${d.stations}. Nur die zuerst genannte erhält Messwerte und Alarme – Zuordnung in den Einstellungen korrigieren. Bis dahin fehlt der UNIQUE-Index auf stations.device_uuid.`);
+    }
+    if (dupes.length === 0) {
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_stations_device_uuid ON stations(device_uuid) WHERE trim(device_uuid) != ''");
+    }
+  } catch (e) {
+    warn(`UNIQUE-Index auf stations.device_uuid nicht angelegt: ${e.message}`);
+  }
 
   // 3. Measurements Table
   db.exec(`

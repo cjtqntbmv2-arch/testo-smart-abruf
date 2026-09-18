@@ -148,3 +148,35 @@ test('findNewerVersion: unlesbare eigene Version meldet kein Update', async () =
   zip(dir, NAME('0.16.0'));
   assert.strictEqual(await findNewerVersion(dir, 'v0.15.0-dev'), null);
 });
+
+// ── Log: jeder Zustandswechsel genau einmal, kein Eintrag je Pruefung ────────
+// Vorher schrieb die Pruefung gar nichts: totes Netzlaufwerk, fehlende Rechte und
+// "kein Update vorhanden" waren im Feld nicht zu unterscheiden. Alle 6 h eine Zeile
+// waere dagegen Rauschen — also nur, wenn sich der Zustand aendert.
+test('runUpdateCheck: loggt jeden Zustandswechsel genau einmal (nicht lesbar, erreichbar, Update, aus)', async () => {
+  const util = require('node:util');
+  const lines = [];
+  const orig = { log: console.log, warn: console.warn, error: console.error };
+  for (const k of Object.keys(orig)) console[k] = (...a) => lines.push(util.format(...a));
+  const dir = path.join(os.tmpdir(), `updchk-log-${process.pid}-${Date.now()}`);
+  const twice = async () => { await runUpdateCheck('0.15.0'); await runUpdateCheck('0.15.0'); };
+  try {
+    saveSetting('update_dir', dir);
+    await twice();                 // Ordner fehlt
+    fs.mkdirSync(dir);
+    await twice();                 // erreichbar, nichts Neueres
+    zip(dir, NAME('0.99.0'));
+    await twice();                 // neuere Fassung liegt bereit
+    saveSetting('update_dir', '');
+    await twice();                 // Pruefung aus
+  } finally {
+    Object.assign(console, orig);
+    saveSetting('update_dir', '');
+  }
+  assert.strictEqual(lines.length, 4, `genau eine Zeile je Zustandswechsel:\n${lines.join('\n')}`);
+  assert.ok(lines.every((l) => /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d /.test(l)), lines.join('\n'));
+  assert.ok(lines[0].includes(dir) && /nicht lesbar.*ENOENT/.test(lines[0]), `Grund fehlt: ${lines[0]}`);
+  assert.match(lines[1], /erreichbar/);
+  assert.match(lines[2], /0\.99\.0/);
+  assert.match(lines[3], /Update-Prüfung aus/);
+});

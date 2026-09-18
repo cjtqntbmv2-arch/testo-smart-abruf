@@ -1,8 +1,9 @@
 // Smart Meter Dashboard/export-panel.jsx
-// Manueller CSV-Export-Dialog + Backup-Einstellungen (Ein/Aus, Pfad) und -Status. Als Settings-Sektion eingehängt.
+// Manueller CSV-Export-Dialog + Datensicherung (Ein/Aus, Pfad, Status, „Jetzt sichern“). Als Settings-Sektion eingehängt.
 const { useState: useStateE, useEffect: useEffectE, useMemo: useMemoE } = React;
 
-function ExportPanel() {
+// systemStatus/onRefresh kommen aus dem 10-s-Poll der Einstellungsseite (settings.jsx).
+function ExportPanel({ systemStatus, onRefresh }) {
   const [meta, setMeta] = useStateE([]);
   const [stationIds, setStationIds] = useStateE([]);
   const [metricKeys, setMetricKeys] = useStateE([]);
@@ -22,10 +23,7 @@ function ExportPanel() {
       setMeta(m);
       setStationIds(m.map(s => s.id)); // default: all stations
     }).catch(e => setError(e.message));
-    // default range = last month
-    const r = window.presetRange('lastMonth', Date.now());
-    setFromStr(new Date(r.fromTs).toISOString().slice(0, 10));
-    setToStr(new Date(r.toTs).toISOString().slice(0, 10));
+    applyPreset('lastMonth'); // Standard-Zeitraum: letzter Monat
     // Voreingestelltes CSV-Format. Scheitert das Laden, bleibt 'de' stehen — das darf
     // NICHT still passieren, sonst bekommt ein Nutzer mit RFC-Einstellung kommentarlos
     // das falsche Format angeboten.
@@ -40,8 +38,8 @@ function ExportPanel() {
     setPreset(key);
     if (key === 'custom') return;
     const r = window.presetRange(key, Date.now());
-    setFromStr(new Date(r.fromTs).toISOString().slice(0, 10));
-    setToStr(new Date(r.toTs).toISOString().slice(0, 10));
+    setFromStr(window.localDateKey(r.fromTs)); // Ortstag — toISOString waere UTC (V25)
+    setToStr(window.localDateKey(r.toTs));
   }
   function toggle(list, setList, id) {
     setList(list.includes(id) ? list.filter(x => x !== id) : [...list, id]);
@@ -52,10 +50,8 @@ function ExportPanel() {
   async function doExport() {
     setError(null); setBusy(true);
     try {
-      const fromTs = new Date(fromStr + 'T00:00:00').getTime();
-      const toTs = new Date(toStr + 'T23:59:59.999').getTime();
       if (!stationIds.length) throw new Error('Bitte mindestens eine Messstelle wählen');
-      if (!(fromTs <= toTs)) throw new Error('Zeitraum ungültig (von > bis)');
+      const { fromTs, toTs } = window.parseDateRange(fromStr, toStr); // wirft mit Meldung für den Dialog
       const payload = window.buildExportPayload({ stationIds, metricKeys, fromTs, toTs, includeEvents, dialect });
       await DASH_DATA.postExport(payload);
     } catch (e) { setError(e.message); }
@@ -140,15 +136,13 @@ function ExportPanel() {
             : <><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M7 1v8M4 6l3 3 3-3"/><path d="M1.5 10v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V10"/></svg> Exportieren</>}
         </button>
       </div>
-      <BackupSettings dialectTouched={dialectTouched} onDialect={setDialect} />
+      <BackupSettings dialectTouched={dialectTouched} onDialect={setDialect} systemStatus={systemStatus} onRefresh={onRefresh} />
     </>
   );
 }
-function BackupSettings({ dialectTouched, onDialect }) {
+function BackupSettings({ dialectTouched, onDialect, systemStatus, onRefresh }) {
   const [enabled, setEnabled] = useStateE(true);
   const [dir, setDir] = useStateE('');
-  const [status, setStatus] = useStateE(null);   // backup-Block aus /api/system/status, oder null
-  const [statusErr, setStatusErr] = useStateE(false);
   const [pathErr, setPathErr] = useStateE(null);
   const [format, setFormat] = useStateE('de'); // Dauerformat der Backups (csv_format)
   const [formatErr, setFormatErr] = useStateE(null);
@@ -157,12 +151,12 @@ function BackupSettings({ dialectTouched, onDialect }) {
   const [busy, setBusy] = useStateE(false);
   const [pollSec, setPollSec] = useStateE(900); // Poll-Intervall für den „erster Lauf"-Hinweis
   const [loaded, setLoaded] = useStateE(false); // erst true nach echtem fetchSettings-Erfolg
+  const [running, setRunning] = useStateE(false); // "Jetzt sichern" läuft — Knopf gesperrt
+  const [runMsg, setRunMsg] = useStateE(null);    // { ok, text } des letzten Knopfdrucks, kurzlebig
 
-  function reloadStatus() {
-    DASH_DATA.fetchBackupStatus()
-      .then(b => { setStatus(b); setStatusErr(false); })
-      .catch(() => setStatusErr(true));
-  }
+  // Der Zustand kommt aus dem 10-s-Poll der Einstellungsseite; nach einer eigenen Aktion
+  // sofort nachladen, statt bis zu 10 s alten Stand zu zeigen.
+  const refresh = () => { if (onRefresh) onRefresh(); };
 
   useEffectE(() => {
     // Scheitert das Laden, zeigten Schalter und Pfad vorher stumm die Standardwerte
@@ -173,7 +167,6 @@ function BackupSettings({ dialectTouched, onDialect }) {
     DASH_DATA.fetchSettings()
       .then(s => { setEnabled(s.backup_enabled !== false); setDir(s.backup_dir || ''); setFormat(s.csv_format || 'de'); setPollSec(s.poll_interval_sec || 900); setSettingsErr(null); setLoaded(true); })
       .catch(() => setSettingsErr('Backup-Einstellungen konnten nicht geladen werden — Schalter und Pfad zeigen nur Standardwerte, nicht den echten Zustand. Bedienung ist deshalb gesperrt (Seite neu laden zum erneuten Versuch).'));
-    reloadStatus();
   }, []);
 
   async function toggleEnabled(next) {
@@ -182,7 +175,7 @@ function BackupSettings({ dialectTouched, onDialect }) {
     setEnabled(next);                  // optimistisch
     try { await DASH_DATA.saveSettings({ backup_enabled: next }); }
     catch (_) { setEnabled(!next); }   // bei Fehler zurücksetzen
-    finally { setBusy(false); reloadStatus(); }
+    finally { setBusy(false); refresh(); }
   }
 
   async function savePath() {
@@ -190,9 +183,31 @@ function BackupSettings({ dialectTouched, onDialect }) {
     try {
       await DASH_DATA.saveSettings({ backup_dir: dir });
       setSavedFlash(true); setTimeout(() => setSavedFlash(false), 2000);
-      reloadStatus();
+      refresh();
     } catch (e) { setPathErr(e.message); }
     finally { setBusy(false); }
+  }
+
+  // "Jetzt sichern" (POST /api/backup): ZIPs + Datenbank-Abzug sofort, auch bei
+  // ausgeschaltetem Automatik-Backup. Die Rückfrage nennt, was überschrieben wird — nach
+  // einem Datenverlust ersetzte ein Lauf den heutigen Abzug durch den beschädigten Stand.
+  // Das Ergebnis steht dauerhaft im Statuskasten (sofort nachgeladen); die Meldung am
+  // Knopf verschwindet nach 6 s, damit sie nie neben einem neueren Zustand stehen bleibt.
+  async function runNow() {
+    if (running) return;
+    if (!confirm('Jetzt sichern?\n\nDer Datenbank-Abzug von heute wird durch den jetzigen Stand ersetzt; ältere Abzüge bleiben erhalten.\n\nNach einem Datenverlust nicht sichern — der beschädigte Stand würde den heutigen Abzug ersetzen.')) return;
+    setRunning(true); setRunMsg(null);
+    let msg;
+    try {
+      const r = await DASH_DATA.runBackup();
+      msg = { ok: true, text: `Gesichert: ${r.snapshot}${r.written ? `, ${r.written} ZIP neu` : ''}` };
+    } catch (e) {
+      msg = { ok: false, text: e.message };
+    }
+    setRunMsg(msg);
+    setRunning(false);
+    refresh();
+    setTimeout(() => setRunMsg(m => (m === msg ? null : m)), 6000);
   }
 
   async function changeFormat(next) {
@@ -212,14 +227,17 @@ function BackupSettings({ dialectTouched, onDialect }) {
     finally { setBusy(false); }
   }
 
+  const status = (systemStatus && systemStatus.backup) || null; // backup-Block aus /api/system/status
   const effectiveDir = (status && status.dir) || null; // aufgelöster Zielordner (gesetzter Pfad ODER Default)
   const health = (status && status.health) || {};
+  // Lokales enabled (optimistisch geschaltet) statt des bis zu 10 s alten Poll-Werts.
+  const state = window.explainBackupStatus({ enabled, health });
 
   return (
     <>
       <SectionHead
-        title="Automatisches Monats-Backup"
-        sub="Sichert je Messstelle Messwerte und Meldungen eines Monats als ZIP. Läuft selbsttätig, höchstens einmal pro Tag."
+        title="Datensicherung"
+        sub="Sichert täglich die ganze Datenbank (Unterordner „datenbank“, die sieben neuesten Tage bleiben) und je Messstelle jeden abgeschlossenen Monat als CSV-ZIP. Läuft selbsttätig im ersten Sync des Tages."
       />
 
       {settingsErr && (
@@ -230,14 +248,14 @@ function BackupSettings({ dialectTouched, onDialect }) {
       )}
 
       <Card>
-        <Field label="Automatisches Backup" hint="Monatliche ZIP-Sicherung ein- oder ausschalten.">
+        <Field label="Automatisches Backup" hint="Täglichen Lauf (Datenbank-Abzug und Monats-ZIPs) ein- oder ausschalten.">
           {/* Toggle (ui-kit.jsx) kennt kein disabled-Prop — die Sperre sitzt im Klick-Handler
               selbst (toggleEnabled), pointerEvents hier macht sie zusätzlich sichtbar/prüfbar. */}
           <span style={loaded ? undefined : { opacity: 0.5, pointerEvents: 'none' }}>
             <Toggle checked={enabled} onChange={toggleEnabled} labelOn="Ein" labelOff="Aus" />
           </span>
         </Field>
-        <Field label="Speicherpfad" hint="Zielordner für die Backup-ZIPs. Leer = Standardordner.">
+        <Field label="Speicherpfad" hint="Zielordner für Datenbank-Abzüge und Backup-ZIPs. Leer = Standardordner.">
           <div className="backup-path">
             <input
               type="text"
@@ -277,29 +295,37 @@ function BackupSettings({ dialectTouched, onDialect }) {
       </Card>
 
       <Card>
-        {statusErr ? (
-          <p className="backup-status-msg">Status nicht verfügbar.</p>
+        {!status ? (
+          <p className="backup-status-msg muted">Status wird geladen …</p>
         ) : !enabled ? (
-          <p className="backup-status-msg muted">Automatisches Backup ist ausgeschaltet.</p>
+          <p className="backup-status-msg muted">Automatisches Backup ist ausgeschaltet. „Jetzt sichern“ sichert trotzdem einmalig.</p>
         ) : !health.status ? (
           <p className="backup-status-msg muted">Noch kein Backup gelaufen — der erste Lauf erfolgt beim nächsten Sync (spätestens in {Math.max(1, Math.round(pollSec / 60))} Min).</p>
         ) : (
           <div className="backup-status">
             <div className="backup-status-head">
-              <span className={`status-pill st-${health.status === 'ok' ? 'ok' : 'err'}`}>
+              <span className={`status-pill st-${state.status}`}>
                 <span className="status-pill-dot" />
-                {health.status === 'ok' ? 'Aktiv' : 'Fehler'}
+                {state.label}
               </span>
-              {health.status !== 'ok' && health.lastError && (
-                <span className="backup-status-err">{health.lastError}</span>
-              )}
+              {state.cause && <span className="backup-status-err">{state.cause}</span>}
             </div>
             <div className="backup-status-rows">
               <div><span className="k">Zielordner</span><span className="v">{effectiveDir || '—'}</span></div>
-              <div><span className="k">Letzter Scan</span><span className="v">{status.lastScanDate || '—'}</span></div>
+              <div><span className="k">Letzter Datenbank-Abzug</span><span className="v">{health.lastDbSnapshot ? `${health.lastDbSnapshot} · ${DASH_DATA.formatRelative(Date.parse(health.lastDbSnapshotAt))}` : '—'}</span></div>
+              <div><span className="k">Letzter fehlerfreier Lauf</span><span className="v">{status.lastScanDate || '—'}</span></div>
               <div><span className="k">Zuletzt geschrieben</span><span className="v">{health.lastZip ? (health.written ? `${health.lastZip} (${health.written})` : health.lastZip) : '—'}</span></div>
             </div>
           </div>
+        )}
+        <div className="export-actions" style={{ marginTop: 14 }}>
+          <p className="export-hint">Sichert sofort (Datenbank-Abzug und fehlende Monats-ZIPs), etwa vor einem Update oder nach behobenem Fehler. Ersetzt den Abzug von heute.</p>
+          <button className="btn" disabled={running} onClick={runNow}>
+            {running ? <><Spinner /> Sichert…</> : 'Jetzt sichern'}
+          </button>
+        </div>
+        {runMsg && (
+          <p className={runMsg.ok ? 'backup-status-msg' : 'backup-status-err'} style={{ margin: '8px 0 0' }}>{runMsg.text}</p>
         )}
       </Card>
     </>
